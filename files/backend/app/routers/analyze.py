@@ -1,0 +1,100 @@
+import json
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+from app.ai.engine import analyze_audio
+from app.amd_settings import apply_confidence_gate
+from app.auth.security import get_server_from_api_key
+from app.config import get_settings
+from app.database import get_db
+from app.models.call import CallAnalysis
+from app.models.server import VicidialServer
+from app.recordings import link_analysis_recording, save_call_audio, to_browser_wav
+from app.schemas import AnalyzeResponse
+
+router = APIRouter(prefix="/api/v1", tags=["analyze"])
+settings = get_settings()
+
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+async def analyze(
+    callid: str = Form(...),
+    campaign: str = Form(""),
+    caller: str = Form(""),
+    called: str = Form(""),
+    ani: str = Form(""),
+    audio: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    server: VicidialServer = Depends(get_server_from_api_key),
+):
+    raw = await audio.read()
+    max_bytes = settings.MAX_AUDIO_MB * 1024 * 1024
+    if len(raw) > max_bytes:
+        raise HTTPException(status_code=413, detail="Audio file too large")
+    if len(raw) < 100:
+        raise HTTPException(status_code=400, detail="Audio file too small / empty")
+
+    result = analyze_audio(raw)
+
+    # Apply portal-configured minimum-confidence gate (HUMAN below threshold -> MACHINE)
+    raw_status = result.status
+    final_status, downgraded = apply_confidence_gate(result.status, result.confidence)
+
+    # Browser-safe PCM16 WAV for portal play + disk archive
+    playable = to_browser_wav(raw)
+
+    path = ""
+    try:
+        path = save_call_audio(playable, callid, server.id)
+    except OSError as exc:
+        print(f"OpenAMD WARNING: failed to save recording for {callid}: {exc}")
+        path = ""
+
+    called_number = (called or "").strip()
+    caller_id = (caller or "").strip()
+    ani_value = (ani or called_number or "").strip()
+
+    row = CallAnalysis(
+        server_id=server.id,
+        call_id=callid,
+        campaign=campaign or "",
+        caller_id=caller_id,
+        called_number=called_number,
+        ani=ani_value,
+        status=final_status,
+        raw_status=raw_status,
+        confidence=result.confidence,
+        processing_ms=result.processing_ms,
+        audio_seconds=result.audio_seconds,
+        audio_path=path,
+        audio_saved=True,
+        audio_blob=playable,
+        features_json=json.dumps({**result.details, "gate_downgraded": downgraded, "raw_status": raw_status}),
+        error_message=result.details.get("error", "") if result.status == "ERROR" else "",
+    )
+    db.add(row)
+    server.last_seen = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+
+    if path:
+        linked = link_analysis_recording(row.id, path)
+        if linked and linked != path:
+            row.audio_path = linked
+            db.commit()
+
+    return AnalyzeResponse(
+        status=final_status,
+        confidence=result.confidence,
+        processing_ms=result.processing_ms,
+        callid=callid,
+        analysis_id=row.id,
+        details={**result.details, "raw_status": raw_status, "gate_downgraded": downgraded},
+    )
+
+
+@router.get("/health")
+def health_public():
+    return {"status": "ok", "service": "openamd-analyze"}

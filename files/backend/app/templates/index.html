@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>AI AMD Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+  <div id="login-view" class="login-wrap">
+    <div class="login-card">
+      <div class="brand">
+        <div class="brand-mark">AI</div>
+        <div>
+          <h1>AI AMD</h1>
+          <p>Offline Answering Machine Detection</p>
+        </div>
+      </div>
+      <form id="login-form">
+        <label for="login-user">Username</label>
+        <input id="login-user" type="text" autocomplete="username" value="admin" maxlength="64" required />
+        <label for="login-pass">Password</label>
+        <input id="login-pass" type="password" autocomplete="current-password" maxlength="128" required />
+        <label for="login-captcha">Captcha: <span id="captcha-question">…</span></label>
+        <div class="captcha-row">
+          <input id="login-captcha" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Answer" required />
+          <button type="button" class="ghost" id="captcha-refresh" title="New captcha">↻</button>
+        </div>
+        <input type="hidden" id="login-captcha-id" value="" />
+        <button type="submit">Sign in</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <div id="app-view" class="app hidden">
+    <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark sm">AI</div>
+        <div>
+          <span>AI AMD</span>
+          <small>Answering Machine Detection</small>
+        </div>
+      </div>
+      <div class="sidebar-section">Menu</div>
+      <nav>
+        <a href="/dashboard.php" data-page="dashboard" class="nav active"><span class="nav-ico">▣</span>Dashboard</a>
+        <a href="/livecalls.php" data-page="live" class="nav"><span class="nav-ico">☎</span>Live Calls</a>
+        <a href="/cdr.php" data-page="cdr" class="nav"><span class="nav-ico">☰</span>CDR</a>
+        <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
+        <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
+        <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
+        <a href="/wipe.php" data-page="wipe" class="nav"><span class="nav-ico">⌫</span>Wipe</a>
+        <a href="/audio.php" data-page="audio" class="nav"><span class="nav-ico">♫</span>Audio Cleanup</a>
+        <a href="/cronjob.php" data-page="cronjob" class="nav"><span class="nav-ico">⏱</span>Cron Job</a>
+        <a href="/settings.php" data-page="settings" class="nav"><span class="nav-ico">⚙</span>Settings</a>
+      </nav>
+      <div class="sidebar-status" id="sidebar-status">
+        <div class="ss-head">
+          <span>Server status</span>
+          <span class="ss-healthy" id="ss-healthy"><span class="ss-dot"></span><span id="ss-status-label">…</span></span>
+        </div>
+        <div class="meter">
+          <div class="m-row"><span>CPU</span><strong id="ss-cpu">—</strong></div>
+          <div class="track"><div class="fill" id="ss-cpu-fill" style="width:0%"></div></div>
+        </div>
+        <div class="meter ram">
+          <div class="m-row"><span>RAM</span><strong id="ss-ram">—</strong></div>
+          <div class="track"><div class="fill" id="ss-ram-fill" style="width:0%"></div></div>
+        </div>
+        <div class="meter disk">
+          <div class="m-row"><span>DISK</span><strong id="ss-disk">—</strong></div>
+          <div class="track"><div class="fill" id="ss-disk-fill" style="width:0%"></div></div>
+        </div>
+        <div class="ss-uptime">UPTIME <span id="ss-uptime">—</span></div>
+      </div>
+      <div class="sidebar-foot">
+        <div id="whoami"></div>
+        <button id="logout-btn" class="linkish" type="button">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open menu">
+            <span></span>
+          </button>
+          <h2 id="page-title">Dashboard</h2>
+        </div>
+        <div class="topbar-meta">
+          <span class="pill" id="health-pill">SYSTEM ONLINE</span>
+          <span id="clock"></span>
+        </div>
+      </header>
+
+      <section id="page-dashboard" class="page">
+        <div class="hero-grid" id="hero-grid"></div>
+
+        <div class="panel dash-live-panel">
+          <div class="panel-head">
+            <h3>Live Calls</h3>
+            <a class="panel-link" href="/livecalls.php" data-page="live">View all live calls →</a>
+          </div>
+          <div class="table-wrap calls-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Call ID</th>
+                  <th>Caller ID</th>
+                  <th>Duration</th>
+                  <th>AI Result</th>
+                  <th>Confidence</th>
+                  <th>Action</th>
+                  <th>Waveform</th>
+                  <th>Audio</th>
+                </tr>
+              </thead>
+              <tbody id="dash-live-body"></tbody>
+            </table>
+          </div>
+          <div class="call-cards" id="dash-live-cards"></div>
+        </div>
+
+        <div class="dash-grid-bottom">
+          <div class="panel">
+            <div class="panel-head"><h3>Detection distribution (today)</h3></div>
+            <div class="chart-wrap">
+              <canvas id="chart-donut" width="180" height="180"></canvas>
+              <div class="donut-legend" id="donut-legend"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Confidence trend (24h)</h3></div>
+            <div class="chart-wrap">
+              <canvas id="chart-trend" height="180"></canvas>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>System info</h3></div>
+            <ul class="info-list" id="system-info-list"></ul>
+            <div class="panel-head" style="margin-top:1rem"><h3>Connections</h3></div>
+            <div class="conn-list" id="conn-list"></div>
+            <div class="panel-head" style="margin-top:1rem"><h3>Recent activity</h3></div>
+            <div class="recent-mini" id="recent-mini"></div>
+          </div>
+        </div>
+
+        <div class="panel system-panel">
+          <button type="button" class="panel-head collapsible" id="system-health-toggle" aria-expanded="false">
+            <h3>AI AMD server health <span class="chevron" aria-hidden="true">▼</span></h3>
+            <span class="hint" id="system-updated">Hidden — click to expand</span>
+          </button>
+          <div class="stat-grid system-grid hidden" id="system-stat-grid"></div>
+        </div>
+      </section>
+
+      <section id="page-live" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Live call stream</h3>
+            <label class="inline">
+              Auto-refresh
+              <input type="checkbox" id="live-auto" checked />
+            </label>
+          </div>
+          <div class="filter-bar">
+            <label>
+              VICIdial
+              <select id="live-server-filter">
+                <option value="">ALL</option>
+              </select>
+            </label>
+            <label>
+              Type
+              <select id="live-status-filter">
+                <option value="">ALL</option>
+                <option value="HUMAN">Human</option>
+                <option value="MACHINE">Machine</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">Cancelled</option>
+                <option value="FAX">Fax</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <button class="ghost" type="button" id="live-filter-apply">Apply</button>
+          </div>
+          <div class="table-wrap calls-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Audio</th>
+                  <th>Call ID</th>
+                  <th>Time</th>
+                  <th>Server</th>
+                  <th>Called Number</th>
+                  <th>Caller ID</th>
+                  <th>Campaign</th>
+                  <th>Status</th>
+                  <th>Conf</th>
+                  <th>ms</th>
+                </tr>
+              </thead>
+              <tbody id="live-body"></tbody>
+            </table>
+          </div>
+          <div class="call-cards" id="live-cards"></div>
+        </div>
+      </section>
+
+      <section id="page-cdr" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>CDR — all call results</h3>
+            <button class="ghost" type="button" id="cdr-refresh">Refresh</button>
+          </div>
+          <div class="filter-bar">
+            <label>
+              Search
+              <input id="cdr-search" type="search" maxlength="64" placeholder="Called number or caller ID" />
+            </label>
+            <label>
+              VICIdial
+              <select id="cdr-server-filter">
+                <option value="">ALL</option>
+              </select>
+            </label>
+            <label>
+              Type
+              <select id="cdr-status-filter">
+                <option value="">ALL</option>
+                <option value="HUMAN">Human</option>
+                <option value="MACHINE">Machine</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">Cancelled</option>
+                <option value="FAX">Fax</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <button class="ghost" type="button" id="cdr-search-btn">Apply</button>
+          </div>
+          <div class="table-wrap calls-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Audio</th>
+                  <th>Call ID</th>
+                  <th>Time</th>
+                  <th>Server</th>
+                  <th>Called Number</th>
+                  <th>Caller ID</th>
+                  <th>Campaign</th>
+                  <th>Status</th>
+                  <th>Conf</th>
+                  <th>ms</th>
+                </tr>
+              </thead>
+              <tbody id="cdr-body"></tbody>
+            </table>
+          </div>
+          <div class="call-cards" id="cdr-cards"></div>
+          <div class="pager" id="cdr-pager">
+            <button type="button" class="ghost" id="cdr-prev">Prev</button>
+            <span class="hint" id="cdr-meta">Loading…</span>
+            <button type="button" class="ghost" id="cdr-next">Next</button>
+            <label class="inline pager-size">
+              Per page
+              <select id="cdr-page-size">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-servers" class="page hidden">
+        <div class="two-col">
+          <div class="panel">
+            <div class="panel-head"><h3>Registered servers</h3></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Today</th>
+                    <th>Total</th>
+                    <th>Last seen</th>
+                    <th>Active</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="servers-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Add VICIdial server</h3></div>
+            <form id="server-form" class="form-stack">
+              <label>Server name</label>
+              <input name="name" required placeholder="USA-01" />
+              <label>Description</label>
+              <input name="description" placeholder="Primary outbound dialer" />
+              <label>Timezone</label>
+              <input name="timezone" value="America/New_York" />
+              <label>IP whitelist (comma-separated, blank = allow all)</label>
+              <input name="ip_whitelist" placeholder="203.0.113.10,203.0.113.11" />
+              <button type="submit">Create server</button>
+              <p id="server-msg" class="hint"></p>
+            </form>
+
+            <div class="panel-head" style="margin-top:1.5rem"><h3>Create API key</h3></div>
+            <form id="key-form" class="form-stack">
+              <label>Server</label>
+              <select name="server_id" id="key-server-select" required></select>
+              <label>Key name</label>
+              <input name="name" value="default" />
+              <button type="submit">Generate API key</button>
+              <p id="key-msg" class="hint"></p>
+              <pre id="key-reveal" class="key-reveal hidden"></pre>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-reports" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Per-server reports</h3>
+            <select id="report-days">
+              <option value="1">Today / 1 day</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Server</th>
+                  <th>Calls</th>
+                  <th>Human</th>
+                  <th>Machine</th>
+                  <th>IVR</th>
+                  <th>Cancelled</th>
+                  <th>Fax</th>
+                  <th>Errors</th>
+                  <th>Avg ms</th>
+                  <th>Conf</th>
+                  <th>Accuracy</th>
+                </tr>
+              </thead>
+              <tbody id="reports-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-training" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Correct AI decisions</h3></div>
+          <p class="hint">Pick a recent call, set the true label, and save. Play the recording first to verify human vs machine.</p>
+          <div class="table-wrap calls-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Audio</th>
+                  <th>Call ID</th>
+                  <th>Server</th>
+                  <th>AI said</th>
+                  <th>Correct to</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="train-body"></tbody>
+            </table>
+          </div>
+          <div class="call-cards" id="train-cards"></div>
+        </div>
+      </section>
+
+      <section id="page-wipe" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Wipe detection logs</h3></div>
+          <p class="hint">Clears OpenAMD database call logs (PostgreSQL). This removes VICIdial analysis history from AI AMD. VICIdial itself is not modified.</p>
+          <div class="stat-grid" id="wipe-stats"></div>
+          <form id="wipe-form" class="form-stack" style="max-width:420px;margin-top:1rem">
+            <label>Delete records older than (days) — leave blank for ALL</label>
+            <input name="older_than_days" type="number" min="0" placeholder="e.g. 7 (blank = wipe everything)" />
+            <label>Type <code>WIPE</code> to confirm</label>
+            <input name="confirm" required placeholder="WIPE" autocomplete="off" />
+            <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Wipe logs</button>
+            <p id="wipe-msg" class="hint"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="page-audio" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Audio cleanup</h3></div>
+          <p class="hint">Deletes WAV files stored under <code>/opt/openamd/recordings</code> to free disk space on the AI AMD server.</p>
+          <div class="stat-grid" id="audio-stats"></div>
+          <form id="audio-form" class="form-stack" style="max-width:420px;margin-top:1rem">
+            <label>Delete audio older than (days) — leave blank for ALL</label>
+            <input name="older_than_days" type="number" min="0" placeholder="e.g. 3 (blank = delete all audio)" />
+            <label>Type <code>DELETE</code> to confirm</label>
+            <input name="confirm" required placeholder="DELETE" autocomplete="off" />
+            <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Delete audio files</button>
+            <p id="audio-msg" class="hint"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="page-cronjob" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Recording retention cron</h3></div>
+          <p class="hint">
+            Tell the system how many days to keep recordings. A daily server job deletes older WAV files automatically
+            (systemd timer at ~02:15). You can also run cleanup now.
+          </p>
+          <form id="cron-form" class="form-stack" style="max-width:420px;margin-top:1rem">
+            <label class="inline">
+              <input type="checkbox" id="cron-enabled" checked />
+              Enable automatic deletion
+            </label>
+            <label for="cron-days">Delete recordings older than (days)</label>
+            <input id="cron-days" type="number" min="1" max="3650" value="7" required />
+            <button type="submit">Save schedule</button>
+            <button type="button" class="ghost" id="cron-run-now">Run cleanup now</button>
+            <p id="cron-msg" class="hint"></p>
+            <p class="hint" id="cron-path"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="page-settings" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>AMD confidence gate</h3></div>
+          <p class="hint">
+            Only calls the AI marks <strong>HUMAN</strong> with confidence at or above this minimum are passed to
+            VICIdial agents. HUMAN calls below the minimum are downgraded (e.g. to MACHINE) and are not connected.
+            Controlled here on the AI AMD server — no changes needed on any VICIdial dialer.
+          </p>
+          <form id="amd-form" class="form-stack" style="max-width:460px;margin-top:.5rem">
+            <label class="inline">
+              <input type="checkbox" id="amd-enabled" checked />
+              Enable confidence gate
+            </label>
+            <label for="amd-min">Minimum HUMAN confidence (%)</label>
+            <input id="amd-min" type="number" min="0" max="100" step="1" value="70" required />
+            <label for="amd-action">Below-threshold HUMAN becomes</label>
+            <select id="amd-action">
+              <option value="MACHINE">MACHINE (hang up / dispose)</option>
+              <option value="IVR">IVR</option>
+              <option value="SIT">CANCELLED</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+            <button type="submit">Save gate settings</button>
+            <p id="amd-msg" class="hint"></p>
+            <p class="hint" id="amd-path"></p>
+          </form>
+        </div>
+        <div class="settings-grid">
+          <div class="panel">
+            <div class="panel-head"><h3>Change password</h3></div>
+            <p class="hint">Update the portal login password for the signed-in admin account.</p>
+            <form id="password-form" class="form-stack" style="max-width:420px">
+              <label for="pw-current">Current password</label>
+              <input id="pw-current" name="current_password" type="password" autocomplete="current-password" required />
+              <label for="pw-new">New password</label>
+              <input id="pw-new" name="new_password" type="password" autocomplete="new-password" minlength="8" required />
+              <label for="pw-confirm">Confirm new password</label>
+              <input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required />
+              <button type="submit">Update password</button>
+              <p id="password-msg" class="hint"></p>
+            </form>
+            <div class="panel-head" style="margin-top:1rem"><h3>Recordings link repair</h3></div>
+            <p class="hint">If Play shows missing audio, repair scans <code>/opt/openamd/recordings</code> and relinks WAV files to Call IDs.</p>
+            <button type="button" class="ghost" id="repair-recordings-btn">Repair recording links</button>
+            <p id="repair-msg" class="hint"></p>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>API endpoints for VICIdial</h3></div>
+            <pre class="codeblock">POST /api/v1/analyze
+Header: X-API-Key: oam_xxxxxxxx
+Form fields: callid, campaign, caller, called, ani, audio (wav)
+
+Response:
+{
+  "status": "HUMAN|MACHINE|IVR|FAX|SIT|ERROR",
+  "confidence": 0.98,
+  "processing_ms": 420,
+  "callid": "..."
+}</pre>
+            <h3 style="margin-top:1.25rem">Health</h3>
+            <pre id="health-json" class="codeblock">Loading…</pre>
+          </div>
+        </div>
+      </section>
+
+      <div id="player-bar" class="player-bar hidden">
+        <div class="player-meta">
+          <div>
+            <span class="hint">Playing</span>
+            <strong id="player-label">—</strong>
+          </div>
+          <button type="button" class="ghost" id="player-close">Close</button>
+        </div>
+        <audio id="player-audio" controls preload="metadata"></audio>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
