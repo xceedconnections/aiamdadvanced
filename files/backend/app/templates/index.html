@@ -218,7 +218,11 @@
         <div class="panel">
           <div class="panel-head">
             <h3>CDR — all call results</h3>
-            <button class="ghost" type="button" id="cdr-refresh">Refresh</button>
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+              <button class="ghost" type="button" id="cdr-export-csv">Export CSV</button>
+              <button class="ghost" type="button" id="cdr-export-excel">Export Excel</button>
+              <button class="ghost" type="button" id="cdr-refresh">Refresh</button>
+            </div>
           </div>
           <div class="filter-bar">
             <label>
@@ -245,6 +249,7 @@
             </label>
             <button class="ghost" type="button" id="cdr-search-btn">Apply</button>
           </div>
+          <p class="hint">Export uses the same search / VICIdial / type filters (up to 20,000 rows).</p>
           <div class="table-wrap calls-table">
             <table>
               <thead>
@@ -373,14 +378,47 @@
       <section id="page-training" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Correct AI decisions</h3></div>
-          <p class="hint">Pick a recent call, set the true label, and save. Play the recording first to verify human vs machine.</p>
+          <p class="hint">
+            Search by <strong>called number</strong> or <strong>caller ID</strong>, play the recording, set the true label, and save.
+            Corrections are stored for training and update the call status in CDR.
+          </p>
+          <div class="filter-bar">
+            <label>
+              Search
+              <input id="train-search" type="search" maxlength="64" placeholder="Called number or caller ID" />
+            </label>
+            <label>
+              VICIdial
+              <select id="train-server-filter">
+                <option value="">ALL</option>
+              </select>
+            </label>
+            <label>
+              AI said
+              <select id="train-status-filter">
+                <option value="">ALL</option>
+                <option value="HUMAN">Human</option>
+                <option value="MACHINE">Machine</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">Cancelled</option>
+                <option value="FAX">Fax</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <button class="ghost" type="button" id="train-search-btn">Search</button>
+            <button class="ghost" type="button" id="train-refresh">Refresh</button>
+          </div>
+          <p class="hint" id="train-meta">Enter a number to find calls, or refresh for recent calls.</p>
           <div class="table-wrap calls-table">
             <table>
               <thead>
                 <tr>
                   <th>Audio</th>
                   <th>Call ID</th>
+                  <th>Time</th>
                   <th>Server</th>
+                  <th>Called</th>
+                  <th>Caller ID</th>
                   <th>AI said</th>
                   <th>Correct to</th>
                   <th></th>

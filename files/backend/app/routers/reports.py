@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta
+from io import BytesIO, StringIO
 from typing import Optional
+from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -22,6 +25,7 @@ from app.schemas import CallOut, CorrectionCreate, CdrPageOut, ServerReport
 router = APIRouter(prefix="/api", tags=["reports"])
 
 _ALLOWED_STATUS = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR", "ALL"}
+_EXPORT_MAX_ROWS = 20000
 
 
 def _normalize_status(status: Optional[str]) -> Optional[str]:
@@ -116,6 +120,78 @@ def _filtered_query(
     return query
 
 
+def _export_headers() -> list[str]:
+    return [
+        "id",
+        "call_id",
+        "created_at",
+        "server",
+        "called_number",
+        "caller_id",
+        "ani",
+        "campaign",
+        "status",
+        "raw_status",
+        "confidence",
+        "processing_ms",
+        "audio_seconds",
+    ]
+
+
+def _export_row(r: CallAnalysis, server_map: dict) -> list[str]:
+    return [
+        str(r.id),
+        r.call_id or "",
+        r.created_at.isoformat(sep=" ", timespec="seconds") if r.created_at else "",
+        server_map.get(r.server_id, ""),
+        getattr(r, "called_number", None) or "",
+        r.caller_id or "",
+        r.ani or "",
+        r.campaign or "",
+        r.status or "",
+        getattr(r, "raw_status", "") or "",
+        f"{float(r.confidence or 0):.4f}",
+        str(r.processing_ms or 0),
+        f"{float(r.audio_seconds or 0):.3f}",
+    ]
+
+
+def _build_csv(rows: list[CallAnalysis], server_map: dict) -> bytes:
+    import csv
+
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_export_headers())
+    for r in rows:
+        writer.writerow(_export_row(r, server_map))
+    # UTF-8 BOM so Excel opens numbers/phones correctly
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+
+def _build_excel_xml(rows: list[CallAnalysis], server_map: dict) -> bytes:
+    """Excel-compatible SpreadsheetML (.xls) — no extra Python packages."""
+    headers = _export_headers()
+    parts = [
+        '<?xml version="1.0"?>',
+        '<?mso-application progid="Excel.Sheet"?>',
+        '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"',
+        ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">',
+        '<Worksheet ss:Name="CDR"><Table>',
+    ]
+    parts.append(
+        "<Row>"
+        + "".join(f'<Cell><Data ss:Type="String">{xml_escape(h)}</Data></Cell>' for h in headers)
+        + "</Row>"
+    )
+    for r in rows:
+        cells = []
+        for value in _export_row(r, server_map):
+            cells.append(f'<Cell><Data ss:Type="String">{xml_escape(value)}</Data></Cell>')
+        parts.append("<Row>" + "".join(cells) + "</Row>")
+    parts.append("</Table></Worksheet></Workbook>")
+    return "\n".join(parts).encode("utf-8")
+
+
 @router.get("/live", response_model=list[CallOut])
 def live_calls(
     limit: int = Query(50, ge=1, le=200),
@@ -149,6 +225,55 @@ def cdr_calls(
         page_size=page_size,
         rows=_call_out_list(db, rows, repair=False),
     )
+
+
+@router.get("/cdr/export")
+def cdr_export(
+    format: str = Query("csv", pattern="^(csv|xlsx|xls)$"),
+    server_id: Optional[int] = None,
+    status: Optional[str] = Query(None, max_length=16),
+    q: Optional[str] = Query(None, max_length=64),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Export filtered CDR as CSV or Excel (.xls SpreadsheetML)."""
+    base = _filtered_query(db, server_id=server_id, status=status, q=q)
+    rows = base.limit(_EXPORT_MAX_ROWS).all()
+    server_map = {s.id: s.name for s in db.query(VicidialServer).all()}
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+    fmt = (format or "csv").lower()
+    if fmt == "csv":
+        data = _build_csv(rows, server_map)
+        filename = f"openamd_cdr_{stamp}.csv"
+        media = "text/csv; charset=utf-8"
+    else:
+        data = _build_excel_xml(rows, server_map)
+        filename = f"openamd_cdr_{stamp}.xls"
+        media = "application/vnd.ms-excel"
+
+    return StreamingResponse(
+        BytesIO(data),
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Rows": str(len(rows)),
+        },
+    )
+
+
+@router.get("/training/calls", response_model=list[CallOut])
+def training_calls(
+    limit: int = Query(50, ge=1, le=200),
+    server_id: Optional[int] = None,
+    status: Optional[str] = Query(None, max_length=16),
+    q: Optional[str] = Query(None, max_length=64, description="Search called number or caller ID"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Calls for Training page — search by called number / caller ID, then correct."""
+    rows = _filtered_query(db, server_id=server_id, status=status, q=q).limit(limit).all()
+    return _call_out_list(db, rows, repair=False)
 
 
 @router.get("/reports/servers", response_model=list[ServerReport])
@@ -250,13 +375,32 @@ def correct_call(
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
 
+    corrected = (payload.corrected_status or "").strip().upper()
+    if corrected == "CANCELLED":
+        corrected = "SIT"
+    if corrected not in {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR"}:
+        raise HTTPException(status_code=400, detail="Invalid corrected_status")
+
+    ai_status = call.status
     correction = TrainingCorrection(
         call_id=call.id,
-        ai_status=call.status,
-        corrected_status=payload.corrected_status.upper(),
+        ai_status=ai_status,
+        corrected_status=corrected,
         corrected_by=user.username,
-        notes=payload.notes,
+        notes=payload.notes or "",
     )
     db.add(correction)
+
+    # Keep original AI label in raw_status; update visible status for CDR / future tuning
+    if not (getattr(call, "raw_status", None) or "").strip():
+        call.raw_status = ai_status
+    call.status = corrected
+
     db.commit()
-    return {"ok": True, "id": correction.id}
+    return {
+        "ok": True,
+        "id": correction.id,
+        "call_analysis_id": call.id,
+        "ai_status": ai_status,
+        "corrected_status": corrected,
+    }

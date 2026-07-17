@@ -149,7 +149,9 @@ function openPage(page) {
     if (sizeSel) state.cdrPageSize = Number(sizeSel.value) || 50;
     fillServerFilters().finally(() => loadCdr());
   }
-  if (page === "training") loadTraining();
+  if (page === "training") {
+    fillServerFilters().then(() => loadTraining());
+  }
   if (page === "wipe") loadWipePage();
   if (page === "audio") loadAudioPage();
   if (page === "cronjob") loadCronPage();
@@ -756,8 +758,10 @@ async function fillServerFilters() {
         .join("");
     const liveSel = $("#live-server-filter");
     const cdrSel = $("#cdr-server-filter");
+    const trainSel = $("#train-server-filter");
     const liveVal = liveSel?.value || "";
     const cdrVal = cdrSel?.value || "";
+    const trainVal = trainSel?.value || "";
     if (liveSel) {
       liveSel.innerHTML = options;
       liveSel.value = liveVal;
@@ -766,9 +770,67 @@ async function fillServerFilters() {
       cdrSel.innerHTML = options;
       cdrSel.value = cdrVal;
     }
+    if (trainSel) {
+      trainSel.innerHTML = options;
+      trainSel.value = trainVal;
+    }
   } catch (e) {
     /* ignore */
   }
+}
+
+function trainQueryParams() {
+  const params = new URLSearchParams();
+  params.set("limit", "80");
+  const serverId = $("#train-server-filter")?.value || "";
+  const status = $("#train-status-filter")?.value || "";
+  const q = ($("#train-search")?.value || "").trim();
+  if (serverId) params.set("server_id", serverId);
+  if (status) params.set("status", status);
+  if (q) params.set("q", q);
+  return params.toString();
+}
+
+function cdrExportParams(format) {
+  const params = new URLSearchParams();
+  params.set("format", format);
+  const serverId = $("#cdr-server-filter")?.value || "";
+  const status = $("#cdr-status-filter")?.value || "";
+  const q = ($("#cdr-search")?.value || "").trim();
+  if (serverId) params.set("server_id", serverId);
+  if (status) params.set("status", status);
+  if (q) params.set("q", q);
+  return params.toString();
+}
+
+async function downloadCdrExport(format) {
+  const url = `/api/cdr/export?${cdrExportParams(format)}`;
+  const res = await fetch(url, {
+    headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+  });
+  if (!res.ok) {
+    let detail = `Export failed (${res.status})`;
+    try {
+      const j = await res.json();
+      detail = j.detail || detail;
+    } catch (e) {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const match = cd.match(/filename=\"?([^\";]+)\"?/i);
+  const filename =
+    (match && match[1]) ||
+    (format === "csv" ? "openamd_cdr.csv" : "openamd_cdr.xls");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
 }
 
 function formatUptime(seconds) {
@@ -843,6 +905,20 @@ $("#cdr-refresh")?.addEventListener("click", () => loadCdr());
 $("#cdr-search-btn")?.addEventListener("click", () => resetCdrToFirstPage());
 $("#cdr-server-filter")?.addEventListener("change", () => resetCdrToFirstPage());
 $("#cdr-status-filter")?.addEventListener("change", () => resetCdrToFirstPage());
+$("#cdr-export-csv")?.addEventListener("click", async () => {
+  try {
+    await downloadCdrExport("csv");
+  } catch (err) {
+    alert(err.message || "CSV export failed");
+  }
+});
+$("#cdr-export-excel")?.addEventListener("click", async () => {
+  try {
+    await downloadCdrExport("xls");
+  } catch (err) {
+    alert(err.message || "Excel export failed");
+  }
+});
 $("#cdr-page-size")?.addEventListener("change", () => {
   state.cdrPageSize = Number($("#cdr-page-size").value) || 50;
   resetCdrToFirstPage();
@@ -1122,13 +1198,26 @@ async function loadReports() {
 $("#report-days").addEventListener("change", loadReports);
 
 async function loadTraining() {
-  const live = await api("/api/live?limit=40");
-  $("#train-body").innerHTML = live
-    .map(
-      (r) => `<tr>
+  const meta = $("#train-meta");
+  try {
+    if (meta) meta.textContent = "Loading…";
+    const rows = await api(`/api/training/calls?${trainQueryParams()}`);
+    const q = ($("#train-search")?.value || "").trim();
+    if (meta) {
+      meta.textContent = q
+        ? `${rows.length} call(s) matching “${q}”`
+        : `${rows.length} recent call(s) — search by called number or caller ID to train specific leads`;
+    }
+
+    $("#train-body").innerHTML = rows
+      .map(
+        (r) => `<tr>
       <td>${audioButtons(r)}</td>
       <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id)}</td>
+      <td>${fmtTime(r.created_at)}</td>
       <td>${escapeHtml(r.server_name || "—")}</td>
+      <td>${escapeHtml(r.called_number || "—")}</td>
+      <td>${escapeHtml(r.caller_id || "—")}</td>
       <td>${statusBadge(r.status)}</td>
       <td>
         <select id="corr-${r.id}">
@@ -1141,18 +1230,21 @@ async function loadTraining() {
       </td>
       <td><button class="ghost" type="button" onclick="saveCorrection(${r.id})">Save</button></td>
     </tr>`
-    )
-    .join("");
+      )
+      .join("");
 
-  $("#train-cards").innerHTML = live
-    .map(
-      (r) => `<article class="call-card">
+    $("#train-cards").innerHTML = rows
+      .map(
+        (r) => `<article class="call-card">
       <div class="call-card-top">
         ${statusBadge(r.status)}
         <span class="hint">${escapeHtml(r.server_name || "—")}</span>
       </div>
       <div class="call-card-grid">
         <div><div class="k">Call ID</div><div class="v">${escapeHtml(r.call_id)}</div></div>
+        <div><div class="k">Called</div><div class="v">${escapeHtml(r.called_number || "—")}</div></div>
+        <div><div class="k">Caller ID</div><div class="v">${escapeHtml(r.caller_id || "—")}</div></div>
+        <div><div class="k">Time</div><div class="v">${fmtTime(r.created_at)}</div></div>
       </div>
       <div class="call-card-actions" style="margin-top:.65rem;flex-direction:column;align-items:stretch">
         ${audioButtons(r)}
@@ -1167,9 +1259,25 @@ async function loadTraining() {
         <button class="ghost" type="button" onclick="saveCorrectionMobile(${r.id})">Save correction</button>
       </div>
     </article>`
-    )
-    .join("");
+      )
+      .join("");
+  } catch (err) {
+    if (meta) meta.textContent = err.message || "Failed to load training calls";
+    $("#train-body").innerHTML = "";
+    $("#train-cards").innerHTML = "";
+  }
 }
+
+$("#train-search-btn")?.addEventListener("click", () => loadTraining());
+$("#train-refresh")?.addEventListener("click", () => loadTraining());
+$("#train-server-filter")?.addEventListener("change", () => loadTraining());
+$("#train-status-filter")?.addEventListener("change", () => loadTraining());
+$("#train-search")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    loadTraining();
+  }
+});
 
 window.saveCorrection = async (id) => {
   const status = $(`#corr-${id}`).value;
@@ -1177,7 +1285,8 @@ window.saveCorrection = async (id) => {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert("Correction saved");
+  alert("Correction saved — CDR status updated for future tuning.");
+  loadTraining();
 };
 
 window.saveCorrectionMobile = async (id) => {
@@ -1186,7 +1295,8 @@ window.saveCorrectionMobile = async (id) => {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert("Correction saved");
+  alert("Correction saved — CDR status updated for future tuning.");
+  loadTraining();
 };
 
 async function loadHealth() {
