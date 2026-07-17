@@ -2,6 +2,7 @@
 *.pyc
 *.pyo
 .env
+files/backend/.env
 *.tar.gz
 .DS_Store
 venv/

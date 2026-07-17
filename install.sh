@@ -23,7 +23,8 @@ require_ubuntu
 detect_project_dir
 
 echo "==========================================="
-echo " OpenAMD Full Installer"
+echo " OpenAMD Advanced Full Installer"
+echo " Hybrid: Heuristic + Silero VAD"
 echo " AI AMD Server + Portal"
 echo "==========================================="
 echo " Install dir : ${INSTALL_DIR}"
