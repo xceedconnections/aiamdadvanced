@@ -104,6 +104,14 @@ def update_server(
         raise HTTPException(status_code=404, detail="Server not found")
 
     data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"]:
+        clash = (
+            db.query(VicidialServer)
+            .filter(VicidialServer.name == data["name"], VicidialServer.id != server_id)
+            .first()
+        )
+        if clash:
+            raise HTTPException(status_code=400, detail="Server name already exists")
     for k, v in data.items():
         setattr(server, k, v)
     server.updated_at = datetime.utcnow()

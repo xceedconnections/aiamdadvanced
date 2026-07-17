@@ -1,8 +1,9 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 *.pyo
-.env
-files/backend/.env
-*.tar.gz
-.DS_Store
+.venv/
 venv/
+*.bak
+*.bak.*
+.DS_Store
+Thumbs.db

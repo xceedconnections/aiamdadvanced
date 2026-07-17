@@ -192,3 +192,15 @@ curl -sS http://YOUR_AI_AMD_IP/api/health
 ```
 
 ViciBox dialer installer repo: https://github.com/xceedconnections/vicidialaiamd
+
+---
+
+## Portal security (port 80)
+
+- Port stays **80** (no change for ViciBox default URL)
+- Login: math captcha + **5 wrong passwords ? 15 minute lockout** (per username+IP)
+- SQL: ORM parameterized queries (no string-built SQL for login/API)
+- Nginx: security headers, connection limits, rate limits on `/api/login` and `/api/v1/`
+- Analyze API: requires valid `X-API-Key`; optional **IP whitelist** per VICIdial server
+- Unknown dialers without a key get **401** before AMD / recordings run
+

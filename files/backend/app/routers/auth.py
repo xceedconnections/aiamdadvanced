@@ -2,10 +2,11 @@ import re
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.auth import lockout
 from app.auth.security import (
     create_access_token,
     get_current_user,
@@ -30,6 +31,13 @@ router = APIRouter(prefix="/api", tags=["auth"])
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 
 
+def _request_ip(request: Request) -> str:
+    return lockout.client_ip_from_headers(
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else "",
+    )
+
+
 @router.get("/captcha")
 def captcha_challenge():
     captcha_id, question = create_math_captcha()
@@ -37,20 +45,43 @@ def captcha_challenge():
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     username = (payload.username or "").strip()
+    ip = _request_ip(request)
+
+    locked, remaining = lockout.is_locked(username, ip)
+    if locked:
+        mins = max(1, (remaining + 59) // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed logins. Try again in about {mins} minute(s).",
+        )
+
     if not _USERNAME_RE.match(username):
+        lockout.record_failure(username, ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not verify_math_captcha(payload.captcha_id, payload.captcha_answer):
+        # Captcha fails do not count toward password lockout
         raise HTTPException(status_code=400, detail="Incorrect or expired captcha")
 
     # Parameterized ORM lookup — never concatenate user input into SQL
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid username or password")
+        count, just_locked = lockout.record_failure(username, ip)
+        if just_locked or lockout.is_locked(username, ip)[0]:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed logins. Access blocked for 15 minutes.",
+            )
+        left = max(0, lockout.MAX_FAILURES - count)
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid username or password ({left} attempt(s) left before lockout)",
+        )
     if not user.is_active:
         raise HTTPException(status_code=403, detail="User disabled")
 
+    lockout.clear_failures(username, ip)
     user.last_login = datetime.utcnow()
     db.commit()
 

@@ -979,15 +979,25 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
 
 async function loadServers() {
   const servers = await api("/api/servers");
+  window.__openamd_servers = servers;
   $("#servers-body").innerHTML = servers
     .map(
       (s) => `<tr>
-      <td><strong>${escapeHtml(s.name)}</strong><div class="hint">${escapeHtml(s.description || "")}</div></td>
+      <td><strong>${escapeHtml(s.name)}</strong><div class="hint">${escapeHtml(s.description || "")}</div>
+        <div class="hint">${escapeHtml(s.timezone || "")}</div></td>
+      <td><span class="hint">${escapeHtml(s.ip_whitelist || "(any)")}</span></td>
       <td>${s.calls_today}</td>
       <td>${s.total_calls}</td>
       <td>${fmtTime(s.last_seen)}</td>
       <td>${s.is_active ? "Yes" : "No"}</td>
-      <td><button class="ghost" type="button" onclick="deactivateServer(${s.id})">Disable</button></td>
+      <td style="white-space:nowrap">
+        <button class="ghost" type="button" onclick="editServer(${s.id})">Edit</button>
+        ${
+          s.is_active
+            ? `<button class="ghost" type="button" onclick="deactivateServer(${s.id})">Disable</button>`
+            : `<button class="ghost" type="button" onclick="activateServer(${s.id})">Enable</button>`
+        }
+      </td>
     </tr>`
     )
     .join("");
@@ -998,22 +1008,69 @@ async function loadServers() {
     .join("");
 }
 
+function resetServerForm() {
+  const form = $("#server-form");
+  form.reset();
+  $("#server-edit-id").value = "";
+  $("#server-timezone").value = "America/New_York";
+  $("#server-form-title").textContent = "Add VICIdial server";
+  $("#server-submit-btn").textContent = "Create server";
+  $("#server-cancel-edit").classList.add("hidden");
+  $("#server-msg").textContent = "";
+}
+
+window.editServer = (id) => {
+  const servers = window.__openamd_servers || [];
+  const s = servers.find((x) => x.id === id);
+  if (!s) return;
+  $("#server-edit-id").value = String(s.id);
+  $("#server-name").value = s.name || "";
+  $("#server-description").value = s.description || "";
+  $("#server-timezone").value = s.timezone || "UTC";
+  $("#server-ip-whitelist").value = s.ip_whitelist || "";
+  $("#server-form-title").textContent = "Edit VICIdial server";
+  $("#server-submit-btn").textContent = "Save changes";
+  $("#server-cancel-edit").classList.remove("hidden");
+  $("#server-msg").textContent = `Editing #${s.id} — update name, description, timezone, or dialer IP(s).`;
+  $("#server-name").focus();
+};
+
 window.deactivateServer = async (id) => {
   if (!confirm("Disable this VICIdial server?")) return;
   await api(`/api/servers/${id}`, { method: "DELETE" });
+  resetServerForm();
   loadServers();
 };
+
+window.activateServer = async (id) => {
+  await api(`/api/servers/${id}`, {
+    method: "PATCH",
+    json: { is_active: true },
+  });
+  loadServers();
+};
+
+$("#server-cancel-edit").addEventListener("click", () => resetServerForm());
 
 $("#server-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
+  const id = (fd.get("id") || "").toString().trim();
+  const payload = {
+    name: (fd.get("name") || "").toString().trim(),
+    description: (fd.get("description") || "").toString(),
+    timezone: (fd.get("timezone") || "UTC").toString(),
+    ip_whitelist: (fd.get("ip_whitelist") || "").toString().trim(),
+  };
   try {
-    await api("/api/servers", {
-      method: "POST",
-      json: Object.fromEntries(fd.entries()),
-    });
-    $("#server-msg").textContent = "Server created.";
-    e.target.reset();
+    if (id) {
+      await api(`/api/servers/${id}`, { method: "PATCH", json: payload });
+      $("#server-msg").textContent = "Server updated.";
+    } else {
+      await api("/api/servers", { method: "POST", json: payload });
+      $("#server-msg").textContent = "Server created.";
+    }
+    resetServerForm();
     loadServers();
   } catch (err) {
     $("#server-msg").textContent = err.message;

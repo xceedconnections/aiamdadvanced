@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -91,7 +91,25 @@ def get_current_user_bearer_or_query(
     return _user_from_token(raw, db)
 
 
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return ""
+
+
+def _ip_allowed(whitelist: str, client_ip: str) -> bool:
+    raw = (whitelist or "").strip()
+    if not raw:
+        return True  # blank = allow any IP (key still required)
+    allowed = {p.strip() for p in raw.split(",") if p.strip()}
+    return client_ip in allowed
+
+
 def get_server_from_api_key(
+    request: Request,
     api_key: Optional[str] = Depends(api_key_header),
     db: Session = Depends(get_db),
 ) -> VicidialServer:
@@ -105,6 +123,7 @@ def get_server_from_api_key(
         .first()
     )
     if not record:
+        # Reject before any audio decode / AMD / recording work
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     server = (
@@ -114,6 +133,10 @@ def get_server_from_api_key(
     )
     if not server:
         raise HTTPException(status_code=401, detail="Server inactive or missing")
+
+    client = _client_ip(request)
+    if not _ip_allowed(server.ip_whitelist or "", client):
+        raise HTTPException(status_code=403, detail="Client IP not allowed for this server")
 
     record.last_used = datetime.utcnow()
     server.last_seen = datetime.utcnow()

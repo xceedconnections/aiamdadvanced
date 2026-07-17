@@ -291,6 +291,7 @@
                 <thead>
                   <tr>
                     <th>Name</th>
+                    <th>IP whitelist</th>
                     <th>Today</th>
                     <th>Total</th>
                     <th>Last seen</th>
@@ -303,17 +304,21 @@
             </div>
           </div>
           <div class="panel">
-            <div class="panel-head"><h3>Add VICIdial server</h3></div>
+            <div class="panel-head"><h3 id="server-form-title">Add VICIdial server</h3></div>
             <form id="server-form" class="form-stack">
+              <input type="hidden" name="id" id="server-edit-id" value="" />
               <label>Server name</label>
-              <input name="name" required placeholder="USA-01" />
+              <input name="name" id="server-name" required placeholder="USA-01" />
               <label>Description</label>
-              <input name="description" placeholder="Primary outbound dialer" />
+              <input name="description" id="server-description" placeholder="Primary outbound dialer" />
               <label>Timezone</label>
-              <input name="timezone" value="America/New_York" />
-              <label>IP whitelist (comma-separated, blank = allow all)</label>
-              <input name="ip_whitelist" placeholder="203.0.113.10,203.0.113.11" />
-              <button type="submit">Create server</button>
+              <input name="timezone" id="server-timezone" value="America/New_York" />
+              <label>IP whitelist (comma-separated dialer IPs; blank = allow any IP with a valid key)</label>
+              <input name="ip_whitelist" id="server-ip-whitelist" placeholder="203.0.113.10,203.0.113.11" />
+              <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
+                <button type="submit" id="server-submit-btn">Create server</button>
+                <button type="button" class="ghost hidden" id="server-cancel-edit">Cancel edit</button>
+              </div>
               <p id="server-msg" class="hint"></p>
             </form>
 
