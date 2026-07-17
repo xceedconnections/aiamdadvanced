@@ -62,6 +62,7 @@ server {
     }
 
     # Analyze API — allow legitimate dialer bursts, cap floods
+    # Use \$remote_addr only for forwarded IP (ignore client-supplied XFF spoofing)
     location /api/v1/ {
         limit_req zone=openamd_api burst=60 nodelay;
         limit_req_status 429;
@@ -69,7 +70,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 60s;
         client_max_body_size 10M;

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     APP_NAME: str = "OpenAMD Advanced"
-    APP_VERSION: str = "2.1.0"
+    APP_VERSION: str = "2.1.1"
     DEBUG: bool = False
 
     DB_HOST: str = "127.0.0.1"

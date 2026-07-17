@@ -313,8 +313,9 @@
               <input name="description" id="server-description" placeholder="Primary outbound dialer" />
               <label>Timezone</label>
               <input name="timezone" id="server-timezone" value="America/New_York" />
-              <label>IP whitelist (comma-separated dialer IPs; blank = allow any IP with a valid key)</label>
-              <input name="ip_whitelist" id="server-ip-whitelist" placeholder="203.0.113.10,203.0.113.11" />
+              <label>Allowed dialer IPs (IP whitelist) — required to restrict access</label>
+              <input name="ip_whitelist" id="server-ip-whitelist" placeholder="62.238.46.191" />
+              <p class="hint">Comma-separated public IPs of VICIdial dialers allowed to call the API (example: <code>62.238.46.191</code>). Blank = any IP with a valid API key. Server name alone does not restrict access.</p>
               <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
                 <button type="submit" id="server-submit-btn">Create server</button>
                 <button type="button" class="ghost hidden" id="server-cancel-edit">Cancel edit</button>

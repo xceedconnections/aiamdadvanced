@@ -91,21 +91,60 @@ def get_current_user_bearer_or_query(
     return _user_from_token(raw, db)
 
 
+def _normalize_ip(ip: str) -> str:
+    value = (ip or "").strip()
+    if value.lower().startswith("::ffff:"):
+        value = value[7:]
+    # Strip surrounding brackets from IPv6 literals
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return value.strip()
+
+
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
+    """Resolve dialer IP behind Nginx.
+
+    Prefer X-Real-IP ($remote_addr). For X-Forwarded-For, use the *last*
+    hop so a client cannot spoof a whitelisted IP as the first entry.
+    """
+    real = _normalize_ip(request.headers.get("x-real-ip") or "")
+    if real and real not in {"127.0.0.1", "::1", "localhost"}:
+        return real
+
+    xff = (request.headers.get("x-forwarded-for") or "").strip()
     if xff:
-        return xff.split(",")[0].strip()
+        parts = [_normalize_ip(p) for p in xff.split(",") if p.strip()]
+        parts = [p for p in parts if p]
+        if parts:
+            # Last entry is the TCP peer nginx saw (with proxy_add_x_forwarded_for)
+            return parts[-1]
+
+    if real:
+        return real
+
     if request.client and request.client.host:
-        return request.client.host
+        return _normalize_ip(request.client.host)
     return ""
 
 
+def _parse_whitelist(whitelist: str) -> set[str]:
+    return {
+        _normalize_ip(p)
+        for p in (whitelist or "").split(",")
+        if _normalize_ip(p)
+    }
+
+
 def _ip_allowed(whitelist: str, client_ip: str) -> bool:
-    raw = (whitelist or "").strip()
-    if not raw:
+    allowed = _parse_whitelist(whitelist)
+    if not allowed:
         return True  # blank = allow any IP (key still required)
-    allowed = {p.strip() for p in raw.split(",") if p.strip()}
-    return client_ip in allowed
+
+    client = _normalize_ip(client_ip)
+    if not client or client in {"127.0.0.1", "::1", "localhost"}:
+        # Whitelist is set but we only see loopback → do not bypass
+        return False
+    return client in allowed
 
 
 def get_server_from_api_key(
@@ -136,7 +175,13 @@ def get_server_from_api_key(
 
     client = _client_ip(request)
     if not _ip_allowed(server.ip_whitelist or "", client):
-        raise HTTPException(status_code=403, detail="Client IP not allowed for this server")
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Client IP '{client or 'unknown'}' is not in this server's IP whitelist. "
+                "Only listed dialer IPs may use AI AMD (blank whitelist = allow all)."
+            ),
+        )
 
     record.last_used = datetime.utcnow()
     server.last_seen = datetime.utcnow()
