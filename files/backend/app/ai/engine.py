@@ -3,7 +3,9 @@ OpenAMD Advanced AI Engine — Hybrid (Heuristic + Silero VAD)
 
 Combines the Phase-3 outbound heuristic AMD rules with Silero VAD speech
 features. Prefer HUMAN when uncertain so live agents get calls.
-Only return MACHINE/IVR/SIT with strong evidence.
+Blank / near-silent audio is disposed as MACHINE when enabled in portal
+Settings (blank_as_machine). Only return MACHINE/IVR/SIT with strong
+evidence otherwise.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 import io
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -21,11 +23,12 @@ except ImportError:  # pragma: no cover
     sf = None
 
 from app.ai import silero_vad
+from app.amd_settings import is_blank_as_machine_enabled
 
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "4.0.0",
+    "version": "4.1.0",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero)",
 }
 
@@ -39,7 +42,8 @@ class AnalysisResult:
     details: Dict[str, Any]
 
 
-def _load_audio(data: bytes, target_sr: int = 8000) -> Tuple[np.ndarray, int]:
+def _load_audio(data: bytes, target_sr: int = 8000) -> Tuple[np.ndarray, int, float]:
+    """Return (audio, sample_rate, peak_before_normalize)."""
     if sf is None:
         raise RuntimeError("soundfile is not installed")
 
@@ -55,11 +59,42 @@ def _load_audio(data: bytes, target_sr: int = 8000) -> Tuple[np.ndarray, int]:
         audio = np.interp(x_new, x_old, audio).astype(np.float32)
         sr = target_sr
 
-    peak = np.max(np.abs(audio)) if len(audio) else 0.0
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     if peak > 1e-6:
         audio = audio / peak
 
-    return audio.astype(np.float32), sr
+    return audio.astype(np.float32), sr, peak
+
+
+def _is_blank(
+    feats: Dict[str, float],
+    silero: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """True when audio is empty, too short, or has no usable speech."""
+    duration = float(feats.get("duration", 0.0))
+    peak = float(feats.get("peak", 1.0))
+    rms = float(feats.get("rms", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+
+    if duration < 0.6:
+        return True
+    # Peak before normalize — true silence / near-silence files
+    if peak < 0.008:
+        return True
+    if peak < 0.02 and speech_ratio < 0.08:
+        return True
+    if rms < 0.02 and speech_ratio < 0.03:
+        return True
+
+    if silero and silero.get("ok"):
+        s_ratio = float(silero.get("speech_ratio", 0.0))
+        s_mean = float(silero.get("mean_prob", 0.0))
+        s_long = float(silero.get("longest_speech_ms", 0.0))
+        # No meaningful speech across the clip
+        if s_ratio < 0.05 and s_mean < 0.15 and s_long < 200:
+            return True
+
+    return False
 
 
 def _frame_energy(audio: np.ndarray, sr: int, frame_ms: int = 20) -> np.ndarray:
@@ -170,7 +205,10 @@ def _classify_heuristic(feats: Dict[str, float], beep: bool, sit: bool) -> Tuple
     if beep:
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
 
-    if duration < 0.6 or rms < 0.02 or speech_ratio < 0.03:
+    # Blank / near-silent — MACHINE when setting enabled (portal Settings)
+    if _is_blank(feats):
+        if is_blank_as_machine_enabled():
+            return "MACHINE", 0.92
         return "HUMAN", 0.55
 
     if duration >= 2.2 and longest_burst >= 2000 and num_bursts >= 4:
@@ -200,6 +238,10 @@ def _fuse_with_silero(
 
     Returns (status, confidence, fuse_note).
     """
+    # Blank / no speech → MACHINE when portal setting is enabled
+    if _is_blank(feats, silero) and is_blank_as_machine_enabled():
+        return "MACHINE", max(float(confidence), 0.92), "blank_silence"
+
     if not silero.get("ok"):
         return status, confidence, "heuristic_only"
 
@@ -214,7 +256,7 @@ def _fuse_with_silero(
         return status, confidence, "heuristic_sit"
 
     if status == "MACHINE" and confidence >= 0.88:
-        # Beep / strong machine — keep, slight boost if Silero also hears long speech
+        # Beep / blank / strong machine — keep
         if s_long >= 1500 or s_ratio >= 0.4:
             return status, min(0.99, confidence + 0.05), "agree_machine_strong"
         return status, confidence, "heuristic_machine_strong"
@@ -233,6 +275,7 @@ def _fuse_with_silero(
         return "MACHINE", max(confidence, 0.8), "silero_many_segments"
 
     # Silero: short sparse speech → human ("hello?", "yeah?")
+    # Do not override high-confidence MACHINE (beep / blank / strong AM)
     if s_segs <= 3 and s_long <= 1200 and s_ratio <= 0.55:
         if status == "MACHINE" and confidence < 0.88:
             return "HUMAN", max(0.75, 1.0 - confidence + 0.2), "silero_override_human"
@@ -257,9 +300,22 @@ def analyze_audio(data: bytes, sample_hint_sr: int = 8000) -> AnalysisResult:
     t0 = time.perf_counter()
 
     try:
-        audio, sr = _load_audio(data, target_sr=sample_hint_sr)
+        audio, sr, peak = _load_audio(data, target_sr=sample_hint_sr)
     except Exception as exc:
         ms = int((time.perf_counter() - t0) * 1000)
+        if is_blank_as_machine_enabled():
+            return AnalysisResult(
+                status="MACHINE",
+                confidence=0.9,
+                processing_ms=ms,
+                audio_seconds=0.0,
+                details={
+                    "error": str(exc),
+                    "fallback": "MACHINE",
+                    "fuse_note": "blank_or_unreadable",
+                    "engine": "hybrid",
+                },
+            )
         return AnalysisResult(
             status="HUMAN",
             confidence=0.4,
@@ -281,6 +337,7 @@ def analyze_audio(data: bytes, sample_hint_sr: int = 8000) -> AnalysisResult:
         "duration": duration,
         "sample_rate": float(sr),
         "energy_threshold": thr,
+        "peak": float(peak),
         "rms": float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0,
         "beep": float(beep),
         "beep_conf": beep_conf,
@@ -298,6 +355,7 @@ def analyze_audio(data: bytes, sample_hint_sr: int = 8000) -> AnalysisResult:
     details: Dict[str, Any] = {
         **feats,
         "engine": "hybrid",
+        "blank_as_machine": is_blank_as_machine_enabled(),
         "heuristic_status": h_status,
         "heuristic_confidence": round(float(h_confidence), 4),
         "fuse_note": fuse_note,

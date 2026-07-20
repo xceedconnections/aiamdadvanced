@@ -507,6 +507,14 @@
               <option value="SIT">CANCELLED</option>
               <option value="ERROR">ERROR</option>
             </select>
+            <label class="inline" style="margin-top:.35rem">
+              <input type="checkbox" id="amd-blank-as-machine" checked />
+              Dispose blank / silent calls as MACHINE
+            </label>
+            <p class="hint" style="margin-top:0">
+              When enabled, empty or near-silent recordings are marked MACHINE and are not passed to agents.
+              Disable to use the old behavior (blank calls may go to agents as HUMAN).
+            </p>
             <button type="submit">Save gate settings</button>
             <p id="amd-msg" class="hint"></p>
             <p class="hint" id="amd-path"></p>

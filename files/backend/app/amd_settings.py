@@ -1,4 +1,4 @@
-"""AMD decision settings (minimum HUMAN confidence gate).
+"""AMD decision settings (confidence gate + blank-call handling).
 
 Stored as JSON next to recordings so it survives restarts and is shared by
 every VICIdial server that talks to this AI AMD server.
@@ -16,6 +16,8 @@ DEFAULTS = {
     "enabled": True,
     "min_human_confidence_percent": 70,
     "below_threshold_action": "MACHINE",
+    # When True, blank / near-silent audio is disposed as MACHINE (not to agents)
+    "blank_as_machine": True,
 }
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
@@ -42,6 +44,8 @@ def load_amd_settings() -> dict[str, Any]:
                 action = str(raw.get("below_threshold_action", "")).strip().upper()
                 if action in _ALLOWED_ACTIONS:
                     data["below_threshold_action"] = action
+                if "blank_as_machine" in raw:
+                    data["blank_as_machine"] = bool(raw["blank_as_machine"])
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
     data["path"] = str(path)
@@ -53,6 +57,7 @@ def save_amd_settings(
     enabled: bool,
     min_human_confidence_percent: int,
     below_threshold_action: str = "MACHINE",
+    blank_as_machine: bool = True,
 ) -> dict[str, Any]:
     pct = int(min_human_confidence_percent)
     if pct < 0 or pct > 100:
@@ -67,11 +72,17 @@ def save_amd_settings(
         "enabled": bool(enabled),
         "min_human_confidence_percent": pct,
         "below_threshold_action": action,
+        "blank_as_machine": bool(blank_as_machine),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     out = dict(payload)
     out["path"] = str(path)
     return out
+
+
+def is_blank_as_machine_enabled() -> bool:
+    """Whether blank/near-silent audio should be classified as MACHINE."""
+    return bool(load_amd_settings().get("blank_as_machine", True))
 
 
 def apply_confidence_gate(status: str, confidence: float) -> tuple[str, bool]:

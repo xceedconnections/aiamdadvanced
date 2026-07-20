@@ -12,6 +12,7 @@ class AmdSettingsUpdate(BaseModel):
     enabled: bool = True
     min_human_confidence_percent: int = Field(70, ge=0, le=100)
     below_threshold_action: str = Field("MACHINE", max_length=16)
+    blank_as_machine: bool = True
 
 
 def _require_admin(user: User):
@@ -36,6 +37,7 @@ def put_amd_settings(
             enabled=payload.enabled,
             min_human_confidence_percent=payload.min_human_confidence_percent,
             below_threshold_action=payload.below_threshold_action,
+            blank_as_machine=payload.blank_as_machine,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

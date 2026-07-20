@@ -1015,6 +1015,9 @@ async function loadAmdSettings() {
     $("#amd-enabled").checked = !!cfg.enabled;
     $("#amd-min").value = cfg.min_human_confidence_percent ?? 70;
     if ($("#amd-action")) $("#amd-action").value = cfg.below_threshold_action || "MACHINE";
+    if ($("#amd-blank-as-machine")) {
+      $("#amd-blank-as-machine").checked = cfg.blank_as_machine !== false;
+    }
     if ($("#amd-path")) {
       $("#amd-path").textContent = cfg.path ? `Settings file: ${cfg.path}` : "";
     }
@@ -1038,12 +1041,18 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
         enabled: $("#amd-enabled").checked,
         min_human_confidence_percent: Number($("#amd-min").value),
         below_threshold_action: $("#amd-action").value,
+        blank_as_machine: $("#amd-blank-as-machine")
+          ? $("#amd-blank-as-machine").checked
+          : true,
       },
     });
     msg.className = "ok";
+    const blankNote = data.blank_as_machine
+      ? " Blank/silent → MACHINE."
+      : " Blank/silent may pass as HUMAN.";
     msg.textContent = data.enabled
-      ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.`
-      : "Saved: confidence gate disabled — all HUMAN calls pass to agents.";
+      ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.${blankNote}`
+      : `Saved: confidence gate disabled — all HUMAN calls pass to agents.${blankNote}`;
     if ($("#amd-path")) {
       $("#amd-path").textContent = data.path ? `Settings file: ${data.path}` : "";
     }
