@@ -9,7 +9,7 @@ from app.audio_cleanup import delete_old_recordings, delete_recordings_for_calls
 from app.auth.security import get_current_user
 from app.database import get_db
 from app.models.call import CallAnalysis
-from app.models.correction import TrainingCorrection
+from app.models.correction import TrainingCorrection, TrainingOverride
 from app.models.user import User
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
@@ -82,6 +82,11 @@ def maintenance_stats(
     _require_admin(user)
     calls = db.query(CallAnalysis).count()
     corrections = db.query(TrainingCorrection).count()
+    overrides = (
+        db.query(TrainingOverride)
+        .filter(TrainingOverride.is_active == True)  # noqa: E712
+        .count()
+    )
     oldest = db.query(CallAnalysis.created_at).order_by(CallAnalysis.created_at.asc()).first()
     newest = db.query(CallAnalysis.created_at).order_by(CallAnalysis.created_at.desc()).first()
     audio = _recordings_stats()
@@ -89,6 +94,7 @@ def maintenance_stats(
         "database": "postgresql",
         "call_analyses": calls,
         "training_corrections": corrections,
+        "training_overrides": overrides,
         "oldest_call": oldest[0].isoformat() if oldest and oldest[0] else None,
         "newest_call": newest[0].isoformat() if newest and newest[0] else None,
         **audio,
@@ -137,6 +143,7 @@ def wipe_logs(
     }
 
     old_ids = [row.id for row in rows]
+    deleted_overrides = 0
 
     if payload.older_than_days is not None:
         from datetime import timedelta
@@ -160,7 +167,9 @@ def wipe_logs(
             .delete(synchronize_session=False)
         )
     else:
+        # Full wipe of call logs also clears all taught AMD knowledge
         deleted_corr = db.query(TrainingCorrection).delete(synchronize_session=False)
+        deleted_overrides = db.query(TrainingOverride).delete(synchronize_session=False)
         deleted_calls = db.query(CallAnalysis).delete(synchronize_session=False)
 
     db.commit()
@@ -168,6 +177,7 @@ def wipe_logs(
         "ok": True,
         "deleted_call_analyses": deleted_calls,
         "deleted_training_corrections": deleted_corr,
+        "deleted_training_overrides": deleted_overrides,
         "deleted_audio_files": audio_result.get("deleted_files", 0),
         "failed_audio_files": audio_result.get("failed_files", 0),
         "freed_mb": audio_result.get("freed_mb", 0),

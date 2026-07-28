@@ -21,6 +21,7 @@ const routePages = {
   "/vicidialservers.php": "servers",
   "/reports.php": "reports",
   "/training.php": "training",
+  "/training-history.php": "training-history",
   "/wipe.php": "wipe",
   "/audio.php": "audio",
   "/cronjob.php": "cronjob",
@@ -135,6 +136,9 @@ function openPage(page) {
   if (page === "training") {
     fillServerFilters().then(() => loadTraining());
   }
+  if (page === "training-history") {
+    loadTrainingHistory();
+  }
   if (page === "wipe") loadWipePage();
   if (page === "audio") loadAudioPage();
   if (page === "cronjob") loadCronPage();
@@ -219,6 +223,25 @@ function sparklineSvg(values, color) {
   </svg>`;
 }
 
+function teachButtons(r) {
+  const id = r.id;
+  const opts = [
+    ["HUMAN", "Human"],
+    ["MACHINE", "VM"],
+    ["IVR", "IVR"],
+    ["SIT", "SIT"],
+    ["FAX", "Fax"],
+  ];
+  return `<div class="teach-actions" title="Teach AI for this called number">
+    ${opts
+      .map(
+        ([v, label]) =>
+          `<button type="button" class="teach-btn ${r.status === v ? "active" : ""}" data-teach-id="${id}" data-teach-status="${v}">${label}</button>`
+      )
+      .join("")}
+  </div>`;
+}
+
 function dashLiveRowHtml(r) {
   const secs = Number(r.audio_seconds || 0);
   const dur = secs > 0 ? `${secs.toFixed(1)}s` : `${r.processing_ms || 0}ms`;
@@ -232,6 +255,7 @@ function dashLiveRowHtml(r) {
     <td>${actionChip(r.status)}</td>
     <td>${waveformHtml(r.status)}</td>
     <td class="audio-cell">${audioButtons(r)}</td>
+    <td>${teachButtons(r)}</td>
   </tr>`;
 }
 
@@ -291,6 +315,7 @@ function callRowHtml(r) {
     <td>${statusBadge(r.status)}${gatedNote(r)}</td>
     <td>${(r.confidence * 100).toFixed(1)}%</td>
     <td>${r.processing_ms}</td>
+    <td>${teachButtons(r)}</td>
   </tr>`;
 }
 
@@ -309,6 +334,7 @@ function callCardHtml(r) {
       <div><div class="k">Confidence</div><div class="v">${(r.confidence * 100).toFixed(1)}% · ${r.processing_ms} ms</div></div>
     </div>
     <div class="call-card-actions">${audioButtons(r)}</div>
+    <div class="call-card-actions" style="margin-top:.4rem">${teachButtons(r)}</div>
   </article>`;
 }
 
@@ -1295,23 +1321,185 @@ $("#train-search")?.addEventListener("keydown", (e) => {
 
 window.saveCorrection = async (id) => {
   const status = $(`#corr-${id}`).value;
-  await api("/api/training/correct", {
+  const data = await api("/api/training/correct", {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert("Correction saved — CDR status updated for future tuning.");
+  alert(data.message || "Taught — future AMD for this number will use your label.");
   loadTraining();
 };
 
 window.saveCorrectionMobile = async (id) => {
   const status = $(`#corr-m-${id}`).value;
-  await api("/api/training/correct", {
+  const data = await api("/api/training/correct", {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert("Correction saved — CDR status updated for future tuning.");
+  alert(data.message || "Taught — future AMD for this number will use your label.");
   loadTraining();
 };
+
+window.quickTeach = async (id, status) => {
+  try {
+    const data = await api("/api/training/correct", {
+      method: "POST",
+      json: {
+        call_analysis_id: Number(id),
+        corrected_status: status,
+        notes: "Quick teach from live/dashboard",
+      },
+    });
+    const msg = data.message || `Taught → ${status}`;
+    if ($("#page-live") && !$("#page-live").classList.contains("hidden")) loadLive(true);
+    if ($("#page-dashboard") && !$("#page-dashboard").classList.contains("hidden")) {
+      refreshDashboardLive();
+    }
+    if ($("#page-cdr") && !$("#page-cdr").classList.contains("hidden")) loadCdr();
+    if ($("#page-training") && !$("#page-training").classList.contains("hidden")) loadTraining();
+    alert(msg);
+  } catch (err) {
+    alert(err.message || "Teach failed");
+  }
+};
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-teach-id]");
+  if (!btn) return;
+  e.preventDefault();
+  const id = btn.getAttribute("data-teach-id");
+  const status = btn.getAttribute("data-teach-status");
+  if (id && status) quickTeach(id, status);
+});
+
+async function loadTrainingHistory() {
+  const phone = ($("#thist-phone")?.value || "").trim();
+  const params = new URLSearchParams({ limit: "150" });
+  if (phone) params.set("phone", phone);
+  try {
+    const [hist, ovs, stats] = await Promise.all([
+      api(`/api/training/history?${params}`),
+      api("/api/training/overrides?limit=200"),
+      api("/api/training/stats"),
+    ]);
+    if ($("#thist-meta")) {
+      $("#thist-meta").textContent =
+        `${hist.total || 0} history rows · ${stats.active_overrides || 0} active phone overrides`;
+    }
+    $("#thist-body").innerHTML = (hist.items || [])
+      .map(
+        (r) => `<tr>
+        <td>${fmtTime(r.created_at)}</td>
+        <td>${escapeHtml(r.phone_number || "—")}</td>
+        <td>${statusBadge(r.ai_status || "ERROR")}</td>
+        <td>${statusBadge(r.corrected_status || "ERROR")}</td>
+        <td>${escapeHtml(r.previous_taught_status || "—")}</td>
+        <td>${escapeHtml(r.action || "teach")}</td>
+        <td>${escapeHtml(r.corrected_by || "—")}</td>
+        <td class="hint">${escapeHtml(r.notes || "")}</td>
+      </tr>`
+      )
+      .join("") || `<tr><td colspan="8" class="hint">No training history yet</td></tr>`;
+
+    $("#thist-overrides").innerHTML = (ovs.items || [])
+      .map(
+        (o) => `<tr>
+        <td>${escapeHtml(o.phone_number)}</td>
+        <td>${statusBadge(o.taught_status)}</td>
+        <td>${o.hit_count || 0}</td>
+        <td>${escapeHtml(o.taught_by || "—")}</td>
+        <td>${fmtTime(o.updated_at)}</td>
+        <td><button type="button" class="ghost" onclick="revertOverride(${o.id})">Revert</button></td>
+      </tr>`
+      )
+      .join("") || `<tr><td colspan="6" class="hint">No active overrides</td></tr>`;
+  } catch (err) {
+    if ($("#thist-meta")) $("#thist-meta").textContent = err.message;
+  }
+}
+
+window.revertOverride = async (id) => {
+  if (!confirm("Revert this phone override? Future AMD will use the engine again for this number.")) return;
+  try {
+    await api(`/api/training/overrides/${id}/revert`, { method: "POST" });
+    loadTrainingHistory();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+$("#thist-refresh")?.addEventListener("click", () => loadTrainingHistory());
+$("#thist-phone")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    loadTrainingHistory();
+  }
+});
+
+$("#train-backup-btn")?.addEventListener("click", async () => {
+  const msg = $("#train-backup-msg");
+  try {
+    const res = await api("/api/training/backup", { raw: true });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `openamd_training_backup_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (msg) msg.textContent = "Backup downloaded.";
+  } catch (err) {
+    if (msg) msg.textContent = err.message;
+  }
+});
+
+$("#train-import-file")?.addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  const msg = $("#train-backup-msg");
+  if (!file) return;
+  const replace = !!$("#train-import-replace")?.checked;
+  if (replace && !confirm("Replace ALL existing training with this backup?")) {
+    e.target.value = "";
+    return;
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const data = await api(`/api/training/backup/import?replace=${replace ? "true" : "false"}`, {
+      method: "POST",
+      body: fd,
+    });
+    if (msg) {
+      msg.textContent =
+        `Imported overrides +${data.imported_overrides} / updated ${data.updated_overrides}, ` +
+        `corrections +${data.imported_corrections}.`;
+    }
+  } catch (err) {
+    if (msg) msg.textContent = err.message;
+  }
+  e.target.value = "";
+});
+
+$("#train-wipe-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const confirmText = String(fd.get("confirm") || "").trim();
+  if (!confirm("Delete ALL training overrides and history? AMD will act like a fresh server for training.")) return;
+  const msg = $("#train-wipe-msg");
+  try {
+    const data = await api("/api/training/wipe", {
+      method: "POST",
+      json: { confirm: confirmText },
+    });
+    if (msg) {
+      msg.textContent =
+        `Wiped ${data.deleted_overrides} overrides and ${data.deleted_corrections} history rows.`;
+    }
+    e.target.reset();
+  } catch (err) {
+    if (msg) msg.textContent = err.message;
+  }
+});
+
 
 async function loadHealth() {
   const h = await fetch("/api/health").then((r) => r.json());

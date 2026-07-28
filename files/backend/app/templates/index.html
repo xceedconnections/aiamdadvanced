@@ -50,6 +50,7 @@
         <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
         <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
         <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
+        <a href="/training-history.php" data-page="training-history" class="nav"><span class="nav-ico">◷</span>Training History</a>
         <a href="/wipe.php" data-page="wipe" class="nav"><span class="nav-ico">⌫</span>Wipe</a>
         <a href="/audio.php" data-page="audio" class="nav"><span class="nav-ico">♫</span>Audio Cleanup</a>
         <a href="/cronjob.php" data-page="cronjob" class="nav"><span class="nav-ico">⏱</span>Cron Job</a>
@@ -114,6 +115,7 @@
                   <th>Action</th>
                   <th>Waveform</th>
                   <th>Audio</th>
+                  <th>Teach</th>
                 </tr>
               </thead>
               <tbody id="dash-live-body"></tbody>
@@ -199,6 +201,7 @@
                   <th>Status</th>
                   <th>Conf</th>
                   <th>ms</th>
+                  <th>Teach</th>
                 </tr>
               </thead>
               <tbody id="live-body"></tbody>
@@ -258,6 +261,7 @@
                   <th>Status</th>
                   <th>Conf</th>
                   <th>ms</th>
+                  <th>Teach</th>
                 </tr>
               </thead>
               <tbody id="cdr-body"></tbody>
@@ -404,7 +408,7 @@
           <div class="panel-head"><h3>Correct AI decisions</h3></div>
           <p class="hint">
             Search by <strong>called number</strong> or <strong>caller ID</strong>, play the recording, set the true label, and save.
-            Corrections are stored for training and update the call status in CDR.
+            Teaching a number stores an override so <strong>future AMD calls to that number use your label</strong> (HUMAN / MACHINE / IVR / …).
           </p>
           <div class="filter-bar">
             <label>
@@ -452,6 +456,89 @@
             </table>
           </div>
           <div class="call-cards" id="train-cards"></div>
+        </div>
+
+        <div class="two-col" style="margin-top:1.25rem">
+          <div class="panel">
+            <div class="panel-head"><h3>Training backup</h3></div>
+            <p class="hint">Download taught numbers + history as JSON. Upload on a new AIAMD server to restore training.</p>
+            <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.75rem">
+              <button type="button" id="train-backup-btn">Download backup</button>
+              <label class="ghost" style="display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;padding:.45rem .8rem;border:1px solid rgba(255,255,255,.15);border-radius:8px">
+                Import backup
+                <input type="file" id="train-import-file" accept="application/json,.json" hidden />
+              </label>
+              <label class="inline" style="margin:0">
+                <input type="checkbox" id="train-import-replace" />
+                Replace all existing training
+              </label>
+            </div>
+            <p id="train-backup-msg" class="hint"></p>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Wipe training only</h3></div>
+            <p class="hint">Deletes all taught phone overrides and history. AMD behaves like a fresh server for training (call CDR logs are kept).</p>
+            <form id="train-wipe-form" class="form-stack" style="max-width:420px;margin-top:.75rem">
+              <label>Type <code>WIPE TRAINING</code> to confirm</label>
+              <input name="confirm" required placeholder="WIPE TRAINING" autocomplete="off" />
+              <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Wipe all training</button>
+              <p id="train-wipe-msg" class="hint"></p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-training-history" class="page hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>What we taught the AI</h3></div>
+          <p class="hint">
+            Audit log of every teach / revert. Active phone overrides are applied on future AMD calls.
+            Revert an override if a number was marked MACHINE by mistake.
+          </p>
+          <div class="filter-bar">
+            <label>
+              Phone
+              <input id="thist-phone" type="search" maxlength="32" placeholder="Filter by number" />
+            </label>
+            <button class="ghost" type="button" id="thist-refresh">Refresh</button>
+          </div>
+          <p class="hint" id="thist-meta"></p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Phone</th>
+                  <th>AI said</th>
+                  <th>Taught</th>
+                  <th>Prev taught</th>
+                  <th>Action</th>
+                  <th>By</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody id="thist-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:1.25rem">
+          <div class="panel-head"><h3>Active phone overrides</h3></div>
+          <p class="hint">These numbers force AMD disposition on future calls until reverted.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Phone</th>
+                  <th>Taught</th>
+                  <th>Hits</th>
+                  <th>By</th>
+                  <th>Updated</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="thist-overrides"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

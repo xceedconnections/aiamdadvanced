@@ -20,7 +20,7 @@ from app.recordings import (
     recording_meta_fast,
     repair_call_recording,
 )
-from app.schemas import CallOut, CorrectionCreate, CdrPageOut, ServerReport
+from app.schemas import CallOut, CdrPageOut, ServerReport
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -363,44 +363,3 @@ def hourly_report(
         {"hour": h.isoformat() if h else None, "status": status, "count": count}
         for h, status, count in rows
     ]
-
-
-@router.post("/training/correct")
-def correct_call(
-    payload: CorrectionCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    call = db.query(CallAnalysis).filter(CallAnalysis.id == payload.call_analysis_id).first()
-    if not call:
-        raise HTTPException(status_code=404, detail="Call not found")
-
-    corrected = (payload.corrected_status or "").strip().upper()
-    if corrected == "CANCELLED":
-        corrected = "SIT"
-    if corrected not in {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR"}:
-        raise HTTPException(status_code=400, detail="Invalid corrected_status")
-
-    ai_status = call.status
-    correction = TrainingCorrection(
-        call_id=call.id,
-        ai_status=ai_status,
-        corrected_status=corrected,
-        corrected_by=user.username,
-        notes=payload.notes or "",
-    )
-    db.add(correction)
-
-    # Keep original AI label in raw_status; update visible status for CDR / future tuning
-    if not (getattr(call, "raw_status", None) or "").strip():
-        call.raw_status = ai_status
-    call.status = corrected
-
-    db.commit()
-    return {
-        "ok": True,
-        "id": correction.id,
-        "call_analysis_id": call.id,
-        "ai_status": ai_status,
-        "corrected_status": corrected,
-    }

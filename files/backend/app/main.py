@@ -11,6 +11,9 @@ from app.config import get_settings
 from app.database import Base, SessionLocal, engine
 from app.auth.security import hash_password
 from app.models.user import User
+from app.models.correction import TrainingCorrection, TrainingOverride  # noqa: F401 — register tables
+from app.models.call import CallAnalysis  # noqa: F401
+from app.models.server import VicidialServer  # noqa: F401
 from app.routers import (
     analyze,
     auth,
@@ -21,6 +24,7 @@ from app.routers import (
     servers,
     settings as settings_router,
     system,
+    training,
 )
 
 settings = get_settings()
@@ -71,8 +75,16 @@ def ensure_schema():
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS below_threshold_action VARCHAR(32) DEFAULT 'MACHINE'",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack_enabled BOOLEAN DEFAULT FALSE",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack VARCHAR(32) DEFAULT 'usa'",
+            "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32) DEFAULT ''",
+            "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS previous_taught_status VARCHAR(32) DEFAULT ''",
+            "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS action VARCHAR(32) DEFAULT 'teach'",
+            "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE training_corrections ALTER COLUMN call_id DROP NOT NULL",
         ):
-            conn.execute(text(stmt))
+            try:
+                conn.execute(text(stmt))
+            except Exception as col_exc:
+                print(f"OpenAMD schema note: {col_exc}")
 
 
 def init_db():
@@ -133,6 +145,7 @@ app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(analyze.router)
 app.include_router(reports.router)
+app.include_router(training.router)
 app.include_router(recordings.router)
 app.include_router(system.router)
 app.include_router(maintenance.router)
@@ -188,6 +201,7 @@ def health():
 @app.get("/vicidialservers.php", response_class=HTMLResponse)
 @app.get("/reports.php", response_class=HTMLResponse)
 @app.get("/training.php", response_class=HTMLResponse)
+@app.get("/training-history.php", response_class=HTMLResponse)
 @app.get("/settings.php", response_class=HTMLResponse)
 @app.get("/wipe.php", response_class=HTMLResponse)
 @app.get("/audio.php", response_class=HTMLResponse)

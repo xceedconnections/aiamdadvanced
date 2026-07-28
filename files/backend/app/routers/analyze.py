@@ -13,6 +13,7 @@ from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
 from app.recordings import link_analysis_recording, save_call_audio, to_browser_wav
 from app.schemas import AnalyzeResponse
+from app.training import apply_training_override
 
 router = APIRouter(prefix="/api/v1", tags=["analyze"])
 settings = get_settings()
@@ -43,9 +44,9 @@ async def analyze(
     )
 
     # Per-server gate if enabled on this VICIdial server; else global Settings
-    raw_status = result.status
+    engine_status = result.status
     gate_cfg = gate_config_for_server(server)
-    final_status, downgraded = apply_confidence_gate(
+    gated_status, downgraded = apply_confidence_gate(
         result.status,
         result.confidence,
         server_override={
@@ -59,6 +60,21 @@ async def analyze(
         },
     )
 
+    called_number = (called or "").strip()
+    caller_id = (caller or "").strip()
+    ani_value = (ani or called_number or "").strip()
+
+    # Taught phone overrides win (admin training) — applied after engine + gate
+    final_status, final_confidence, train_meta = apply_training_override(
+        db,
+        engine_status=gated_status,
+        engine_confidence=result.confidence,
+        called=called_number,
+        ani=ani_value,
+        caller=caller_id,
+    )
+    raw_status = engine_status
+
     # Browser-safe PCM16 WAV for portal play + disk archive
     playable = to_browser_wav(raw)
 
@@ -69,15 +85,12 @@ async def analyze(
         print(f"OpenAMD WARNING: failed to save recording for {callid}: {exc}")
         path = ""
 
-    called_number = (called or "").strip()
-    caller_id = (caller or "").strip()
-    ani_value = (ani or called_number or "").strip()
-
     details = {
         **result.details,
         "gate_downgraded": downgraded,
         "raw_status": raw_status,
         "confidence_gate": gate_cfg,
+        **train_meta,
     }
 
     row = CallAnalysis(
@@ -89,7 +102,7 @@ async def analyze(
         ani=ani_value,
         status=final_status,
         raw_status=raw_status,
-        confidence=result.confidence,
+        confidence=final_confidence,
         processing_ms=result.processing_ms,
         audio_seconds=result.audio_seconds,
         audio_path=path,
@@ -111,7 +124,7 @@ async def analyze(
 
     return AnalyzeResponse(
         status=final_status,
-        confidence=result.confidence,
+        confidence=final_confidence,
         processing_ms=result.processing_ms,
         callid=callid,
         analysis_id=row.id,
