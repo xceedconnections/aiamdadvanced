@@ -65,7 +65,6 @@ function showApp(show) {
   } else {
     stopLiveTimer();
     stopPlayer();
-    loadCaptcha();
   }
 }
 
@@ -99,8 +98,6 @@ $("#login-form").addEventListener("submit", async (e) => {
       json: {
         username: $("#login-user").value.trim(),
         password: $("#login-pass").value,
-        captcha_id: $("#login-captcha-id").value,
-        captcha_answer: $("#login-captcha").value.trim(),
       },
     });
     state.token = data.access_token;
@@ -110,22 +107,8 @@ $("#login-form").addEventListener("submit", async (e) => {
     showApp(true);
   } catch (err) {
     $("#login-error").textContent = err.message || "Login failed";
-    loadCaptcha();
   }
 });
-
-async function loadCaptcha() {
-  try {
-    const data = await fetch("/api/captcha").then((r) => r.json());
-    $("#login-captcha-id").value = data.captcha_id || "";
-    $("#captcha-question").textContent = data.question || "?";
-    $("#login-captcha").value = "";
-  } catch (err) {
-    $("#captcha-question").textContent = "unavailable";
-  }
-}
-
-$("#captcha-refresh")?.addEventListener("click", () => loadCaptcha());
 
 $("#logout-btn").addEventListener("click", () => logout(true));
 
@@ -1408,7 +1391,13 @@ $("#wipe-form").addEventListener("submit", async (e) => {
       json: { confirm: confirmText, older_than_days: older },
     });
     $("#wipe-msg").textContent =
-      `Deleted ${data.deleted_call_analyses} call logs and ${data.deleted_training_corrections} corrections.`;
+      `Deleted ${data.deleted_call_analyses} call logs, ${data.deleted_training_corrections} corrections` +
+      (data.deleted_audio_files != null
+        ? `, and ${data.deleted_audio_files} audio file(s) (${data.freed_mb || 0} MB).`
+        : ".");
+    if (data.failed_audio_files) {
+      $("#wipe-msg").textContent += ` Warning: ${data.failed_audio_files} audio file(s) could not be removed.`;
+    }
     e.target.reset();
     loadWipePage();
   } catch (err) {
@@ -1431,7 +1420,8 @@ $("#audio-form").addEventListener("submit", async (e) => {
       json: { confirm: confirmText, older_than_days: older },
     });
     $("#audio-msg").textContent =
-      `Deleted ${data.deleted_files} files, freed ${data.freed_mb} MB (${data.freed_gb} GB).`;
+      `Deleted ${data.deleted_files} files, freed ${data.freed_mb} MB (${data.freed_gb} GB).` +
+      (data.failed_files ? ` Failed: ${data.failed_files}.` : "");
     e.target.reset();
     loadAudioPage();
   } catch (err) {
@@ -1495,5 +1485,4 @@ if (state.token) {
   showApp(true);
 } else {
   showApp(false);
-  loadCaptcha();
 }

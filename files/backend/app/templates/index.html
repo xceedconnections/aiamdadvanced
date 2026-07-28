@@ -26,12 +26,6 @@
         <input id="login-user" type="text" autocomplete="username" value="admin" maxlength="64" required />
         <label for="login-pass">Password</label>
         <input id="login-pass" type="password" autocomplete="current-password" maxlength="128" required />
-        <label for="login-captcha">Captcha: <span id="captcha-question">…</span></label>
-        <div class="captcha-row">
-          <input id="login-captcha" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Answer" required />
-          <button type="button" class="ghost" id="captcha-refresh" title="New captcha">↻</button>
-        </div>
-        <input type="hidden" id="login-captcha-id" value="" />
         <button type="submit">Sign in</button>
         <p id="login-error" class="error"></p>
       </form>
@@ -434,7 +428,7 @@
       <section id="page-wipe" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Wipe detection logs</h3></div>
-          <p class="hint">Clears OpenAMD database call logs (PostgreSQL). This removes VICIdial analysis history from AI AMD. VICIdial itself is not modified.</p>
+          <p class="hint">Clears OpenAMD database call logs (PostgreSQL) <strong>and</strong> matching WAV files under <code>/opt/openamd/recordings</code> so recordings are not left orphaned on disk. VICIdial itself is not modified.</p>
           <div class="stat-grid" id="wipe-stats"></div>
           <form id="wipe-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete records older than (days) — leave blank for ALL</label>

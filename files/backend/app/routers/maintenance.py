@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.audio_cleanup import delete_old_recordings
+from app.audio_cleanup import delete_old_recordings, delete_recordings_for_calls
 from app.auth.security import get_current_user
 from app.database import get_db
 from app.models.call import CallAnalysis
@@ -105,14 +105,43 @@ def wipe_logs(
     if payload.confirm.strip().upper() != "WIPE":
         raise HTTPException(status_code=400, detail="Type WIPE in confirm field")
 
+    # Load rows first so we can delete matching WAV files (avoid orphaned recordings)
     if payload.older_than_days is not None:
         from datetime import timedelta
 
         cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
-        old_ids = [
-            row.id
-            for row in db.query(CallAnalysis.id).filter(CallAnalysis.created_at < cutoff).all()
-        ]
+        rows = (
+            db.query(CallAnalysis)
+            .filter(CallAnalysis.created_at < cutoff)
+            .all()
+        )
+    else:
+        rows = db.query(CallAnalysis).all()
+
+    audio_result = delete_recordings_for_calls(rows)
+    # Also remove orphaned/dated files matching the same age window (or everything)
+    orphan = delete_old_recordings(payload.older_than_days)
+    audio_result = {
+        "deleted_files": audio_result.get("deleted_files", 0) + orphan.get("deleted_files", 0),
+        "failed_files": audio_result.get("failed_files", 0) + orphan.get("failed_files", 0),
+        "freed_bytes": audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0),
+        "freed_mb": round(
+            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0)) / (1024 * 1024),
+            2,
+        ),
+        "freed_gb": round(
+            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0)) / (1024**3),
+            3,
+        ),
+        "recordings_dir": orphan.get("recordings_dir") or audio_result.get("recordings_dir"),
+    }
+
+    old_ids = [row.id for row in rows]
+
+    if payload.older_than_days is not None:
+        from datetime import timedelta
+
+        cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
         deleted_corr = 0
         if old_ids:
             deleted_corr = (
@@ -139,6 +168,9 @@ def wipe_logs(
         "ok": True,
         "deleted_call_analyses": deleted_calls,
         "deleted_training_corrections": deleted_corr,
+        "deleted_audio_files": audio_result.get("deleted_files", 0),
+        "failed_audio_files": audio_result.get("failed_files", 0),
+        "freed_mb": audio_result.get("freed_mb", 0),
         "older_than_days": payload.older_than_days,
         "wiped_by": user.username,
         "at": datetime.utcnow().isoformat() + "Z",
@@ -160,4 +192,13 @@ def delete_audio(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result["deleted_by"] = user.username
+    if result.get("failed_files"):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Deleted {result.get('deleted_files', 0)} file(s) but "
+                f"{result['failed_files']} remain (permission/path error). "
+                f"Dir: {result.get('recordings_dir')}"
+            ),
+        )
     return result

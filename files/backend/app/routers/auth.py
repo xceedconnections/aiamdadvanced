@@ -13,7 +13,6 @@ from app.auth.security import (
     hash_password,
     verify_password,
 )
-from app.captcha import create_math_captcha, verify_math_captcha
 from app.database import get_db
 from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
@@ -38,12 +37,6 @@ def _request_ip(request: Request) -> str:
     )
 
 
-@router.get("/captcha")
-def captcha_challenge():
-    captcha_id, question = create_math_captcha()
-    return {"captcha_id": captcha_id, "question": question}
-
-
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     username = (payload.username or "").strip()
@@ -60,9 +53,6 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     if not _USERNAME_RE.match(username):
         lockout.record_failure(username, ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    if not verify_math_captcha(payload.captcha_id, payload.captcha_answer):
-        # Captcha fails do not count toward password lockout
-        raise HTTPException(status_code=400, detail="Incorrect or expired captcha")
 
     # Parameterized ORM lookup — never concatenate user input into SQL
     user = db.query(User).filter(User.username == username).first()

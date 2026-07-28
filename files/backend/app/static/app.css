@@ -622,16 +622,6 @@ button.panel-head.collapsible[aria-expanded="false"] + .system-grid {
   font-weight: 500;
   color: var(--text);
 }
-.captcha-row {
-  display: flex;
-  gap: .4rem;
-  align-items: center;
-}
-.captcha-row input { flex: 1; }
-.captcha-row .ghost {
-  min-width: 42px;
-  padding: .45rem .55rem;
-}
 .pager {
   display: flex;
   flex-wrap: wrap;

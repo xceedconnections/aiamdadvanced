@@ -37,7 +37,7 @@ server {
 
     limit_conn openamd_conn 40;
 
-    # Login / captcha — slow brute force
+    # Login — slow brute force
     location = /api/login {
         limit_req zone=openamd_login burst=3 nodelay;
         limit_req_status 429;
@@ -48,17 +48,6 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 60s;
-    }
-
-    location = /api/captcha {
-        limit_req zone=openamd_login burst=10 nodelay;
-        limit_req_status 429;
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # Analyze API — allow legitimate dialer bursts, cap floods
