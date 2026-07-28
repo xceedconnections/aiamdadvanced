@@ -315,6 +315,36 @@
               <label>Allowed dialer IPs (IP whitelist) — required to restrict access</label>
               <input name="ip_whitelist" id="server-ip-whitelist" placeholder="62.238.46.191" />
               <p class="hint">Comma-separated public IPs of VICIdial dialers allowed to call the API (example: <code>62.238.46.191</code>). Blank = any IP with a valid API key. Server name alone does not restrict access.</p>
+
+              <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
+              <label class="inline">
+                <input type="checkbox" id="server-gate-enabled" name="confidence_gate_enabled" />
+                Enable per-server AMD confidence gate
+              </label>
+              <p class="hint">If enabled, this server uses its own minimum HUMAN confidence. If disabled, the global <strong>Settings → AMD confidence gate</strong> applies.</p>
+              <label for="server-gate-min">Minimum HUMAN confidence (%) for this server</label>
+              <input id="server-gate-min" name="min_human_confidence_percent" type="number" min="0" max="100" step="1" value="70" />
+              <label for="server-gate-action">Below threshold action</label>
+              <select id="server-gate-action" name="below_threshold_action">
+                <option value="MACHINE">MACHINE</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">SIT</option>
+                <option value="ERROR">ERROR</option>
+              </select>
+
+              <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
+              <label class="inline">
+                <input type="checkbox" id="server-locale-enabled" name="locale_pack_enabled" />
+                Enable locale / market threshold pack
+              </label>
+              <p class="hint">If enabled, acoustic cutoffs follow the selected market. If disabled, the engine uses the normal default thresholds (same as before).</p>
+              <label for="server-locale-pack">Market / language pack</label>
+              <select id="server-locale-pack" name="locale_pack">
+                <option value="usa">USA</option>
+                <option value="uk">UK</option>
+                <option value="multilingual">Multilingual / mixed trunks</option>
+              </select>
+
               <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
                 <button type="submit" id="server-submit-btn">Create server</button>
                 <button type="button" class="ghost hidden" id="server-cancel-edit">Cancel edit</button>
@@ -485,7 +515,8 @@
           <p class="hint">
             Only calls the AI marks <strong>HUMAN</strong> with confidence at or above this minimum are passed to
             VICIdial agents. HUMAN calls below the minimum are downgraded (e.g. to MACHINE) and are not connected.
-            Controlled here on the AI AMD server — no changes needed on any VICIdial dialer.
+            This is the <strong>global</strong> default. Individual VICIdial servers can override it on the
+            <strong>VICIdial Servers</strong> page when their per-server confidence gate is enabled.
           </p>
           <form id="amd-form" class="form-stack" style="max-width:460px;margin-top:.5rem">
             <label class="inline">

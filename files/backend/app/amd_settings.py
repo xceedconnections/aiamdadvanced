@@ -85,17 +85,69 @@ def is_blank_as_machine_enabled() -> bool:
     return bool(load_amd_settings().get("blank_as_machine", True))
 
 
-def apply_confidence_gate(status: str, confidence: float) -> tuple[str, bool]:
-    """Return (final_status, downgraded). Only HUMAN results are gated."""
-    cfg = load_amd_settings()
-    if not cfg.get("enabled", True):
-        return status, False
+def apply_confidence_gate(
+    status: str,
+    confidence: float,
+    *,
+    server_override: dict[str, Any] | None = None,
+) -> tuple[str, bool]:
+    """
+    Return (final_status, downgraded). Only HUMAN results are gated.
+
+    If server_override is provided and confidence_gate_enabled is True,
+    use that server's min % / action. Otherwise use global amd_settings.json.
+    """
     if status != "HUMAN":
         return status, False
 
-    min_pct = int(cfg.get("min_human_confidence_percent", 70))
+    use_server = bool(server_override and server_override.get("confidence_gate_enabled"))
+    if use_server:
+        enabled = True
+        min_pct = int(server_override.get("min_human_confidence_percent", 70))
+        action = str(server_override.get("below_threshold_action") or "MACHINE").strip().upper()
+        if action not in _ALLOWED_ACTIONS:
+            action = "MACHINE"
+        source = "server"
+    else:
+        cfg = load_amd_settings()
+        if not cfg.get("enabled", True):
+            return status, False
+        enabled = True
+        min_pct = int(cfg.get("min_human_confidence_percent", 70))
+        action = str(cfg.get("below_threshold_action", "MACHINE"))
+        source = "global"
+
+    if not enabled:
+        return status, False
+
     conf_pct = float(confidence) * 100.0
     if conf_pct >= min_pct:
         return status, False
 
-    return str(cfg.get("below_threshold_action", "MACHINE")), True
+    # source is recorded by caller via details if needed
+    _ = source
+    return action, True
+
+
+def gate_config_for_server(server: Any | None = None) -> dict[str, Any]:
+    """Resolved gate config actually used for a call (for logging / UI)."""
+    global_cfg = load_amd_settings()
+    if server is not None and bool(getattr(server, "confidence_gate_enabled", False)):
+        action = str(getattr(server, "below_threshold_action", None) or "MACHINE").strip().upper()
+        if action not in _ALLOWED_ACTIONS:
+            action = "MACHINE"
+        return {
+            "source": "server",
+            "enabled": True,
+            "min_human_confidence_percent": int(
+                getattr(server, "min_human_confidence_percent", 70) or 70
+            ),
+            "below_threshold_action": action,
+        }
+    return {
+        "source": "global",
+        "enabled": bool(global_cfg.get("enabled", True)),
+        "min_human_confidence_percent": int(global_cfg.get("min_human_confidence_percent", 70)),
+        "below_threshold_action": str(global_cfg.get("below_threshold_action", "MACHINE")),
+    }
+

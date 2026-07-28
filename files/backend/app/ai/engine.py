@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover
 
 from app.ai import silero_vad
 from app.amd_settings import is_blank_as_machine_enabled
+from app.locale_packs import resolve_locale_pack
 
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
@@ -191,13 +192,17 @@ def _detect_sit(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     return False, 0.0
 
 
-def _classify_heuristic(feats: Dict[str, float], beep: bool, sit: bool) -> Tuple[str, float]:
+def _classify_heuristic(
+    feats: Dict[str, float],
+    beep: bool,
+    sit: bool,
+    pack: Dict[str, float],
+) -> Tuple[str, float]:
     duration = feats.get("duration", 0.0)
     speech_ratio = feats.get("speech_ratio", 0.0)
     num_bursts = feats.get("num_bursts", 0.0)
     longest_burst = feats.get("longest_burst_ms", 0.0)
     longest_silence = feats.get("longest_silence_ms", 0.0)
-    rms = feats.get("rms", 0.0)
 
     if sit:
         return "SIT", 0.85
@@ -211,18 +216,33 @@ def _classify_heuristic(feats: Dict[str, float], beep: bool, sit: bool) -> Tuple
             return "MACHINE", 0.92
         return "HUMAN", 0.55
 
-    if duration >= 2.2 and longest_burst >= 2000 and num_bursts >= 4:
-        if longest_silence > 500 and num_bursts >= 5:
+    if (
+        duration >= pack["machine_duration_min"]
+        and longest_burst >= pack["machine_longest_burst_ms"]
+        and num_bursts >= pack["machine_num_bursts"]
+    ):
+        if (
+            longest_silence > pack["machine_ivr_silence_ms"]
+            and num_bursts >= pack["machine_ivr_bursts"]
+        ):
             return "IVR", 0.8
         return "MACHINE", 0.88
 
-    if duration >= 2.0 and num_bursts >= 6 and speech_ratio > 0.35:
+    if (
+        duration >= pack["machine_dense_duration"]
+        and num_bursts >= pack["machine_dense_bursts"]
+        and speech_ratio > pack["machine_dense_speech_ratio"]
+    ):
         return "MACHINE", 0.8
 
-    if num_bursts <= 4 and longest_burst <= 1500:
+    if num_bursts <= pack["human_max_bursts"] and longest_burst <= pack["human_max_burst_ms"]:
         return "HUMAN", 0.82
 
-    if longest_burst >= 2200 and speech_ratio > 0.55 and duration >= 2.5:
+    if (
+        longest_burst >= pack["machine_long_speech_ms"]
+        and speech_ratio > pack["machine_long_speech_ratio"]
+        and duration >= pack["machine_long_duration"]
+    ):
         return "MACHINE", 0.7
 
     return "HUMAN", 0.7
@@ -233,6 +253,7 @@ def _fuse_with_silero(
     confidence: float,
     feats: Dict[str, float],
     silero: Dict[str, Any],
+    pack: Dict[str, float],
 ) -> Tuple[str, float, str]:
     """Blend heuristic decision with Silero VAD speech structure.
 
@@ -250,12 +271,13 @@ def _fuse_with_silero(
     s_segs = int(silero.get("num_segments", 0))
     s_long = float(silero.get("longest_speech_ms", 0.0))
     s_mean = float(silero.get("mean_prob", 0.0))
+    strong_m = float(pack["strong_machine_conf"])
 
     # Strong acoustic events already decided — Silero only confirms confidence
     if status in ("SIT",):
         return status, confidence, "heuristic_sit"
 
-    if status == "MACHINE" and confidence >= 0.88:
+    if status == "MACHINE" and confidence >= strong_m:
         # Beep / blank / strong machine — keep
         if s_long >= 1500 or s_ratio >= 0.4:
             return status, min(0.99, confidence + 0.05), "agree_machine_strong"
@@ -265,38 +287,70 @@ def _fuse_with_silero(
         return status, confidence, "heuristic_ivr"
 
     # Silero: long continuous speech greeting → machine / IVR
-    if duration >= 2.0 and s_long >= 1800 and s_ratio >= 0.45 and s_segs >= 2:
-        if s_segs >= 4 and s_ratio >= 0.5:
+    if (
+        duration >= pack["silero_long_duration"]
+        and s_long >= pack["silero_long_speech_ms"]
+        and s_ratio >= pack["silero_long_speech_ratio"]
+        and s_segs >= pack["silero_long_segments"]
+    ):
+        if s_segs >= pack["silero_ivr_segments"] and s_ratio >= pack["silero_ivr_speech_ratio"]:
             return "IVR", max(confidence, 0.82), "silero_ivr_script"
         return "MACHINE", max(confidence, 0.84), "silero_long_greeting"
 
     # Silero: many speech islands over 2s → scripted machine
-    if duration >= 2.0 and s_segs >= 5 and s_ratio >= 0.35:
+    if (
+        duration >= pack["silero_long_duration"]
+        and s_segs >= pack["silero_many_segments"]
+        and s_ratio >= pack["silero_many_speech_ratio"]
+    ):
         return "MACHINE", max(confidence, 0.8), "silero_many_segments"
 
     # Silero: short sparse speech → human ("hello?", "yeah?")
     # Do not override high-confidence MACHINE (beep / blank / strong AM)
-    if s_segs <= 3 and s_long <= 1200 and s_ratio <= 0.55:
-        if status == "MACHINE" and confidence < 0.88:
+    if (
+        s_segs <= pack["silero_human_max_segments"]
+        and s_long <= pack["silero_human_max_speech_ms"]
+        and s_ratio <= pack["silero_human_max_speech_ratio"]
+    ):
+        if status == "MACHINE" and confidence < strong_m:
             return "HUMAN", max(0.75, 1.0 - confidence + 0.2), "silero_override_human"
         if status == "HUMAN":
             return "HUMAN", max(confidence, 0.85), "agree_human_short"
 
     # Both sides lean human
-    if status == "HUMAN" and s_mean < 0.35 and duration < 2.0:
+    if (
+        status == "HUMAN"
+        and s_mean < pack["silero_quiet_mean_prob"]
+        and duration < pack["silero_quiet_duration"]
+    ):
         return "HUMAN", max(confidence, 0.78), "agree_human_quiet"
 
     # Mild disagreement: prefer HUMAN (agent connect rate)
-    if status == "MACHINE" and confidence < 0.8 and s_long < 1000:
+    if (
+        status == "MACHINE"
+        and confidence < pack["prefer_human_machine_conf"]
+        and s_long < pack["prefer_human_speech_ms"]
+    ):
         return "HUMAN", 0.72, "prefer_human_uncertain"
 
-    if status == "HUMAN" and s_long >= 2200 and s_ratio >= 0.55 and duration >= 2.5:
+    if (
+        status == "HUMAN"
+        and s_long >= pack["upgrade_machine_speech_ms"]
+        and s_ratio >= pack["upgrade_machine_speech_ratio"]
+        and duration >= pack["upgrade_machine_duration"]
+    ):
         return "MACHINE", 0.76, "silero_upgrade_machine"
 
     return status, confidence, "heuristic_primary"
 
 
-def analyze_audio(data: bytes, sample_hint_sr: int = 8000) -> AnalysisResult:
+def analyze_audio(
+    data: bytes,
+    sample_hint_sr: int = 8000,
+    *,
+    locale_pack_enabled: bool = False,
+    locale_pack: str = "usa",
+) -> AnalysisResult:
     t0 = time.perf_counter()
 
     try:
@@ -346,15 +400,21 @@ def analyze_audio(data: bytes, sample_hint_sr: int = 8000) -> AnalysisResult:
         **stats,
     }
 
-    h_status, h_confidence = _classify_heuristic(feats, beep, sit)
+    pack_name, pack = resolve_locale_pack(
+        enabled=bool(locale_pack_enabled),
+        pack=locale_pack,
+    )
+    h_status, h_confidence = _classify_heuristic(feats, beep, sit, pack)
     silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.5)
     status, confidence, fuse_note = _fuse_with_silero(
-        h_status, h_confidence, feats, silero
+        h_status, h_confidence, feats, silero, pack
     )
 
     details: Dict[str, Any] = {
         **feats,
         "engine": "hybrid",
+        "locale_pack_enabled": bool(locale_pack_enabled),
+        "locale_pack": pack_name,
         "blank_as_machine": is_blank_as_machine_enabled(),
         "heuristic_status": h_status,
         "heuristic_confidence": round(float(h_confidence), 4),

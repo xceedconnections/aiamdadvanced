@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.ai.engine import analyze_audio
-from app.amd_settings import apply_confidence_gate
+from app.amd_settings import apply_confidence_gate, gate_config_for_server
 from app.auth.security import get_server_from_api_key
 from app.config import get_settings
 from app.database import get_db
@@ -36,11 +36,28 @@ async def analyze(
     if len(raw) < 100:
         raise HTTPException(status_code=400, detail="Audio file too small / empty")
 
-    result = analyze_audio(raw)
+    result = analyze_audio(
+        raw,
+        locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
+        locale_pack=str(getattr(server, "locale_pack", None) or "usa"),
+    )
 
-    # Apply portal-configured minimum-confidence gate (HUMAN below threshold -> MACHINE)
+    # Per-server gate if enabled on this VICIdial server; else global Settings
     raw_status = result.status
-    final_status, downgraded = apply_confidence_gate(result.status, result.confidence)
+    gate_cfg = gate_config_for_server(server)
+    final_status, downgraded = apply_confidence_gate(
+        result.status,
+        result.confidence,
+        server_override={
+            "confidence_gate_enabled": bool(getattr(server, "confidence_gate_enabled", False)),
+            "min_human_confidence_percent": int(
+                getattr(server, "min_human_confidence_percent", 70) or 70
+            ),
+            "below_threshold_action": str(
+                getattr(server, "below_threshold_action", None) or "MACHINE"
+            ),
+        },
+    )
 
     # Browser-safe PCM16 WAV for portal play + disk archive
     playable = to_browser_wav(raw)
@@ -55,6 +72,13 @@ async def analyze(
     called_number = (called or "").strip()
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
+
+    details = {
+        **result.details,
+        "gate_downgraded": downgraded,
+        "raw_status": raw_status,
+        "confidence_gate": gate_cfg,
+    }
 
     row = CallAnalysis(
         server_id=server.id,
@@ -71,7 +95,7 @@ async def analyze(
         audio_path=path,
         audio_saved=True,
         audio_blob=playable,
-        features_json=json.dumps({**result.details, "gate_downgraded": downgraded, "raw_status": raw_status}),
+        features_json=json.dumps(details),
         error_message=result.details.get("error", "") if result.status == "ERROR" else "",
     )
     db.add(row)
@@ -91,7 +115,7 @@ async def analyze(
         processing_ms=result.processing_ms,
         callid=callid,
         analysis_id=row.id,
-        details={**result.details, "raw_status": raw_status, "gate_downgraded": downgraded},
+        details=details,
     )
 
 

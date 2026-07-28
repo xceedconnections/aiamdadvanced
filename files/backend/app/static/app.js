@@ -1049,10 +1049,17 @@ async function loadServers() {
   const servers = await api("/api/servers");
   window.__openamd_servers = servers;
   $("#servers-body").innerHTML = servers
-    .map(
-      (s) => `<tr>
+    .map((s) => {
+      const gate = s.confidence_gate_enabled
+        ? `Gate ≥${s.min_human_confidence_percent}% → ${s.below_threshold_action}`
+        : "Gate: global";
+      const loc = s.locale_pack_enabled
+        ? `Locale: ${(s.locale_pack || "usa").toUpperCase()}`
+        : "Locale: default";
+      return `<tr>
       <td><strong>${escapeHtml(s.name)}</strong><div class="hint">${escapeHtml(s.description || "")}</div>
-        <div class="hint">${escapeHtml(s.timezone || "")}</div></td>
+        <div class="hint">${escapeHtml(s.timezone || "")}</div>
+        <div class="hint">${escapeHtml(gate)} · ${escapeHtml(loc)}</div></td>
       <td><span class="hint">${escapeHtml(s.ip_whitelist || "(any)")}</span></td>
       <td>${s.calls_today}</td>
       <td>${s.total_calls}</td>
@@ -1066,8 +1073,8 @@ async function loadServers() {
             : `<button class="ghost" type="button" onclick="activateServer(${s.id})">Enable</button>`
         }
       </td>
-    </tr>`
-    )
+    </tr>`;
+    })
     .join("");
 
   $("#key-server-select").innerHTML = servers
@@ -1081,6 +1088,11 @@ function resetServerForm() {
   form.reset();
   $("#server-edit-id").value = "";
   $("#server-timezone").value = "America/New_York";
+  $("#server-gate-enabled").checked = false;
+  $("#server-gate-min").value = "70";
+  $("#server-gate-action").value = "MACHINE";
+  $("#server-locale-enabled").checked = false;
+  $("#server-locale-pack").value = "usa";
   $("#server-form-title").textContent = "Add VICIdial server";
   $("#server-submit-btn").textContent = "Create server";
   $("#server-cancel-edit").classList.add("hidden");
@@ -1096,10 +1108,15 @@ window.editServer = (id) => {
   $("#server-description").value = s.description || "";
   $("#server-timezone").value = s.timezone || "UTC";
   $("#server-ip-whitelist").value = s.ip_whitelist || "";
+  $("#server-gate-enabled").checked = !!s.confidence_gate_enabled;
+  $("#server-gate-min").value = String(s.min_human_confidence_percent ?? 70);
+  $("#server-gate-action").value = s.below_threshold_action || "MACHINE";
+  $("#server-locale-enabled").checked = !!s.locale_pack_enabled;
+  $("#server-locale-pack").value = s.locale_pack || "usa";
   $("#server-form-title").textContent = "Edit VICIdial server";
   $("#server-submit-btn").textContent = "Save changes";
   $("#server-cancel-edit").classList.remove("hidden");
-  $("#server-msg").textContent = `Editing #${s.id} — update name, description, timezone, or dialer IP(s).`;
+  $("#server-msg").textContent = `Editing #${s.id} — update server, confidence gate, or locale pack.`;
   $("#server-name").focus();
 };
 
@@ -1129,6 +1146,11 @@ $("#server-form").addEventListener("submit", async (e) => {
     description: (fd.get("description") || "").toString(),
     timezone: (fd.get("timezone") || "UTC").toString(),
     ip_whitelist: (fd.get("ip_whitelist") || "").toString().trim(),
+    confidence_gate_enabled: !!$("#server-gate-enabled")?.checked,
+    min_human_confidence_percent: Number($("#server-gate-min")?.value || 70),
+    below_threshold_action: ($("#server-gate-action")?.value || "MACHINE").toString(),
+    locale_pack_enabled: !!$("#server-locale-enabled")?.checked,
+    locale_pack: ($("#server-locale-pack")?.value || "usa").toString(),
   };
   try {
     if (id) {

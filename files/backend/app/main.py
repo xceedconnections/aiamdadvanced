@@ -64,6 +64,15 @@ def ensure_schema():
                 "ADD COLUMN IF NOT EXISTS raw_status VARCHAR(32) DEFAULT ''"
             )
         )
+        # Per-server AMD gate + locale packs
+        for stmt in (
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS confidence_gate_enabled BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS min_human_confidence_percent INTEGER DEFAULT 70",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS below_threshold_action VARCHAR(32) DEFAULT 'MACHINE'",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack_enabled BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack VARCHAR(32) DEFAULT 'usa'",
+        ):
+            conn.execute(text(stmt))
 
 
 def init_db():

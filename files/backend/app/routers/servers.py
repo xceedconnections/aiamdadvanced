@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.security import generate_api_key, get_current_user, hash_api_key
 from app.database import get_db
+from app.locale_packs import ALLOWED_LOCALE_PACKS, locale_pack_meta, normalize_locale_pack
 from app.models.api_key import ApiKey
 from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
@@ -19,6 +20,32 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
+
+_ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
+
+
+def _normalize_server_amd_fields(data: dict) -> dict:
+    out = dict(data)
+    if "locale_pack" in out and out["locale_pack"] is not None:
+        pack = normalize_locale_pack(out["locale_pack"])
+        if pack not in ALLOWED_LOCALE_PACKS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"locale_pack must be one of: {', '.join(ALLOWED_LOCALE_PACKS)}",
+            )
+        out["locale_pack"] = pack
+    if "below_threshold_action" in out and out["below_threshold_action"] is not None:
+        action = str(out["below_threshold_action"]).strip().upper()
+        if action not in _ALLOWED_ACTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="below_threshold_action must be MACHINE, IVR, SIT, or ERROR",
+            )
+        out["below_threshold_action"] = action
+    if "min_human_confidence_percent" in out and out["min_human_confidence_percent"] is not None:
+        pct = int(out["min_human_confidence_percent"])
+        out["min_human_confidence_percent"] = max(0, min(100, pct))
+    return out
 
 
 def _server_out(db: Session, server: VicidialServer) -> ServerOut:
@@ -42,11 +69,25 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         timezone=server.timezone or "UTC",
         ip_whitelist=server.ip_whitelist or "",
         is_active=server.is_active,
+        confidence_gate_enabled=bool(getattr(server, "confidence_gate_enabled", False)),
+        min_human_confidence_percent=int(
+            getattr(server, "min_human_confidence_percent", 70) or 70
+        ),
+        below_threshold_action=str(
+            getattr(server, "below_threshold_action", None) or "MACHINE"
+        ),
+        locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
+        locale_pack=normalize_locale_pack(getattr(server, "locale_pack", None) or "usa"),
         last_seen=server.last_seen,
         created_at=server.created_at,
         total_calls=total,
         calls_today=today_count,
     )
+
+
+@router.get("/locale-packs")
+def list_locale_packs(user: User = Depends(get_current_user)):
+    return {"packs": locale_pack_meta()}
 
 
 @router.get("", response_model=list[ServerOut])
@@ -68,11 +109,17 @@ def create_server(
     if exists:
         raise HTTPException(status_code=400, detail="Server name already exists")
 
+    fields = _normalize_server_amd_fields(payload.model_dump())
     server = VicidialServer(
-        name=payload.name,
-        description=payload.description,
-        timezone=payload.timezone,
-        ip_whitelist=payload.ip_whitelist,
+        name=fields["name"],
+        description=fields.get("description") or "",
+        timezone=fields.get("timezone") or "UTC",
+        ip_whitelist=fields.get("ip_whitelist") or "",
+        confidence_gate_enabled=bool(fields.get("confidence_gate_enabled", False)),
+        min_human_confidence_percent=int(fields.get("min_human_confidence_percent", 70)),
+        below_threshold_action=str(fields.get("below_threshold_action") or "MACHINE"),
+        locale_pack_enabled=bool(fields.get("locale_pack_enabled", False)),
+        locale_pack=str(fields.get("locale_pack") or "usa"),
     )
     db.add(server)
     db.commit()
@@ -103,7 +150,7 @@ def update_server(
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    data = payload.model_dump(exclude_unset=True)
+    data = _normalize_server_amd_fields(payload.model_dump(exclude_unset=True))
     if "name" in data and data["name"]:
         clash = (
             db.query(VicidialServer)
