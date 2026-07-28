@@ -13,7 +13,6 @@ from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
 from app.recordings import link_analysis_recording, save_call_audio, to_browser_wav
 from app.schemas import AnalyzeResponse
-from app.training import apply_training_override
 
 router = APIRouter(prefix="/api/v1", tags=["analyze"])
 settings = get_settings()
@@ -64,15 +63,10 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Taught phone overrides win (admin training) — applied after engine + gate
-    final_status, final_confidence, train_meta = apply_training_override(
-        db,
-        engine_status=gated_status,
-        engine_confidence=result.confidence,
-        called=called_number,
-        ani=ani_value,
-        caller=caller_id,
-    )
+    # Always judge from this recording (engine + confidence gate).
+    # Training corrections are audit/history only — they never force future AMD.
+    final_status = gated_status
+    final_confidence = result.confidence
     raw_status = engine_status
 
     # Browser-safe PCM16 WAV for portal play + disk archive
@@ -90,7 +84,7 @@ async def analyze(
         "gate_downgraded": downgraded,
         "raw_status": raw_status,
         "confidence_gate": gate_cfg,
-        **train_meta,
+        "training_override": False,
     }
 
     row = CallAnalysis(

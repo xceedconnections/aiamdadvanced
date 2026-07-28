@@ -80,6 +80,8 @@ def ensure_schema():
             "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS action VARCHAR(32) DEFAULT 'teach'",
             "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
             "ALTER TABLE training_corrections ALTER COLUMN call_id DROP NOT NULL",
+            # Never force future AMD from phone teaches — deactivate any legacy overrides
+            "UPDATE training_overrides SET is_active = FALSE WHERE is_active = TRUE",
         ):
             try:
                 conn.execute(text(stmt))

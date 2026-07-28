@@ -1,4 +1,4 @@
-"""Training knowledge: phone overrides used by analyze + backup/import."""
+"""Training corrections: audit history + backup/import (never force future AMD)."""
 
 from __future__ import annotations
 
@@ -81,27 +81,10 @@ def apply_training_override(
     caller: str = "",
 ) -> tuple[str, float, dict[str, Any]]:
     """
-    If phone has an active teach, force that status for future AMD decisions.
-    Returns (status, confidence, meta).
+    No-op: AMD always judges from the current recording.
+    Kept for API compatibility; never forces a phone status.
     """
-    ov = lookup_override(db, called, ani, caller)
-    if not ov:
-        return engine_status, engine_confidence, {"training_override": False}
-
-    ov.hit_count = int(ov.hit_count or 0) + 1
-    ov.updated_at = datetime.utcnow()
-    return (
-        str(ov.taught_status),
-        max(float(engine_confidence), 0.95),
-        {
-            "training_override": True,
-            "training_phone": ov.phone_number,
-            "training_taught_status": ov.taught_status,
-            "training_engine_status": engine_status,
-            "training_override_id": ov.id,
-            "training_taught_by": ov.taught_by or "",
-        },
-    )
+    return engine_status, engine_confidence, {"training_override": False}
 
 
 def upsert_override_from_call(
@@ -112,17 +95,26 @@ def upsert_override_from_call(
     username: str,
     notes: str = "",
     ai_status: str = "",
-) -> tuple[TrainingCorrection, TrainingOverride]:
-    """Record audit row + upsert active phone override. Returns (correction, override)."""
+) -> tuple[TrainingCorrection, Optional[TrainingOverride]]:
+    """
+    Correct this call's disposition and write an audit row.
+    Does NOT force future AMD for this phone — every call is judged fresh.
+    """
     status = normalize_status(taught_status)
     if status not in ALLOWED_STATUSES:
         raise ValueError(f"Invalid taught status: {taught_status}")
 
     phone = normalize_phone(call.called_number or call.ani or "")
     if not phone:
-        # Fall back to caller only if called missing (still teach something usable)
         phone = normalize_phone(call.caller_id or "")
 
+    # Preserve original AI label on the call row
+    original_ai = (getattr(call, "raw_status", None) or "").strip() or (ai_status or call.status)
+    if not (getattr(call, "raw_status", None) or "").strip():
+        call.raw_status = original_ai
+    call.status = status
+
+    # Keep any legacy phone override inactive (never force future analyzes)
     prev = ""
     override = None
     if phone:
@@ -137,24 +129,8 @@ def upsert_override_from_call(
             override.source_call_id = call.id
             override.taught_by = username
             override.notes = notes or override.notes or ""
-            override.is_active = True
+            override.is_active = False
             override.updated_at = datetime.utcnow()
-        else:
-            override = TrainingOverride(
-                phone_number=phone,
-                taught_status=status,
-                source_call_id=call.id,
-                taught_by=username,
-                notes=notes or "",
-                is_active=True,
-            )
-            db.add(override)
-
-    # Preserve original AI label
-    original_ai = (getattr(call, "raw_status", None) or "").strip() or (ai_status or call.status)
-    if not (getattr(call, "raw_status", None) or "").strip():
-        call.raw_status = original_ai
-    call.status = status
 
     correction = TrainingCorrection(
         call_id=call.id,
@@ -171,7 +147,7 @@ def upsert_override_from_call(
     db.flush()
     if override is not None:
         override.last_correction_id = correction.id
-    return correction, override  # type: ignore[return-value]
+    return correction, override
 
 
 def deactivate_override(
@@ -298,7 +274,7 @@ def import_training_backup(
             row.taught_status = status
             row.taught_by = str(item.get("taught_by") or username)
             row.notes = str(item.get("notes") or row.notes or "")
-            row.is_active = bool(item.get("is_active", True))
+            row.is_active = False  # never force future AMD
             row.updated_at = datetime.utcnow()
             updated_ov += 1
         else:
@@ -308,7 +284,7 @@ def import_training_backup(
                     taught_status=status,
                     taught_by=str(item.get("taught_by") or username),
                     notes=str(item.get("notes") or ""),
-                    is_active=bool(item.get("is_active", True)),
+                    is_active=False,  # audit/backup only
                     hit_count=int(item.get("hit_count") or 0),
                 )
             )

@@ -81,12 +81,10 @@ def correct_call(
         "phone_number": correction.phone_number,
         "ai_status": correction.ai_status,
         "corrected_status": corrected,
-        "override_active": bool(override and override.is_active),
+        "override_active": False,
         "message": (
-            f"Taught {correction.phone_number or 'call'} → {corrected}. "
-            "Future AMD calls to this number will use this label."
-            if correction.phone_number
-            else f"Call status updated to {corrected} (no phone to override)."
+            f"Logged correction for this call → {corrected}. "
+            "Next dial of any number is judged fresh from its recording (not forced)."
         ),
     }
 
@@ -97,7 +95,7 @@ def teach_phone(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Teach a phone without a call row (manual)."""
+    """Log a manual phone correction (audit only — does not force future AMD)."""
     status = normalize_status(payload.taught_status)
     if status not in ALLOWED_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid taught_status")
@@ -105,7 +103,6 @@ def teach_phone(
     if len(phone) < 7:
         raise HTTPException(status_code=400, detail="phone_number too short")
 
-    # Fake minimal call object for upsert path — use dedicated override upsert
     ov = (
         db.query(TrainingOverride)
         .filter(TrainingOverride.phone_number == phone)
@@ -116,17 +113,8 @@ def teach_phone(
         ov.taught_status = status
         ov.taught_by = user.username
         ov.notes = payload.notes or ov.notes or ""
-        ov.is_active = True
+        ov.is_active = False
         ov.updated_at = datetime.utcnow()
-    else:
-        ov = TrainingOverride(
-            phone_number=phone,
-            taught_status=status,
-            taught_by=user.username,
-            notes=payload.notes or "",
-            is_active=True,
-        )
-        db.add(ov)
 
     corr = TrainingCorrection(
         call_id=None,
@@ -136,19 +124,21 @@ def teach_phone(
         previous_taught_status=prev,
         action="teach",
         corrected_by=user.username,
-        notes=payload.notes or "Manual phone teach",
+        notes=payload.notes or "Manual phone teach (audit only)",
         is_active=True,
     )
     db.add(corr)
     db.flush()
-    ov.last_correction_id = corr.id
+    if ov is not None:
+        ov.last_correction_id = corr.id
     db.commit()
     return {
         "ok": True,
         "phone_number": phone,
         "taught_status": status,
         "correction_id": corr.id,
-        "override_id": ov.id,
+        "override_id": ov.id if ov else None,
+        "message": "Logged for history only. Future AMD always judges from the live recording.",
     }
 
 

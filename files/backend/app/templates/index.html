@@ -408,7 +408,7 @@
           <div class="panel-head"><h3>Correct AI decisions</h3></div>
           <p class="hint">
             Search by <strong>called number</strong> or <strong>caller ID</strong>, play the recording, set the true label, and save.
-            Teaching a number stores an override so <strong>future AMD calls to that number use your label</strong> (HUMAN / MACHINE / IVR / …).
+            Teaching corrects <strong>this call’s disposition</strong> and logs it for history. Every new dial is judged fresh from its recording — past teaches never force a phone status.
           </p>
           <div class="filter-bar">
             <label>
@@ -461,7 +461,7 @@
         <div class="two-col" style="margin-top:1.25rem">
           <div class="panel">
             <div class="panel-head"><h3>Training backup</h3></div>
-            <p class="hint">Download taught numbers + history as JSON. Upload on a new AIAMD server to restore training.</p>
+            <p class="hint">Download correction history as JSON. Upload on a new AIAMD server to restore the training audit log (does not force future AMD).</p>
             <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.75rem">
               <button type="button" id="train-backup-btn">Download backup</button>
               <label class="ghost" style="display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;padding:.45rem .8rem;border:1px solid rgba(255,255,255,.15);border-radius:8px">
@@ -477,7 +477,7 @@
           </div>
           <div class="panel">
             <div class="panel-head"><h3>Wipe training only</h3></div>
-            <p class="hint">Deletes all taught phone overrides and history. AMD behaves like a fresh server for training (call CDR logs are kept).</p>
+            <p class="hint">Deletes all training history. Call CDR logs are kept. AMD already judges every call fresh from audio.</p>
             <form id="train-wipe-form" class="form-stack" style="max-width:420px;margin-top:.75rem">
               <label>Type <code>WIPE TRAINING</code> to confirm</label>
               <input name="confirm" required placeholder="WIPE TRAINING" autocomplete="off" />
@@ -492,8 +492,8 @@
         <div class="panel">
           <div class="panel-head"><h3>What we taught the AI</h3></div>
           <p class="hint">
-            Audit log of every teach / revert. Active phone overrides are applied on future AMD calls.
-            Revert an override if a number was marked MACHINE by mistake.
+            Audit log of every teach / correction. These records do not change future AMD — each call is always judged from its recording.
+            Use this page to review and fix a mistaken label on a past call.
           </p>
           <div class="filter-bar">
             <label>
@@ -522,8 +522,8 @@
           </div>
         </div>
         <div class="panel" style="margin-top:1.25rem">
-          <div class="panel-head"><h3>Active phone overrides</h3></div>
-          <p class="hint">These numbers force AMD disposition on future calls until reverted.</p>
+          <div class="panel-head"><h3>Legacy phone override rows</h3></div>
+          <p class="hint">Older installs may have these rows. They are inactive and are <strong>not</strong> applied to AMD — every call is judged from its recording.</p>
           <div class="table-wrap">
             <table>
               <thead>

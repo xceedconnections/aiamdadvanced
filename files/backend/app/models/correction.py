@@ -25,8 +25,8 @@ class TrainingCorrection(Base):
 
 class TrainingOverride(Base):
     """
-    Active phone → taught status map used at analyze time.
-    One row per normalized phone number.
+    Legacy phone → taught status rows (kept for backup/history).
+    Not applied at analyze time — every call is judged from its recording.
     """
 
     __tablename__ = "training_overrides"

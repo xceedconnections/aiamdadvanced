@@ -232,7 +232,7 @@ function teachButtons(r) {
     ["SIT", "SIT"],
     ["FAX", "Fax"],
   ];
-  return `<div class="teach-actions" title="Teach AI for this called number">
+  return `<div class="teach-actions" title="Correct this call disposition (logged; does not force future AMD)">
     ${opts
       .map(
         ([v, label]) =>
@@ -1325,7 +1325,7 @@ window.saveCorrection = async (id) => {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert(data.message || "Taught — future AMD for this number will use your label.");
+  alert(data.message || "Correction logged for this call. Next dial is judged fresh from audio.");
   loadTraining();
 };
 
@@ -1335,7 +1335,7 @@ window.saveCorrectionMobile = async (id) => {
     method: "POST",
     json: { call_analysis_id: id, corrected_status: status, notes: "" },
   });
-  alert(data.message || "Taught — future AMD for this number will use your label.");
+  alert(data.message || "Correction logged for this call. Next dial is judged fresh from audio.");
   loadTraining();
 };
 
@@ -1383,7 +1383,7 @@ async function loadTrainingHistory() {
     ]);
     if ($("#thist-meta")) {
       $("#thist-meta").textContent =
-        `${hist.total || 0} history rows · ${stats.active_overrides || 0} active phone overrides`;
+        `${hist.total || 0} history rows (corrections do not force future AMD)`;
     }
     $("#thist-body").innerHTML = (hist.items || [])
       .map(
@@ -1418,7 +1418,7 @@ async function loadTrainingHistory() {
 }
 
 window.revertOverride = async (id) => {
-  if (!confirm("Revert this phone override? Future AMD will use the engine again for this number.")) return;
+  if (!confirm("Mark this legacy override inactive? (AMD already judges every call from audio.)")) return;
   try {
     await api(`/api/training/overrides/${id}/revert`, { method: "POST" });
     loadTrainingHistory();
@@ -1483,7 +1483,7 @@ $("#train-wipe-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const confirmText = String(fd.get("confirm") || "").trim();
-  if (!confirm("Delete ALL training overrides and history? AMD will act like a fresh server for training.")) return;
+  if (!confirm("Delete ALL training history? This only clears the audit log — AMD already judges every call from audio.")) return;
   const msg = $("#train-wipe-msg");
   try {
     const data = await api("/api/training/wipe", {
