@@ -232,13 +232,12 @@ function teachButtons(r) {
     ["SIT", "SIT"],
     ["FAX", "Fax"],
   ];
+  const options = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
   return `<div class="teach-actions" title="Correct this call disposition (logged; does not force future AMD)">
-    ${opts
-      .map(
-        ([v, label]) =>
-          `<button type="button" class="teach-btn ${r.status === v ? "active" : ""}" data-teach-id="${id}" data-teach-status="${v}">${label}</button>`
-      )
-      .join("")}
+    <select class="teach-select" data-teach-id="${id}" aria-label="Mark disposition">
+      <option value="" selected>Mark as…</option>
+      ${options}
+    </select>
   </div>`;
 }
 
@@ -1362,13 +1361,17 @@ window.quickTeach = async (id, status) => {
   }
 };
 
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-teach-id]");
-  if (!btn) return;
-  e.preventDefault();
-  const id = btn.getAttribute("data-teach-id");
-  const status = btn.getAttribute("data-teach-status");
-  if (id && status) quickTeach(id, status);
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest("select.teach-select[data-teach-id]");
+  if (!sel) return;
+  const id = sel.getAttribute("data-teach-id");
+  const status = (sel.value || "").trim();
+  if (!id || !status) return;
+  sel.disabled = true;
+  Promise.resolve(quickTeach(id, status)).finally(() => {
+    sel.disabled = false;
+    sel.value = "";
+  });
 });
 
 async function loadTrainingHistory() {
