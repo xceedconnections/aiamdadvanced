@@ -301,7 +301,7 @@ def wipe_training(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Delete all taught knowledge — AMD behaves like a fresh server for training."""
+    """Delete all training audit history (AMD always judges from audio regardless)."""
     _require_admin(user)
     if payload.confirm.strip().upper() != "WIPE TRAINING":
         raise HTTPException(status_code=400, detail="Type WIPE TRAINING to confirm")
@@ -311,7 +311,7 @@ def wipe_training(
         **result,
         "wiped_by": user.username,
         "at": datetime.utcnow().isoformat() + "Z",
-        "message": "All training overrides and history deleted. AMD uses default engine only.",
+        "message": "Training history deleted. AMD continues to judge every call from its recording.",
     }
 
 
