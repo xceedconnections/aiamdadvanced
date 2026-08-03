@@ -119,26 +119,33 @@ https://github.com/xceedconnections/aiamdadvanced
 ## Prerequisites
 
 1. AI AMD server already installed
-2. Portal reachable: `http://YOUR_AI_AMD_IP/`
+2. Portal reachable: `http://YOUR_AI_AMD_IP/` or `https://your-domain/`
 3. Portal → **VICIdial Servers** → add server → **Generate API Key**
 
 ## One-command install (on ViciBox as root)
 
+Pass IP, domain, or full `http://` / `https://` URL:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh | bash -s -- YOUR_AI_AMD_IP oam_YOUR_API_KEY
+curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh | bash -s -- https://aiamd.xceedconnections.com oam_YOUR_API_KEY
 ```
 
-Example:
+```bash
+curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh | bash -s -- http://aiamd.xceedconnections.com oam_YOUR_API_KEY
+```
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh | bash -s -- 204.168.200.221 oam_xxxxxxxx
 ```
 
+Bare IP/domain defaults to **http://**. Prefer **https://your-domain** when TLS is configured.
+
 ### Alternative (clone first)
 
 ```bash
 git clone https://github.com/xceedconnections/vicidialaiamd.git /root/vicidialaiamd
-bash /root/vicidialaiamd/vicibox_install.sh YOUR_AI_AMD_IP oam_YOUR_API_KEY
+bash /root/vicidialaiamd/vicibox_install.sh https://aiamd.xceedconnections.com oam_YOUR_API_KEY
+bash /root/vicidialaiamd/vicibox_install.sh 204.168.200.221 oam_YOUR_API_KEY
 ```
 
 ## What this installs
@@ -174,7 +181,7 @@ agi/
 Re-run the same one-liner, or:
 
 ```bash
-bash /root/vicidialaiamd/vicibox_install.sh YOUR_AI_AMD_IP oam_YOUR_API_KEY
+bash /root/vicidialaiamd/vicibox_install.sh https://aiamd.xceedconnections.com oam_YOUR_API_KEY
 ```
 
 Metadata only:
@@ -188,7 +195,8 @@ bash /root/vicidialaiamd/fix_caller_called.sh
 ```bash
 asterisk -rx "dialplan show 8399@default"
 asterisk -rx "dialplan show openamd-detect"
-curl -sS http://YOUR_AI_AMD_IP/api/health
+curl -sS https://aiamd.xceedconnections.com/api/health
+# or: curl -sS http://YOUR_AI_AMD_IP/api/health
 ```
 
 ViciBox dialer installer repo: https://github.com/xceedconnections/vicidialaiamd

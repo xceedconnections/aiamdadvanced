@@ -1206,7 +1206,17 @@ $("#key-form").addEventListener("submit", async (e) => {
     });
     $("#key-msg").textContent = "Copy this key now — it will not be shown again.";
     $("#key-reveal").classList.remove("hidden");
-    $("#key-reveal").textContent = data.api_key;
+    const key = data.api_key;
+    const base = portalBaseUrl() || "https://YOUR_AI_AMD_HOST";
+    $("#key-reveal").textContent =
+      `${key}\n\n` +
+      `ViciBox install:\n` +
+      `curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\\n` +
+      `  | bash -s -- ${base} ${key}\n\n` +
+      `Or:\n` +
+      `bash /root/vicidialaiamd/vicibox_install.sh ${base} ${key}\n` +
+      `bash /root/vicidialaiamd/vicibox_install.sh http://${base.replace(/^https?:\/\//i, "")} ${key}\n` +
+      `bash /root/vicidialaiamd/vicibox_install.sh ${base.replace(/^https?:\/\//i, "")} ${key}`;
   } catch (err) {
     $("#key-msg").textContent = err.message;
   }
@@ -1504,6 +1514,32 @@ $("#train-wipe-form")?.addEventListener("submit", async (e) => {
 });
 
 
+function portalBaseUrl() {
+  return (window.location.origin || "").replace(/\/$/, "");
+}
+
+function viciboxInstallDocs(apiKey = "oam_YOUR_API_KEY") {
+  const base = portalBaseUrl() || "https://aiamd.example.com";
+  const httpBase = base.replace(/^https:/i, "http:");
+  const hostOnly = base.replace(/^https?:\/\//i, "");
+  return `POST ${base}/api/v1/analyze
+Header: X-API-Key: ${apiKey}
+Form fields: callid, campaign, caller, called, ani, audio (wav)
+
+Health:
+  curl -sS ${base}/api/health
+
+ViciBox install (use http://, https://, domain, or IP):
+  curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\
+    | bash -s -- ${base} ${apiKey}
+
+  bash /root/vicidialaiamd/vicibox_install.sh ${base} ${apiKey}
+  bash /root/vicidialaiamd/vicibox_install.sh ${httpBase} ${apiKey}
+  bash /root/vicidialaiamd/vicibox_install.sh ${hostOnly} ${apiKey}
+
+Then set campaign AMD / routing extension to: 8399`;
+}
+
 async function loadHealth() {
   const h = await fetch("/api/health").then((r) => r.json());
   let rec = null;
@@ -1515,6 +1551,8 @@ async function loadHealth() {
   const payload = rec ? { ...h, recordings: rec } : h;
   const el = $("#health-json");
   if (el) el.textContent = JSON.stringify(payload, null, 2);
+  const docs = $("#vicidial-api-docs");
+  if (docs) docs.textContent = viciboxInstallDocs("oam_xxxxxxxx");
   updateHealthPill({ status: h.status === "ok" ? "ok" : "warning" });
 }
 
