@@ -29,7 +29,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "4.2.0",
+    "version": "4.2.1",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero)",
 }
 
@@ -241,21 +241,53 @@ def _internal_silence_ms(mask: np.ndarray, frame_ms: int = 20) -> float:
     return float(max(silences) if silences else 0.0)
 
 
-def _detect_usa_voicemail_structure(
+def _detect_voicemail_structure(
     feats: Dict[str, float],
     pack: Dict[str, float],
 ) -> Tuple[bool, float, str]:
-    """USA answering-machine pattern in short AMD windows (~2–3.5s).
+    """North-America / global AM patterns in short AMD windows.
 
-    Typical: speech → mid pause → more speech (scripted greeting), often
-    without the final beep yet because recording stops early.
+    Covers:
+      1) speech → mid pause → more speech (greeting before beep)
+      2) dense scripted talk filling a 2s+ clip
+      3) choppy / compressed AM (many micro-bursts in ~1.5–2s)
+
+    UK packs set na_vm_aggressive=0 to skip these aggressive rules.
     """
+    if float(pack.get("na_vm_aggressive", 1.0)) < 0.5:
+        return False, 0.0, ""
+
     duration = float(feats.get("duration", 0.0))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
+    activity_ratio = float(feats.get("activity_ratio", speech_ratio))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
     total_speech_ms = speech_ratio * duration * 1000.0
     internal_sil = float(feats.get("internal_silence_ms", 0.0))
+
+    # --- Short choppy / carrier-compressed AM (no beep, <2s windows) ---
+    choppy_min_dur = float(pack.get("vm_choppy_duration_min", 1.35))
+    choppy_max_dur = float(pack.get("vm_choppy_duration_max", 2.4))
+    choppy_min_bursts = float(pack.get("vm_choppy_min_bursts", 6))
+    choppy_max_burst = float(pack.get("vm_choppy_max_burst_ms", 220))
+    choppy_min_speech = float(pack.get("vm_choppy_min_speech_ratio", 0.10))
+    if (
+        choppy_min_dur <= duration <= choppy_max_dur
+        and num_bursts >= choppy_min_bursts
+        and longest_burst <= choppy_max_burst
+        and (speech_ratio >= choppy_min_speech or activity_ratio >= 0.5)
+    ):
+        return True, 0.84, "na_vm_choppy_short"
+
+    # Continuous low-level energy with many tiny islands (soft AM / network chop)
+    if (
+        duration >= 1.45
+        and duration <= 2.3
+        and num_bursts >= 7
+        and longest_burst <= 150
+        and activity_ratio >= 0.45
+    ):
+        return True, 0.83, "na_vm_choppy_fragmented"
 
     min_dur = float(pack.get("vm_struct_duration_min", 1.9))
     min_speech = float(pack.get("vm_struct_speech_ratio", 0.38))
@@ -276,16 +308,16 @@ def _detect_usa_voicemail_structure(
         conf = 0.86
         if duration >= 2.4 and speech_ratio >= 0.45:
             conf = 0.9
-        return True, conf, "usa_vm_mid_pause"
+        return True, conf, "na_vm_mid_pause"
 
-    # Dense scripted talk filling most of a 2.5s+ AMD clip (no beep yet)
+    # Dense scripted talk filling most of a 2s+ AMD clip (no beep yet)
     if (
         duration >= float(pack.get("vm_dense_duration", 2.4))
         and speech_ratio >= float(pack.get("vm_dense_speech_ratio", 0.48))
         and num_bursts >= float(pack.get("vm_dense_bursts", 4))
         and longest_burst >= float(pack.get("vm_dense_min_burst_ms", 400))
     ):
-        return True, 0.84, "usa_vm_dense_greeting"
+        return True, 0.84, "na_vm_dense_greeting"
 
     return False, 0.0, ""
 
@@ -314,7 +346,7 @@ def _classify_heuristic(
             return "MACHINE", 0.92
         return "HUMAN", 0.55
 
-    vm_hit, vm_conf, _vm_note = _detect_usa_voicemail_structure(feats, pack)
+    vm_hit, vm_conf, _vm_note = _detect_voicemail_structure(feats, pack)
     if vm_hit:
         return "MACHINE", float(vm_conf)
 
@@ -376,7 +408,7 @@ def _fuse_with_silero(
     s_mean = float(silero.get("mean_prob", 0.0))
     strong_m = float(pack["strong_machine_conf"])
     dense_speech = duration >= 2.1 and speech_ratio >= 0.38
-    vm_hit, _, vm_note = _detect_usa_voicemail_structure(feats, pack)
+    vm_hit, _, vm_note = _detect_voicemail_structure(feats, pack)
 
     # Strong acoustic events already decided — Silero only confirms confidence
     if status in ("SIT",):
@@ -450,7 +482,7 @@ def _fuse_with_silero(
 
     # Heuristic said HUMAN but clip looks like USA AM structure
     if status == "HUMAN" and vm_hit:
-        return "MACHINE", max(0.84, confidence), vm_note or "usa_vm_structure"
+        return "MACHINE", max(0.84, confidence), vm_note or "na_vm_structure"
 
     return status, confidence, "heuristic_primary"
 
@@ -493,6 +525,9 @@ def analyze_audio(
     energy = _frame_energy(audio, sr, frame_ms=20)
     thr = float(np.percentile(energy, 35) * 2.0 + 1e-6)
     mask = energy > thr
+    # Lower threshold activity — soft continuous AM often fails the primary mask
+    thr_lo = float(np.percentile(energy, 20) * 1.5 + 1e-6)
+    activity_ratio = float(np.mean(energy > thr_lo)) if len(energy) else 0.0
     stats = _burst_stats(mask, frame_ms=20)
 
     beep, beep_conf = _detect_beep(audio, sr)
@@ -510,6 +545,7 @@ def analyze_audio(
         "sit": float(sit),
         "sit_conf": sit_conf,
         "internal_silence_ms": float(internal_sil),
+        "activity_ratio": float(activity_ratio),
         **stats,
     }
 
