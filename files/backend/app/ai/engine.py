@@ -29,7 +29,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "4.1.0",
+    "version": "4.2.0",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero)",
 }
 
@@ -140,25 +140,46 @@ def _burst_stats(mask: np.ndarray, frame_ms: int = 20) -> Dict[str, float]:
 
 
 def _detect_beep(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
-    """Voicemail beep: strong narrow tone near end of greeting."""
-    if len(audio) < int(sr * 0.5):
+    """Voicemail beep: narrow tone near end (or mid–end) of greeting.
+
+    US carriers often use ~1000 Hz; some use 900–1400 Hz. AMD clips are short,
+    so also scan the last 1.5s in overlapping windows.
+    """
+    if len(audio) < int(sr * 0.4):
         return False, 0.0
 
-    segment = audio[-sr:]
-    window = np.hanning(len(segment))
-    spectrum = np.abs(np.fft.rfft(segment * window))
-    freqs = np.fft.rfftfreq(len(segment), d=1.0 / sr)
+    best_ratio = 0.0
+    best_peak = 0.0
+    best_p97 = 0.0
+    win = max(int(sr * 0.35), 256)
+    hop = max(win // 2, 128)
+    start = max(0, len(audio) - int(sr * 1.5))
+    segment_full = audio[start:]
 
-    band = (freqs >= 850) & (freqs <= 1100)
-    if not np.any(band):
+    for off in range(0, max(1, len(segment_full) - win + 1), hop):
+        segment = segment_full[off : off + win]
+        if len(segment) < win // 2:
+            continue
+        window = np.hanning(len(segment))
+        spectrum = np.abs(np.fft.rfft(segment * window))
+        freqs = np.fft.rfftfreq(len(segment), d=1.0 / sr)
+        band = (freqs >= 850) & (freqs <= 1400)
+        if not np.any(band):
+            continue
+        peak = float(np.max(spectrum[band]))
+        mean = float(np.mean(spectrum) + 1e-9)
+        ratio = peak / mean
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_peak = peak
+            best_p97 = float(np.percentile(spectrum, 97))
+
+    if best_ratio <= 0:
         return False, 0.0
 
-    band_spec = spectrum[band]
-    peak = float(np.max(band_spec))
-    mean = float(np.mean(spectrum) + 1e-9)
-    ratio = peak / mean
-    is_beep = ratio > 25.0 and peak > np.percentile(spectrum, 97)
-    conf = min(0.99, max(0.0, (ratio - 20.0) / 30.0))
+    # Slightly looser than before — many live AMD beeps are short / compressed
+    is_beep = best_ratio > 18.0 and best_peak > best_p97 * 0.85
+    conf = min(0.99, max(0.0, (best_ratio - 14.0) / 28.0))
     return bool(is_beep), float(conf)
 
 
@@ -192,6 +213,83 @@ def _detect_sit(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     return False, 0.0
 
 
+def _internal_silence_ms(mask: np.ndarray, frame_ms: int = 20) -> float:
+    """Longest silence that is not leading or trailing (AM greeting pause)."""
+    if len(mask) < 3:
+        return 0.0
+    silences = []
+    cur = 0
+    state = bool(mask[0])
+    # skip leading silence by starting after first speech
+    started = False
+    for v in mask:
+        speech = bool(v)
+        if not started:
+            if speech:
+                started = True
+                state = True
+                cur = 1
+            continue
+        if speech == state:
+            cur += 1
+        else:
+            if not state:
+                silences.append(cur * frame_ms)
+            state = speech
+            cur = 1
+    # trailing silence ignored on purpose
+    return float(max(silences) if silences else 0.0)
+
+
+def _detect_usa_voicemail_structure(
+    feats: Dict[str, float],
+    pack: Dict[str, float],
+) -> Tuple[bool, float, str]:
+    """USA answering-machine pattern in short AMD windows (~2–3.5s).
+
+    Typical: speech → mid pause → more speech (scripted greeting), often
+    without the final beep yet because recording stops early.
+    """
+    duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    total_speech_ms = speech_ratio * duration * 1000.0
+    internal_sil = float(feats.get("internal_silence_ms", 0.0))
+
+    min_dur = float(pack.get("vm_struct_duration_min", 1.9))
+    min_speech = float(pack.get("vm_struct_speech_ratio", 0.38))
+    min_bursts = float(pack.get("vm_struct_min_bursts", 3))
+    sil_lo = float(pack.get("vm_struct_silence_lo_ms", 350))
+    sil_hi = float(pack.get("vm_struct_silence_hi_ms", 1400))
+    min_total_speech = float(pack.get("vm_struct_total_speech_ms", 1100))
+
+    if duration < min_dur or speech_ratio < min_speech:
+        return False, 0.0, ""
+    if num_bursts < min_bursts:
+        return False, 0.0, ""
+    if total_speech_ms < min_total_speech:
+        return False, 0.0, ""
+
+    # Classic AM: internal pause between phrases
+    if sil_lo <= internal_sil <= sil_hi and num_bursts >= min_bursts:
+        conf = 0.86
+        if duration >= 2.4 and speech_ratio >= 0.45:
+            conf = 0.9
+        return True, conf, "usa_vm_mid_pause"
+
+    # Dense scripted talk filling most of a 2.5s+ AMD clip (no beep yet)
+    if (
+        duration >= float(pack.get("vm_dense_duration", 2.4))
+        and speech_ratio >= float(pack.get("vm_dense_speech_ratio", 0.48))
+        and num_bursts >= float(pack.get("vm_dense_bursts", 4))
+        and longest_burst >= float(pack.get("vm_dense_min_burst_ms", 400))
+    ):
+        return True, 0.84, "usa_vm_dense_greeting"
+
+    return False, 0.0, ""
+
+
 def _classify_heuristic(
     feats: Dict[str, float],
     beep: bool,
@@ -215,6 +313,10 @@ def _classify_heuristic(
         if is_blank_as_machine_enabled():
             return "MACHINE", 0.92
         return "HUMAN", 0.55
+
+    vm_hit, vm_conf, _vm_note = _detect_usa_voicemail_structure(feats, pack)
+    if vm_hit:
+        return "MACHINE", float(vm_conf)
 
     if (
         duration >= pack["machine_duration_min"]
@@ -267,21 +369,24 @@ def _fuse_with_silero(
         return status, confidence, "heuristic_only"
 
     duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
     s_ratio = float(silero.get("speech_ratio", 0.0))
     s_segs = int(silero.get("num_segments", 0))
     s_long = float(silero.get("longest_speech_ms", 0.0))
     s_mean = float(silero.get("mean_prob", 0.0))
     strong_m = float(pack["strong_machine_conf"])
+    dense_speech = duration >= 2.1 and speech_ratio >= 0.38
+    vm_hit, _, vm_note = _detect_usa_voicemail_structure(feats, pack)
 
     # Strong acoustic events already decided — Silero only confirms confidence
     if status in ("SIT",):
         return status, confidence, "heuristic_sit"
 
-    if status == "MACHINE" and confidence >= strong_m:
-        # Beep / blank / strong machine — keep
+    if status == "MACHINE" and (confidence >= strong_m or vm_hit):
+        # Beep / blank / USA VM structure / strong machine — keep
         if s_long >= 1500 or s_ratio >= 0.4:
             return status, min(0.99, confidence + 0.05), "agree_machine_strong"
-        return status, confidence, "heuristic_machine_strong"
+        return status, confidence, vm_note or "heuristic_machine_strong"
 
     if status == "IVR" and confidence >= 0.75:
         return status, confidence, "heuristic_ivr"
@@ -306,13 +411,13 @@ def _fuse_with_silero(
         return "MACHINE", max(confidence, 0.8), "silero_many_segments"
 
     # Silero: short sparse speech → human ("hello?", "yeah?")
-    # Do not override high-confidence MACHINE (beep / blank / strong AM)
+    # Do not override high-confidence MACHINE or dense USA greetings
     if (
         s_segs <= pack["silero_human_max_segments"]
         and s_long <= pack["silero_human_max_speech_ms"]
         and s_ratio <= pack["silero_human_max_speech_ratio"]
     ):
-        if status == "MACHINE" and confidence < strong_m:
+        if status == "MACHINE" and confidence < strong_m and not dense_speech and not vm_hit:
             return "HUMAN", max(0.75, 1.0 - confidence + 0.2), "silero_override_human"
         if status == "HUMAN":
             return "HUMAN", max(confidence, 0.85), "agree_human_short"
@@ -325,11 +430,13 @@ def _fuse_with_silero(
     ):
         return "HUMAN", max(confidence, 0.78), "agree_human_quiet"
 
-    # Mild disagreement: prefer HUMAN (agent connect rate)
+    # Mild disagreement: prefer HUMAN only when not a dense/scripted clip
     if (
         status == "MACHINE"
         and confidence < pack["prefer_human_machine_conf"]
         and s_long < pack["prefer_human_speech_ms"]
+        and not dense_speech
+        and not vm_hit
     ):
         return "HUMAN", 0.72, "prefer_human_uncertain"
 
@@ -340,6 +447,10 @@ def _fuse_with_silero(
         and duration >= pack["upgrade_machine_duration"]
     ):
         return "MACHINE", 0.76, "silero_upgrade_machine"
+
+    # Heuristic said HUMAN but clip looks like USA AM structure
+    if status == "HUMAN" and vm_hit:
+        return "MACHINE", max(0.84, confidence), vm_note or "usa_vm_structure"
 
     return status, confidence, "heuristic_primary"
 
@@ -386,6 +497,7 @@ def analyze_audio(
 
     beep, beep_conf = _detect_beep(audio, sr)
     sit, sit_conf = _detect_sit(audio, sr)
+    internal_sil = _internal_silence_ms(mask, frame_ms=20)
 
     feats = {
         "duration": duration,
@@ -397,6 +509,7 @@ def analyze_audio(
         "beep_conf": beep_conf,
         "sit": float(sit),
         "sit_conf": sit_conf,
+        "internal_silence_ms": float(internal_sil),
         **stats,
     }
 
