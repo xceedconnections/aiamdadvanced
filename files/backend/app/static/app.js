@@ -1026,9 +1026,15 @@ async function loadAmdSettings() {
     if ($("#amd-blank-as-machine")) {
       $("#amd-blank-as-machine").checked = cfg.blank_as_machine !== false;
     }
+    if ($("#amd-ml-enabled")) $("#amd-ml-enabled").checked = !!cfg.ml_pipeline_enabled;
+    if ($("#amd-ml-whisper")) $("#amd-ml-whisper").checked = cfg.ml_whisper_enabled !== false;
+    if ($("#amd-ml-save-low")) $("#amd-ml-save-low").checked = cfg.ml_save_low_confidence !== false;
+    if ($("#amd-ml-high")) $("#amd-ml-high").value = cfg.ml_xgb_high_confidence ?? 0.85;
+    if ($("#amd-ml-low")) $("#amd-ml-low").value = cfg.ml_low_confidence_threshold ?? 0.85;
     if ($("#amd-path")) {
       $("#amd-path").textContent = cfg.path ? `Settings file: ${cfg.path}` : "";
     }
+    if (cfg.ml_pipeline_enabled) loadMlSamples();
   } catch (err) {
     if (msg) {
       msg.className = "error";
@@ -1052,21 +1058,129 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
         blank_as_machine: $("#amd-blank-as-machine")
           ? $("#amd-blank-as-machine").checked
           : true,
+        ml_pipeline_enabled: $("#amd-ml-enabled") ? $("#amd-ml-enabled").checked : false,
+        ml_whisper_enabled: $("#amd-ml-whisper") ? $("#amd-ml-whisper").checked : true,
+        ml_save_low_confidence: $("#amd-ml-save-low") ? $("#amd-ml-save-low").checked : true,
+        ml_xgb_high_confidence: Number($("#amd-ml-high")?.value || 0.85),
+        ml_low_confidence_threshold: Number($("#amd-ml-low")?.value || 0.85),
       },
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
       ? " Blank/silent → MACHINE."
       : " Blank/silent may pass as HUMAN.";
+    const mlNote = data.ml_pipeline_enabled
+      ? " ML pipeline ON (XGBoost; Whisper on low conf)."
+      : " ML pipeline OFF (hybrid engine only).";
     msg.textContent = data.enabled
-      ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.${blankNote}`
-      : `Saved: confidence gate disabled — all HUMAN calls pass to agents.${blankNote}`;
+      ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.${blankNote}${mlNote}`
+      : `Saved: confidence gate disabled — all HUMAN calls pass to agents.${blankNote}${mlNote}`;
+    if (data.ml_warmup_warning) {
+      msg.textContent += ` (ML warmup: ${data.ml_warmup_warning})`;
+    }
     if ($("#amd-path")) {
       $("#amd-path").textContent = data.path ? `Settings file: ${data.path}` : "";
     }
+    if (data.ml_pipeline_enabled) loadMlSamples();
   } catch (err) {
     msg.className = "error";
     msg.textContent = err.message;
+  }
+});
+
+async function loadMlSamples() {
+  const body = $("#ml-samples-body");
+  const statsEl = $("#ml-stats");
+  const msg = $("#ml-msg");
+  if (!body) return;
+  try {
+    const st = await api("/api/settings/ml/stats");
+    if (statsEl) {
+      const m = st.model || {};
+      statsEl.textContent =
+        `Samples: ${st.samples_labeled || 0} labeled / ${st.samples_unlabeled || 0} unlabeled` +
+        ` · Whisper installed: ${st.whisper_installed ? "yes" : "no (XGB-only until pip install faster-whisper)"}` +
+        ` · Model: ${m.model_exists ? "ready" : "will bootstrap on first enable"}`;
+    }
+    const data = await api("/api/settings/ml/samples?unlabeled_only=false&limit=40");
+    const rows = data.samples || [];
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="5" class="hint">No ML samples yet. Enable the pipeline and wait for low-confidence calls.</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows
+      .map((s) => {
+        const probs = s.class_probs || {};
+        const probTxt = ["HUMAN", "MACHINE", "IVR"]
+          .map((k) => `${k[0]}${((probs[k] || 0) * 100).toFixed(0)}`)
+          .join(" ");
+        const labeled = s.label
+          ? escapeHtml(s.label)
+          : `<select data-ml-id="${escapeHtml(s.id)}" class="ml-label-select">
+              <option value="">—</option>
+              <option value="HUMAN">HUMAN</option>
+              <option value="MACHINE">Voicemail/MACHINE</option>
+              <option value="IVR">IVR</option>
+            </select>`;
+        return `<tr>
+          <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}</td>
+          <td>${escapeHtml(s.predicted_status || "—")}</td>
+          <td>${s.confidence != null ? (s.confidence * 100).toFixed(1) + "%" : "—"}</td>
+          <td class="hint">${escapeHtml(probTxt)}</td>
+          <td>${labeled}</td>
+        </tr>`;
+      })
+      .join("");
+    $$(".ml-label-select").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        const id = sel.getAttribute("data-ml-id");
+        const label = sel.value;
+        if (!id || !label) return;
+        try {
+          await api(`/api/settings/ml/samples/${id}/label`, {
+            method: "POST",
+            json: { label },
+          });
+          if (msg) {
+            msg.className = "ok";
+            msg.textContent = `Labeled ${id} as ${label}`;
+          }
+          loadMlSamples();
+        } catch (err) {
+          if (msg) {
+            msg.className = "error";
+            msg.textContent = err.message;
+          }
+        }
+      });
+    });
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+}
+
+$("#ml-refresh-btn")?.addEventListener("click", () => loadMlSamples());
+$("#ml-retrain-btn")?.addEventListener("click", async () => {
+  const msg = $("#ml-msg");
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Retraining XGBoost…";
+  }
+  try {
+    const data = await api("/api/settings/ml/retrain", { method: "POST", json: {} });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Retrain OK — labeled used: ${data.n_labeled_used ?? 0}, train rows: ${data.n_train_total ?? "—"}`;
+    }
+    loadMlSamples();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
   }
 });
 

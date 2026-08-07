@@ -1,4 +1,4 @@
-"""AMD decision settings (confidence gate + blank-call handling).
+"""AMD decision settings (confidence gate + blank-call + optional ML pipeline).
 
 Stored as JSON next to recordings so it survives restarts and is shared by
 every VICIdial server that talks to this AI AMD server.
@@ -18,6 +18,12 @@ DEFAULTS = {
     "below_threshold_action": "MACHINE",
     # When True, blank / near-silent audio is disposed as MACHINE (not to agents)
     "blank_as_machine": True,
+    # Optional ML pipeline (XGBoost + Whisper on low conf). OFF = legacy hybrid only.
+    "ml_pipeline_enabled": False,
+    "ml_whisper_enabled": True,
+    "ml_xgb_high_confidence": 0.85,
+    "ml_low_confidence_threshold": 0.85,
+    "ml_save_low_confidence": True,
 }
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
@@ -46,6 +52,18 @@ def load_amd_settings() -> dict[str, Any]:
                     data["below_threshold_action"] = action
                 if "blank_as_machine" in raw:
                     data["blank_as_machine"] = bool(raw["blank_as_machine"])
+                if "ml_pipeline_enabled" in raw:
+                    data["ml_pipeline_enabled"] = bool(raw["ml_pipeline_enabled"])
+                if "ml_whisper_enabled" in raw:
+                    data["ml_whisper_enabled"] = bool(raw["ml_whisper_enabled"])
+                if "ml_save_low_confidence" in raw:
+                    data["ml_save_low_confidence"] = bool(raw["ml_save_low_confidence"])
+                for key in ("ml_xgb_high_confidence", "ml_low_confidence_threshold"):
+                    if key in raw:
+                        try:
+                            data[key] = max(0.5, min(0.99, float(raw[key])))
+                        except (TypeError, ValueError):
+                            pass
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
     data["path"] = str(path)
@@ -58,6 +76,11 @@ def save_amd_settings(
     min_human_confidence_percent: int,
     below_threshold_action: str = "MACHINE",
     blank_as_machine: bool = True,
+    ml_pipeline_enabled: bool = False,
+    ml_whisper_enabled: bool = True,
+    ml_xgb_high_confidence: float = 0.85,
+    ml_low_confidence_threshold: float = 0.85,
+    ml_save_low_confidence: bool = True,
 ) -> dict[str, Any]:
     pct = int(min_human_confidence_percent)
     if pct < 0 or pct > 100:
@@ -68,11 +91,27 @@ def save_amd_settings(
 
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Preserve unknown keys from prior file
+    prev: dict[str, Any] = {}
+    if path.exists():
+        try:
+            prev = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(prev, dict):
+                prev = {}
+        except (OSError, json.JSONDecodeError):
+            prev = {}
+
     payload = {
+        **prev,
         "enabled": bool(enabled),
         "min_human_confidence_percent": pct,
         "below_threshold_action": action,
         "blank_as_machine": bool(blank_as_machine),
+        "ml_pipeline_enabled": bool(ml_pipeline_enabled),
+        "ml_whisper_enabled": bool(ml_whisper_enabled),
+        "ml_xgb_high_confidence": max(0.5, min(0.99, float(ml_xgb_high_confidence))),
+        "ml_low_confidence_threshold": max(0.5, min(0.99, float(ml_low_confidence_threshold))),
+        "ml_save_low_confidence": bool(ml_save_low_confidence),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     out = dict(payload)
@@ -83,6 +122,10 @@ def save_amd_settings(
 def is_blank_as_machine_enabled() -> bool:
     """Whether blank/near-silent audio should be classified as MACHINE."""
     return bool(load_amd_settings().get("blank_as_machine", True))
+
+
+def is_ml_pipeline_enabled() -> bool:
+    return bool(load_amd_settings().get("ml_pipeline_enabled", False))
 
 
 def apply_confidence_gate(
@@ -124,7 +167,6 @@ def apply_confidence_gate(
     if conf_pct >= min_pct:
         return status, False
 
-    # source is recorded by caller via details if needed
     _ = source
     return action, True
 
@@ -150,4 +192,3 @@ def gate_config_for_server(server: Any | None = None) -> dict[str, Any]:
         "min_human_confidence_percent": int(global_cfg.get("min_human_confidence_percent", 70)),
         "below_threshold_action": str(global_cfg.get("below_threshold_action", "MACHINE")),
     }
-

@@ -629,10 +629,59 @@
               When enabled, empty or near-silent recordings are marked MACHINE and are not passed to agents.
               Disable to use the old behavior (blank calls may go to agents as HUMAN).
             </p>
+
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
+            <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">ML AMD pipeline (optional)</h3></div>
+            <p class="hint" style="margin-top:0">
+              Pipeline: Silero VAD → OpenAMD features → <strong>XGBoost</strong> (ms) →
+              <strong>Faster-Whisper Tiny</strong> only when XGBoost confidence is low.
+              When disabled, the server uses the current hybrid engine only — no XGBoost/Whisper load.
+            </p>
+            <label class="inline">
+              <input type="checkbox" id="amd-ml-enabled" />
+              Enable ML pipeline (XGBoost + optional Whisper)
+            </label>
+            <label class="inline">
+              <input type="checkbox" id="amd-ml-whisper" checked />
+              Use Faster-Whisper Tiny on low-confidence calls only
+            </label>
+            <label class="inline">
+              <input type="checkbox" id="amd-ml-save-low" checked />
+              Save low-confidence clips for agent labeling / retrain
+            </label>
+            <label for="amd-ml-high">XGBoost high-confidence threshold (skip Whisper at/above)</label>
+            <input id="amd-ml-high" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
+            <label for="amd-ml-low">Save / review threshold (below this → sample library)</label>
+            <input id="amd-ml-low" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
+
             <button type="submit">Save gate settings</button>
             <p id="amd-msg" class="hint"></p>
             <p class="hint" id="amd-path"></p>
           </form>
+
+          <div style="margin-top:1.25rem;max-width:640px">
+            <div class="panel-head"><h3>ML sample library</h3></div>
+            <p class="hint" id="ml-stats">Enable the ML pipeline, then low-confidence calls appear here for labeling.</p>
+            <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0">
+              <button type="button" class="ghost" id="ml-refresh-btn">Refresh samples</button>
+              <button type="button" id="ml-retrain-btn">Retrain XGBoost</button>
+            </div>
+            <p id="ml-msg" class="hint"></p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Predicted</th>
+                    <th>Conf</th>
+                    <th>Probs</th>
+                    <th>Label</th>
+                  </tr>
+                </thead>
+                <tbody id="ml-samples-body"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
         <div class="settings-grid">
           <div class="panel">

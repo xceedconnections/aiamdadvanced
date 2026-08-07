@@ -23,14 +23,14 @@ except ImportError:  # pragma: no cover
     sf = None
 
 from app.ai import silero_vad
-from app.amd_settings import is_blank_as_machine_enabled
+from app.amd_settings import is_blank_as_machine_enabled, is_ml_pipeline_enabled
 from app.locale_packs import resolve_locale_pack
 
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "4.2.1",
-    "runtime": "NumPy + SoundFile + ONNX Runtime (Silero)",
+    "version": "5.0.0",
+    "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
 }
 
 
@@ -568,6 +568,7 @@ def analyze_audio(
         "heuristic_status": h_status,
         "heuristic_confidence": round(float(h_confidence), 4),
         "fuse_note": fuse_note,
+        "ml_pipeline_enabled": False,
         "silero": {
             "ok": bool(silero.get("ok")),
             "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
@@ -578,6 +579,31 @@ def analyze_audio(
         },
         **silero_vad.status_info(),
     }
+
+    # Optional ML stage — imported only when Settings → ML pipeline is ON
+    # (disabled = hybrid only; no XGBoost / Whisper import on the hot path)
+    if is_ml_pipeline_enabled():
+        try:
+            from app.ai.ml_pipeline import run_ml_pipeline
+
+            ml_status, ml_conf, ml_details = run_ml_pipeline(
+                audio=audio,
+                sr=sr,
+                feats=feats,
+                silero=silero,
+                hybrid_status=status,
+                hybrid_confidence=confidence,
+            )
+            status, confidence = ml_status, ml_conf
+            details["ml_pipeline_enabled"] = True
+            details["engine"] = "hybrid+ml"
+            details["ml"] = ml_details
+            if ml_details.get("class_probs"):
+                details["class_probs"] = ml_details["class_probs"]
+        except Exception as exc:
+            details["ml_pipeline_enabled"] = True
+            details["ml_error"] = str(exc)
+            # Keep hybrid decision on any ML failure
 
     ms = int((time.perf_counter() - t0) * 1000)
     return AnalysisResult(

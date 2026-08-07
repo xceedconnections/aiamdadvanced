@@ -26,6 +26,11 @@ pip install -r "${REQ}"
 # Known fix: passlib + bcrypt>=4.1 crashes login
 pip install 'bcrypt==4.0.1' --force-reinstall
 
+# Optional Faster-Whisper for ML pipeline low-confidence refine (best effort).
+# Skipped on failure — XGBoost still works without Whisper when ML is enabled.
+log "Optional: faster-whisper (ML pipeline Whisper stage)..."
+pip install 'faster-whisper>=1.1.0' || echo "WARNING: faster-whisper not installed; ML pipeline will use XGBoost only"
+
 # Hybrid engine uses Silero VAD via onnxruntime (already in requirements).
 # Pre-download ONNX weights into /opt/openamd/models (best effort).
 log "Downloading Silero VAD ONNX model (best effort)..."
