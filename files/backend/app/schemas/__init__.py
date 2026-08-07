@@ -118,7 +118,7 @@ class ApiKeyOut(BaseModel):
     created_at: datetime
     last_used: Optional[datetime]
     notes: str
-    # Only returned once on create:
+    # Full oam_… key when stored (list + create). Empty for legacy rows.
     api_key: Optional[str] = None
 
     class Config:

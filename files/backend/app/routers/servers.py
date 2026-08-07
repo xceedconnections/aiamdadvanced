@@ -223,6 +223,8 @@ def delete_server(
 
 
 def _api_key_out(record: ApiKey, *, raw_key: str | None = None, server_name: str = "") -> ApiKeyOut:
+    stored = (getattr(record, "key_value", None) or "").strip()
+    full = (raw_key or stored or "").strip() or None
     return ApiKeyOut(
         id=record.id,
         server_id=record.server_id,
@@ -234,7 +236,7 @@ def _api_key_out(record: ApiKey, *, raw_key: str | None = None, server_name: str
         created_at=record.created_at,
         last_used=record.last_used,
         notes=record.notes or "",
-        api_key=raw_key,
+        api_key=full,
     )
 
 
@@ -251,8 +253,9 @@ def create_api_key(
     raw = generate_api_key()
     record = ApiKey(
         server_id=server.id,
-        key_prefix=raw[:10],
+        key_prefix=raw[:12],
         key_hash=hash_api_key(raw),
+        key_value=raw,
         name=(payload.name or "default").strip() or "default",
         notes=payload.notes or "",
     )

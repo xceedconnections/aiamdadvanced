@@ -13,6 +13,8 @@ class ApiKey(Base):
     server_id = Column(Integer, ForeignKey("vicidial_servers.id"), nullable=False)
     key_prefix = Column(String(16), nullable=False)
     key_hash = Column(String(128), nullable=False, unique=True, index=True)
+    # Full secret for portal display/copy (auth still uses key_hash)
+    key_value = Column(Text, default="")
     name = Column(String(128), default="default")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -391,7 +391,8 @@
           <div class="panel-head"><h3>API keys</h3></div>
           <p class="hint">
             Select a VICIdial server to view its keys, create a new one, or delete an old key.
-            The full secret is shown <strong>only once</strong> when created — copy it into ViciBox immediately.
+            Full <code>oam_…</code> secrets are stored so you can copy them again from this list.
+            Older keys created before this update may only show a short prefix — generate a new key for those.
           </p>
           <div class="form-stack" style="max-width:520px;margin-top:.5rem">
             <label for="key-server-select">VICIdial server</label>
@@ -410,7 +411,7 @@
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Prefix</th>
+                    <th>API key</th>
                     <th>Created</th>
                     <th>Last used</th>
                     <th>Status</th>

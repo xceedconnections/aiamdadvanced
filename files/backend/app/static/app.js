@@ -1451,8 +1451,7 @@ $("#key-form")?.addEventListener("submit", async (e) => {
     window.__openamd_last_api_key = key;
     if (msg) {
       msg.className = "ok";
-      msg.textContent =
-        "Key created. Copy it now — the full secret will not be shown again.";
+      msg.textContent = "Key created — full value is also listed in the table above.";
     }
     const base = portalBaseUrl() || "https://YOUR_AI_AMD_HOST";
     if (reveal) {
@@ -1537,15 +1536,27 @@ async function loadApiKeys() {
       return;
     }
     body.innerHTML = keys
-      .map(
-        (k) => `<tr>
+      .map((k) => {
+        const full = (k.api_key || "").trim();
+        const keyCell = full
+          ? `<code class="api-key-value" title="${escapeHtml(full)}">${escapeHtml(
+              full
+            )}</code>
+             <button type="button" class="ghost" style="margin-left:.35rem" onclick="copyApiKeyText(${
+               k.id
+             })">Copy</button>`
+          : `<code>${escapeHtml(k.key_prefix || "")}…</code>
+             <span class="hint"> (legacy — create a new key to see full value)</span>`;
+        return `<tr data-api-key-id="${k.id}" data-api-key="${
+          full ? escapeHtml(full) : ""
+        }">
         <td><strong>${escapeHtml(k.name || "default")}</strong></td>
-        <td><code>${escapeHtml(k.key_prefix || "")}…</code></td>
+        <td style="max-width:28rem;word-break:break-all">${keyCell}</td>
         <td>${fmtTime(k.created_at)}</td>
         <td>${k.last_used ? fmtTime(k.last_used) : "—"}</td>
         <td>${k.is_active ? "Active" : "Revoked"}</td>
-        <td>
-            ${
+        <td style="white-space:nowrap">
+          ${
             k.is_active
               ? `<button type="button" class="ghost" data-key-id="${k.id}" data-key-name="${escapeHtml(
                   k.name || "default"
@@ -1553,8 +1564,8 @@ async function loadApiKeys() {
               : ""
           }
         </td>
-      </tr>`
-      )
+      </tr>`;
+      })
       .join("");
   } catch (err) {
     body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(
@@ -1562,6 +1573,31 @@ async function loadApiKeys() {
     )}</td></tr>`;
   }
 }
+
+window.copyApiKeyText = async (keyId) => {
+  const row = document.querySelector(`tr[data-api-key-id="${keyId}"]`);
+  const key = row?.getAttribute("data-api-key") || "";
+  const msg = $("#key-msg");
+  if (!key) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Full key not available for this row — generate a new key.";
+    }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(key);
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "API key copied to clipboard.";
+    }
+  } catch (_) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Could not copy — select the key text manually.";
+    }
+  }
+};
 
 window.deleteApiKey = async (keyId) => {
   const btn = document.querySelector(`button[data-key-id="${keyId}"]`);
