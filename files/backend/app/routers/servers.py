@@ -45,6 +45,9 @@ def _normalize_server_amd_fields(data: dict) -> dict:
     if "min_human_confidence_percent" in out and out["min_human_confidence_percent"] is not None:
         pct = int(out["min_human_confidence_percent"])
         out["min_human_confidence_percent"] = max(0, min(100, pct))
+    for key in ("ml_min_human_confidence_percent", "ml_save_threshold_percent"):
+        if key in out and out[key] is not None:
+            out[key] = max(50, min(99, int(out[key])))
     return out
 
 
@@ -75,6 +78,18 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         ),
         below_threshold_action=str(
             getattr(server, "below_threshold_action", None) or "MACHINE"
+        ),
+        ml_pipeline_override_enabled=bool(
+            getattr(server, "ml_pipeline_override_enabled", False)
+        ),
+        ml_pipeline_enabled=bool(getattr(server, "ml_pipeline_enabled", False)),
+        ml_whisper_enabled=bool(getattr(server, "ml_whisper_enabled", True)),
+        ml_save_low_confidence=bool(getattr(server, "ml_save_low_confidence", True)),
+        ml_min_human_confidence_percent=int(
+            getattr(server, "ml_min_human_confidence_percent", 85) or 85
+        ),
+        ml_save_threshold_percent=int(
+            getattr(server, "ml_save_threshold_percent", 85) or 85
         ),
         locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
         locale_pack=normalize_locale_pack(getattr(server, "locale_pack", None) or "usa"),
@@ -118,6 +133,14 @@ def create_server(
         confidence_gate_enabled=bool(fields.get("confidence_gate_enabled", False)),
         min_human_confidence_percent=int(fields.get("min_human_confidence_percent", 70)),
         below_threshold_action=str(fields.get("below_threshold_action") or "MACHINE"),
+        ml_pipeline_override_enabled=bool(fields.get("ml_pipeline_override_enabled", False)),
+        ml_pipeline_enabled=bool(fields.get("ml_pipeline_enabled", False)),
+        ml_whisper_enabled=bool(fields.get("ml_whisper_enabled", True)),
+        ml_save_low_confidence=bool(fields.get("ml_save_low_confidence", True)),
+        ml_min_human_confidence_percent=int(
+            fields.get("ml_min_human_confidence_percent", 85)
+        ),
+        ml_save_threshold_percent=int(fields.get("ml_save_threshold_percent", 85)),
         locale_pack_enabled=bool(fields.get("locale_pack_enabled", False)),
         locale_pack=str(fields.get("locale_pack") or "usa"),
     )

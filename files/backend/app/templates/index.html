@@ -321,13 +321,53 @@
               <p class="hint">Comma-separated public IPs of VICIdial dialers allowed to call the API (example: <code>62.238.46.191</code>). Blank = any IP with a valid API key. Server name alone does not restrict access.</p>
 
               <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
+              <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">AMD settings for this server</h3></div>
+              <p class="hint" id="server-amd-intro">
+                Leave overrides off to use <strong>Settings → AMD confidence gate / ML</strong> (global).
+                Enable an override below to customize this VICIdial server only.
+              </p>
+
               <label class="inline">
-                <input type="checkbox" id="server-gate-enabled" name="confidence_gate_enabled" />
-                Enable per-server AMD confidence gate
+                <input type="checkbox" id="server-ml-override" name="ml_pipeline_override_enabled" />
+                Override ML pipeline for this server
               </label>
-              <p class="hint">If enabled, this server uses its own minimum HUMAN confidence. If disabled, the global <strong>Settings → AMD confidence gate</strong> applies.</p>
-              <label for="server-gate-min">Minimum HUMAN confidence (%) for this server</label>
-              <input id="server-gate-min" name="min_human_confidence_percent" type="number" min="0" max="100" step="1" value="70" />
+              <div id="server-ml-block" class="hidden">
+                <label class="inline">
+                  <input type="checkbox" id="server-ml-enabled" name="ml_pipeline_enabled" />
+                  Enable ML pipeline (XGBoost + optional Whisper)
+                </label>
+                <div id="server-ml-options" class="hidden">
+                  <label for="server-ml-high">Minimum HUMAN confidence (%) — ML mode</label>
+                  <input id="server-ml-high" name="ml_min_human_confidence_percent" type="number" min="50" max="99" step="1" value="85" />
+                  <label class="inline">
+                    <input type="checkbox" id="server-ml-whisper" name="ml_whisper_enabled" checked />
+                    Use Faster-Whisper Tiny on uncertain HUMAN only
+                  </label>
+                  <label class="inline">
+                    <input type="checkbox" id="server-ml-save" name="ml_save_low_confidence" checked />
+                    Save low-confidence clips for labeling / retrain
+                  </label>
+                  <label for="server-ml-low">Save / review threshold (%)</label>
+                  <input id="server-ml-low" name="ml_save_threshold_percent" type="number" min="50" max="99" step="1" value="85" />
+                </div>
+                <p class="hint" style="margin-top:.35rem">
+                  When ML is enabled here, it replaces the classic Minimum HUMAN % for this server
+                  (same mutual exclusion as global Settings).
+                </p>
+              </div>
+
+              <div id="server-classic-gate-block">
+                <label class="inline">
+                  <input type="checkbox" id="server-gate-enabled" name="confidence_gate_enabled" />
+                  Override classic confidence gate for this server
+                </label>
+                <p class="hint">If enabled (and ML is not on for this server), uses this server’s Minimum HUMAN %. Otherwise global Settings apply.</p>
+                <div id="server-gate-fields">
+                  <label for="server-gate-min">Minimum HUMAN confidence (%) for this server</label>
+                  <input id="server-gate-min" name="min_human_confidence_percent" type="number" min="0" max="100" step="1" value="70" />
+                </div>
+              </div>
+
               <label for="server-gate-action">Below threshold action</label>
               <select id="server-gate-action" name="below_threshold_action">
                 <option value="MACHINE">MACHINE</option>

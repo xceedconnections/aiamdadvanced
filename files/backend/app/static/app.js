@@ -1223,16 +1223,23 @@ async function loadServers() {
   window.__openamd_servers = servers;
   $("#servers-body").innerHTML = servers
     .map((s) => {
-      const gate = s.confidence_gate_enabled
-        ? `Gate ≥${s.min_human_confidence_percent}% → ${s.below_threshold_action}`
-        : "Gate: global";
+      let amd;
+      if (s.ml_pipeline_override_enabled) {
+        amd = s.ml_pipeline_enabled
+          ? `ML ≥${s.ml_min_human_confidence_percent}% → ${s.below_threshold_action}`
+          : "ML override OFF (hybrid)";
+      } else if (s.confidence_gate_enabled) {
+        amd = `Gate ≥${s.min_human_confidence_percent}% → ${s.below_threshold_action}`;
+      } else {
+        amd = "AMD: global Settings";
+      }
       const loc = s.locale_pack_enabled
         ? `Locale: ${(s.locale_pack || "usa").toUpperCase()}`
         : "Locale: default";
       return `<tr>
       <td><strong>${escapeHtml(s.name)}</strong><div class="hint">${escapeHtml(s.description || "")}</div>
         <div class="hint">${escapeHtml(s.timezone || "")}</div>
-        <div class="hint">${escapeHtml(gate)} · ${escapeHtml(loc)}</div></td>
+        <div class="hint">${escapeHtml(amd)} · ${escapeHtml(loc)}</div></td>
       <td><span class="hint">${escapeHtml(s.ip_whitelist || "(any)")}</span></td>
       <td>${s.calls_today}</td>
       <td>${s.total_calls}</td>
@@ -1256,6 +1263,30 @@ async function loadServers() {
     .join("");
 }
 
+function syncServerAmdUi() {
+  const mlOverride = !!$("#server-ml-override")?.checked;
+  const mlOn = mlOverride && !!$("#server-ml-enabled")?.checked;
+  const mlBlock = $("#server-ml-block");
+  const mlOpts = $("#server-ml-options");
+  const classic = $("#server-classic-gate-block");
+  const intro = $("#server-amd-intro");
+  if (mlBlock) mlBlock.classList.toggle("hidden", !mlOverride);
+  if (mlOpts) mlOpts.classList.toggle("hidden", !mlOn);
+  if (classic) classic.classList.toggle("hidden", mlOn);
+  if (intro) {
+    if (mlOn) {
+      intro.textContent =
+        "This server uses its own ML threshold (classic gate hidden). Other servers still follow global Settings unless overridden.";
+    } else if (mlOverride) {
+      intro.textContent =
+        "ML override is on but ML is disabled for this server (hybrid). You can still set a classic gate override below, or leave it off to use global classic Settings.";
+    } else {
+      intro.textContent =
+        "Leave overrides off to use Settings → AMD confidence gate / ML (global). Enable an override below to customize this VICIdial server only.";
+    }
+  }
+}
+
 function resetServerForm() {
   const form = $("#server-form");
   form.reset();
@@ -1264,12 +1295,19 @@ function resetServerForm() {
   $("#server-gate-enabled").checked = false;
   $("#server-gate-min").value = "70";
   $("#server-gate-action").value = "MACHINE";
+  if ($("#server-ml-override")) $("#server-ml-override").checked = false;
+  if ($("#server-ml-enabled")) $("#server-ml-enabled").checked = false;
+  if ($("#server-ml-whisper")) $("#server-ml-whisper").checked = true;
+  if ($("#server-ml-save")) $("#server-ml-save").checked = true;
+  if ($("#server-ml-high")) $("#server-ml-high").value = "85";
+  if ($("#server-ml-low")) $("#server-ml-low").value = "85";
   $("#server-locale-enabled").checked = false;
   $("#server-locale-pack").value = "usa";
   $("#server-form-title").textContent = "Add VICIdial server";
   $("#server-submit-btn").textContent = "Create server";
   $("#server-cancel-edit").classList.add("hidden");
   $("#server-msg").textContent = "";
+  syncServerAmdUi();
 }
 
 window.editServer = (id) => {
@@ -1284,12 +1322,29 @@ window.editServer = (id) => {
   $("#server-gate-enabled").checked = !!s.confidence_gate_enabled;
   $("#server-gate-min").value = String(s.min_human_confidence_percent ?? 70);
   $("#server-gate-action").value = s.below_threshold_action || "MACHINE";
+  if ($("#server-ml-override")) {
+    $("#server-ml-override").checked = !!s.ml_pipeline_override_enabled;
+  }
+  if ($("#server-ml-enabled")) $("#server-ml-enabled").checked = !!s.ml_pipeline_enabled;
+  if ($("#server-ml-whisper")) {
+    $("#server-ml-whisper").checked = s.ml_whisper_enabled !== false;
+  }
+  if ($("#server-ml-save")) {
+    $("#server-ml-save").checked = s.ml_save_low_confidence !== false;
+  }
+  if ($("#server-ml-high")) {
+    $("#server-ml-high").value = String(s.ml_min_human_confidence_percent ?? 85);
+  }
+  if ($("#server-ml-low")) {
+    $("#server-ml-low").value = String(s.ml_save_threshold_percent ?? 85);
+  }
   $("#server-locale-enabled").checked = !!s.locale_pack_enabled;
   $("#server-locale-pack").value = s.locale_pack || "usa";
   $("#server-form-title").textContent = "Edit VICIdial server";
   $("#server-submit-btn").textContent = "Save changes";
   $("#server-cancel-edit").classList.remove("hidden");
-  $("#server-msg").textContent = `Editing #${s.id} — update server, confidence gate, or locale pack.`;
+  $("#server-msg").textContent = `Editing #${s.id} — update server, AMD overrides, or locale pack.`;
+  syncServerAmdUi();
   $("#server-name").focus();
 };
 
@@ -1309,6 +1364,8 @@ window.activateServer = async (id) => {
 };
 
 $("#server-cancel-edit").addEventListener("click", () => resetServerForm());
+$("#server-ml-override")?.addEventListener("change", () => syncServerAmdUi());
+$("#server-ml-enabled")?.addEventListener("change", () => syncServerAmdUi());
 
 $("#server-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1322,6 +1379,12 @@ $("#server-form").addEventListener("submit", async (e) => {
     confidence_gate_enabled: !!$("#server-gate-enabled")?.checked,
     min_human_confidence_percent: Number($("#server-gate-min")?.value || 70),
     below_threshold_action: ($("#server-gate-action")?.value || "MACHINE").toString(),
+    ml_pipeline_override_enabled: !!$("#server-ml-override")?.checked,
+    ml_pipeline_enabled: !!$("#server-ml-enabled")?.checked,
+    ml_whisper_enabled: $("#server-ml-whisper") ? $("#server-ml-whisper").checked : true,
+    ml_save_low_confidence: $("#server-ml-save") ? $("#server-ml-save").checked : true,
+    ml_min_human_confidence_percent: Number($("#server-ml-high")?.value || 85),
+    ml_save_threshold_percent: Number($("#server-ml-low")?.value || 85),
     locale_pack_enabled: !!$("#server-locale-enabled")?.checked,
     locale_pack: ($("#server-locale-pack")?.value || "usa").toString(),
   };

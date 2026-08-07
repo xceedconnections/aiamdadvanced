@@ -128,87 +128,154 @@ def is_ml_pipeline_enabled() -> bool:
     return bool(load_amd_settings().get("ml_pipeline_enabled", False))
 
 
+def _pct_to_frac(pct: Any, default: float = 0.85) -> float:
+    try:
+        v = float(pct)
+    except (TypeError, ValueError):
+        return default
+    if v > 1.0:
+        v = v / 100.0
+    return max(0.5, min(0.99, v))
+
+
+def resolve_effective_amd_settings(server: Any | None = None) -> dict[str, Any]:
+    """
+    Merge global Settings with optional per-VICIdial-server overrides.
+
+    - ml_pipeline_override_enabled → use this server's ML on/off + thresholds
+    - else → global ML settings
+    - If effective ML is ON → classic % gate is inactive (ML owns HUMAN bar)
+    - Else if confidence_gate_enabled on server → server classic %
+    - Else → global classic gate
+    """
+    g = load_amd_settings()
+    out: dict[str, Any] = {
+        "enabled": bool(g.get("enabled", True)),
+        "min_human_confidence_percent": int(g.get("min_human_confidence_percent", 70)),
+        "below_threshold_action": str(g.get("below_threshold_action", "MACHINE")),
+        "blank_as_machine": bool(g.get("blank_as_machine", True)),
+        "ml_pipeline_enabled": bool(g.get("ml_pipeline_enabled", False)),
+        "ml_whisper_enabled": bool(g.get("ml_whisper_enabled", True)),
+        "ml_xgb_high_confidence": float(g.get("ml_xgb_high_confidence", 0.85)),
+        "ml_low_confidence_threshold": float(g.get("ml_low_confidence_threshold", 0.85)),
+        "ml_save_low_confidence": bool(g.get("ml_save_low_confidence", True)),
+        "source": "global",
+        "ml_source": "global",
+        "gate_source": "global",
+    }
+
+    if server is None:
+        if out["ml_pipeline_enabled"]:
+            out["gate_source"] = "ml"
+        return out
+
+    ml_override = bool(getattr(server, "ml_pipeline_override_enabled", False))
+    if ml_override:
+        out["ml_pipeline_enabled"] = bool(getattr(server, "ml_pipeline_enabled", False))
+        out["ml_whisper_enabled"] = bool(getattr(server, "ml_whisper_enabled", True))
+        out["ml_save_low_confidence"] = bool(getattr(server, "ml_save_low_confidence", True))
+        out["ml_xgb_high_confidence"] = _pct_to_frac(
+            getattr(server, "ml_min_human_confidence_percent", 85), 0.85
+        )
+        out["ml_low_confidence_threshold"] = _pct_to_frac(
+            getattr(server, "ml_save_threshold_percent", 85), 0.85
+        )
+        action = str(getattr(server, "below_threshold_action", None) or out["below_threshold_action"])
+        action = action.strip().upper()
+        if action in _ALLOWED_ACTIONS:
+            out["below_threshold_action"] = action
+        out["ml_source"] = "server"
+        out["source"] = "server_ml"
+
+    if out["ml_pipeline_enabled"]:
+        # ML owns HUMAN confidence — classic gate idle
+        out["gate_source"] = "ml" if out["ml_source"] == "global" else "server_ml"
+        out["min_human_confidence_percent"] = int(
+            round(float(out["ml_xgb_high_confidence"]) * 100)
+        )
+        return out
+
+    # Classic gate path
+    if bool(getattr(server, "confidence_gate_enabled", False)):
+        out["enabled"] = True
+        out["min_human_confidence_percent"] = int(
+            getattr(server, "min_human_confidence_percent", 70) or 70
+        )
+        action = str(getattr(server, "below_threshold_action", None) or "MACHINE").strip().upper()
+        if action in _ALLOWED_ACTIONS:
+            out["below_threshold_action"] = action
+        out["gate_source"] = "server"
+        out["source"] = "server_gate"
+    else:
+        out["gate_source"] = "global"
+        out["source"] = "global"
+
+    return out
+
+
 def apply_confidence_gate(
     status: str,
     confidence: float,
     *,
     server_override: dict[str, Any] | None = None,
+    effective: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
     """
     Return (final_status, downgraded). Only HUMAN results are gated.
 
-    If server_override is provided and confidence_gate_enabled is True,
-    use that server's min % / action.
-
-    Otherwise:
-      - ML pipeline ON  → skip classic % gate (ML threshold already applied in pipeline)
-      - ML pipeline OFF → use global Minimum HUMAN confidence (%)
+    Prefer `effective` from resolve_effective_amd_settings(server).
+    Legacy `server_override` still supported for older callers.
     """
     if status != "HUMAN":
         return status, False
 
+    if effective is not None:
+        # ML already applied its HUMAN threshold inside the pipeline
+        if effective.get("ml_pipeline_enabled"):
+            return status, False
+        if not effective.get("enabled", True):
+            return status, False
+        min_pct = int(effective.get("min_human_confidence_percent", 70))
+        action = str(effective.get("below_threshold_action", "MACHINE")).strip().upper()
+        if action not in _ALLOWED_ACTIONS:
+            action = "MACHINE"
+        conf_pct = float(confidence) * 100.0
+        if conf_pct >= min_pct:
+            return status, False
+        return action, True
+
     use_server = bool(server_override and server_override.get("confidence_gate_enabled"))
     if use_server:
-        enabled = True
         min_pct = int(server_override.get("min_human_confidence_percent", 70))
         action = str(server_override.get("below_threshold_action") or "MACHINE").strip().upper()
         if action not in _ALLOWED_ACTIONS:
             action = "MACHINE"
-        source = "server"
     else:
         cfg = load_amd_settings()
-        # Mutual exclusion: ML mode owns HUMAN confidence; classic gate is idle
         if cfg.get("ml_pipeline_enabled"):
             return status, False
         if not cfg.get("enabled", True):
             return status, False
-        enabled = True
         min_pct = int(cfg.get("min_human_confidence_percent", 70))
         action = str(cfg.get("below_threshold_action", "MACHINE"))
-        source = "global"
-
-    if not enabled:
-        return status, False
 
     conf_pct = float(confidence) * 100.0
     if conf_pct >= min_pct:
         return status, False
-
-    _ = source
     return action, True
 
 
 def gate_config_for_server(server: Any | None = None) -> dict[str, Any]:
-    """Resolved gate config actually used for a call (for logging / UI)."""
-    global_cfg = load_amd_settings()
-    if server is not None and bool(getattr(server, "confidence_gate_enabled", False)):
-        action = str(getattr(server, "below_threshold_action", None) or "MACHINE").strip().upper()
-        if action not in _ALLOWED_ACTIONS:
-            action = "MACHINE"
-        return {
-            "source": "server",
-            "enabled": True,
-            "min_human_confidence_percent": int(
-                getattr(server, "min_human_confidence_percent", 70) or 70
-            ),
-            "below_threshold_action": action,
-        }
-    if global_cfg.get("ml_pipeline_enabled"):
-        ml_pct = int(round(float(global_cfg.get("ml_xgb_high_confidence", 0.85)) * 100))
-        action = str(global_cfg.get("below_threshold_action", "MACHINE"))
-        if action not in _ALLOWED_ACTIONS:
-            action = "MACHINE"
-        return {
-            "source": "ml",
-            "enabled": True,
-            "min_human_confidence_percent": ml_pct,
-            "below_threshold_action": action,
-            "ml_pipeline_enabled": True,
-        }
+    """Resolved gate / ML config actually used for a call (for logging / UI)."""
+    eff = resolve_effective_amd_settings(server)
     return {
-        "source": "global",
-        "enabled": bool(global_cfg.get("enabled", True)),
-        "min_human_confidence_percent": int(global_cfg.get("min_human_confidence_percent", 70)),
-        "below_threshold_action": str(global_cfg.get("below_threshold_action", "MACHINE")),
-        "ml_pipeline_enabled": False,
+        "source": eff.get("source", "global"),
+        "ml_source": eff.get("ml_source", "global"),
+        "gate_source": eff.get("gate_source", "global"),
+        "enabled": bool(eff.get("enabled", True)) or bool(eff.get("ml_pipeline_enabled")),
+        "min_human_confidence_percent": int(eff.get("min_human_confidence_percent", 70)),
+        "below_threshold_action": str(eff.get("below_threshold_action", "MACHINE")),
+        "ml_pipeline_enabled": bool(eff.get("ml_pipeline_enabled", False)),
+        "ml_xgb_high_confidence": float(eff.get("ml_xgb_high_confidence", 0.85)),
+        "ml_whisper_enabled": bool(eff.get("ml_whisper_enabled", True)),
     }

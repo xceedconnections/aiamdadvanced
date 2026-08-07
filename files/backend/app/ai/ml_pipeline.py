@@ -29,6 +29,7 @@ def run_ml_pipeline(
     silero: Dict[str, Any],
     hybrid_status: str,
     hybrid_confidence: float,
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, float, Dict[str, Any]]:
     """
     Returns (status, confidence, ml_details).
@@ -40,7 +41,7 @@ def run_ml_pipeline(
       - HUMAN + conf >= threshold → pass to agent
       - HUMAN + conf < threshold → Faster-Whisper Tiny refine
     """
-    cfg = load_amd_settings()
+    cfg = cfg if cfg is not None else load_amd_settings()
     high_thr = float(cfg.get("ml_xgb_high_confidence", 0.85))
     whisper_on = bool(cfg.get("ml_whisper_enabled", True))
     save_low = bool(cfg.get("ml_save_low_confidence", True))

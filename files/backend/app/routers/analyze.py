@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.ai.engine import analyze_audio
-from app.amd_settings import apply_confidence_gate, gate_config_for_server
+from app.amd_settings import apply_confidence_gate, gate_config_for_server, resolve_effective_amd_settings
 from app.auth.security import get_server_from_api_key
 from app.config import get_settings
 from app.database import get_db
@@ -36,27 +36,21 @@ async def analyze(
     if len(raw) < 100:
         raise HTTPException(status_code=400, detail="Audio file too small / empty")
 
+    effective = resolve_effective_amd_settings(server)
     result = analyze_audio(
         raw,
         locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
         locale_pack=str(getattr(server, "locale_pack", None) or "usa"),
+        amd_settings=effective,
     )
 
-    # Per-server gate if enabled on this VICIdial server; else global Settings
+    # Classic gate only when ML is off for this effective config
     engine_status = result.status
     gate_cfg = gate_config_for_server(server)
     gated_status, downgraded = apply_confidence_gate(
         result.status,
         result.confidence,
-        server_override={
-            "confidence_gate_enabled": bool(getattr(server, "confidence_gate_enabled", False)),
-            "min_human_confidence_percent": int(
-                getattr(server, "min_human_confidence_percent", 70) or 70
-            ),
-            "below_threshold_action": str(
-                getattr(server, "below_threshold_action", None) or "MACHINE"
-            ),
-        },
+        effective=effective,
     )
 
     called_number = (called or "").strip()
@@ -84,6 +78,13 @@ async def analyze(
         "gate_downgraded": downgraded,
         "raw_status": raw_status,
         "confidence_gate": gate_cfg,
+        "amd_effective": {
+            "source": effective.get("source"),
+            "ml_source": effective.get("ml_source"),
+            "gate_source": effective.get("gate_source"),
+            "ml_pipeline_enabled": effective.get("ml_pipeline_enabled"),
+            "min_human_confidence_percent": effective.get("min_human_confidence_percent"),
+        },
         "training_override": False,
     }
 

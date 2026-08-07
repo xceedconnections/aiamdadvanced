@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
     sf = None
 
 from app.ai import silero_vad
-from app.amd_settings import is_blank_as_machine_enabled, is_ml_pipeline_enabled
+from app.amd_settings import is_blank_as_machine_enabled
 from app.locale_packs import resolve_locale_pack
 
 ENGINE_INFO = {
@@ -493,6 +493,7 @@ def analyze_audio(
     *,
     locale_pack_enabled: bool = False,
     locale_pack: str = "usa",
+    amd_settings: Optional[Dict[str, Any]] = None,
 ) -> AnalysisResult:
     t0 = time.perf_counter()
 
@@ -580,9 +581,15 @@ def analyze_audio(
         **silero_vad.status_info(),
     }
 
-    # Optional ML stage — imported only when Settings → ML pipeline is ON
-    # (disabled = hybrid only; no XGBoost / Whisper import on the hot path)
-    if is_ml_pipeline_enabled():
+    # Optional ML stage — only when effective settings enable it
+    # (global Settings or per-server override). Off = no XGBoost/Whisper import.
+    ml_on = bool((amd_settings or {}).get("ml_pipeline_enabled"))
+    if not ml_on and amd_settings is None:
+        from app.amd_settings import is_ml_pipeline_enabled
+
+        ml_on = is_ml_pipeline_enabled()
+
+    if ml_on:
         try:
             from app.ai.ml_pipeline import run_ml_pipeline
 
@@ -593,6 +600,7 @@ def analyze_audio(
                 silero=silero,
                 hybrid_status=status,
                 hybrid_confidence=confidence,
+                cfg=amd_settings,
             )
             status, confidence = ml_status, ml_conf
             details["ml_pipeline_enabled"] = True

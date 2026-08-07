@@ -43,6 +43,12 @@ class ServerCreate(BaseModel):
     confidence_gate_enabled: bool = False
     min_human_confidence_percent: int = Field(70, ge=0, le=100)
     below_threshold_action: str = "MACHINE"
+    ml_pipeline_override_enabled: bool = False
+    ml_pipeline_enabled: bool = False
+    ml_whisper_enabled: bool = True
+    ml_save_low_confidence: bool = True
+    ml_min_human_confidence_percent: int = Field(85, ge=50, le=99)
+    ml_save_threshold_percent: int = Field(85, ge=50, le=99)
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
 
@@ -56,6 +62,12 @@ class ServerUpdate(BaseModel):
     confidence_gate_enabled: Optional[bool] = None
     min_human_confidence_percent: Optional[int] = Field(None, ge=0, le=100)
     below_threshold_action: Optional[str] = None
+    ml_pipeline_override_enabled: Optional[bool] = None
+    ml_pipeline_enabled: Optional[bool] = None
+    ml_whisper_enabled: Optional[bool] = None
+    ml_save_low_confidence: Optional[bool] = None
+    ml_min_human_confidence_percent: Optional[int] = Field(None, ge=50, le=99)
+    ml_save_threshold_percent: Optional[int] = Field(None, ge=50, le=99)
     locale_pack_enabled: Optional[bool] = None
     locale_pack: Optional[str] = None
 
@@ -70,6 +82,12 @@ class ServerOut(BaseModel):
     confidence_gate_enabled: bool = False
     min_human_confidence_percent: int = 70
     below_threshold_action: str = "MACHINE"
+    ml_pipeline_override_enabled: bool = False
+    ml_pipeline_enabled: bool = False
+    ml_whisper_enabled: bool = True
+    ml_save_low_confidence: bool = True
+    ml_min_human_confidence_percent: int = 85
+    ml_save_threshold_percent: int = 85
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
     last_seen: Optional[datetime]

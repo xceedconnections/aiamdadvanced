@@ -68,13 +68,19 @@ def ensure_schema():
                 "ADD COLUMN IF NOT EXISTS raw_status VARCHAR(32) DEFAULT ''"
             )
         )
-        # Per-server AMD gate + locale packs
+        # Per-server AMD gate + locale packs + ML overrides
         for stmt in (
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS confidence_gate_enabled BOOLEAN DEFAULT FALSE",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS min_human_confidence_percent INTEGER DEFAULT 70",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS below_threshold_action VARCHAR(32) DEFAULT 'MACHINE'",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack_enabled BOOLEAN DEFAULT FALSE",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS locale_pack VARCHAR(32) DEFAULT 'usa'",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_pipeline_override_enabled BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_pipeline_enabled BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_whisper_enabled BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_save_low_confidence BOOLEAN DEFAULT TRUE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_min_human_confidence_percent INTEGER DEFAULT 85",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS ml_save_threshold_percent INTEGER DEFAULT 85",
             "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS phone_number VARCHAR(32) DEFAULT ''",
             "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS previous_taught_status VARCHAR(32) DEFAULT ''",
             "ALTER TABLE training_corrections ADD COLUMN IF NOT EXISTS action VARCHAR(32) DEFAULT 'teach'",
