@@ -633,8 +633,10 @@
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
             <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">ML AMD pipeline (optional)</h3></div>
             <p class="hint" style="margin-top:0">
-              Pipeline: Silero VAD → OpenAMD features → <strong>XGBoost</strong> (ms) →
-              <strong>Faster-Whisper Tiny</strong> only when XGBoost confidence is low.
+              Pipeline: Silero VAD → OpenAMD features → <strong>XGBoost</strong>.
+              <strong>MACHINE / IVR are accepted immediately</strong> (no Whisper).
+              Whisper runs only when XGBoost says <strong>HUMAN</strong> but confidence is
+              below the threshold below — to protect agents from uncertain “human” calls.
               When disabled, the server uses the current hybrid engine only — no XGBoost/Whisper load.
             </p>
             <label class="inline">
@@ -643,14 +645,18 @@
             </label>
             <label class="inline">
               <input type="checkbox" id="amd-ml-whisper" checked />
-              Use Faster-Whisper Tiny on low-confidence calls only
+              Use Faster-Whisper Tiny on uncertain HUMAN only (not on MACHINE/IVR)
             </label>
             <label class="inline">
               <input type="checkbox" id="amd-ml-save-low" checked />
               Save low-confidence clips for agent labeling / retrain
             </label>
-            <label for="amd-ml-high">XGBoost high-confidence threshold (skip Whisper at/above)</label>
+            <label for="amd-ml-high">HUMAN confidence to skip Whisper (pass to agent at/above)</label>
             <input id="amd-ml-high" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
+            <p class="hint" style="margin-top:0">
+              Example: 0.85 means HUMAN at 85%+ goes straight to the agent.
+              HUMAN below 85% is checked with Whisper (if enabled above). MACHINE/IVR never use Whisper.
+            </p>
             <label for="amd-ml-low">Save / review threshold (below this → sample library)</label>
             <input id="amd-ml-low" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
 

@@ -1070,7 +1070,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
       ? " Blank/silent → MACHINE."
       : " Blank/silent may pass as HUMAN.";
     const mlNote = data.ml_pipeline_enabled
-      ? " ML pipeline ON (XGBoost; Whisper on low conf)."
+      ? " ML pipeline ON (XGBoost; Whisper only on uncertain HUMAN)."
       : " ML pipeline OFF (hybrid engine only).";
     msg.textContent = data.enabled
       ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.${blankNote}${mlNote}`

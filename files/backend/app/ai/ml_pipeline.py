@@ -1,4 +1,8 @@
-"""Optional ML AMD pipeline (Silero features → XGBoost → Whisper on low conf).
+"""Optional ML AMD pipeline (Silero features → XGBoost → Whisper on uncertain HUMAN).
+
+Whisper runs only when the model would send a call to an agent (HUMAN) but
+confidence is below the Settings threshold. MACHINE / IVR / SIT are accepted
+immediately — no Whisper load on those calls.
 
 Only imported when Settings → ML pipeline is enabled. Disabled = zero overhead
 beyond the existing hybrid engine.
@@ -30,6 +34,11 @@ def run_ml_pipeline(
     Returns (status, confidence, ml_details).
 
     confidence is the winning class probability from XGBoost (or Whisper refine).
+
+    Policy (agent-protect):
+      - MACHINE / IVR / SIT → accept immediately (no Whisper)
+      - HUMAN + conf >= threshold → pass to agent
+      - HUMAN + conf < threshold → Faster-Whisper Tiny refine
     """
     cfg = load_amd_settings()
     high_thr = float(cfg.get("ml_xgb_high_confidence", 0.85))
@@ -41,6 +50,7 @@ def run_ml_pipeline(
         "ml_pipeline": True,
         "hybrid_status": hybrid_status,
         "hybrid_confidence": round(float(hybrid_confidence), 4),
+        "whisper_policy": "human_low_confidence_only",
     }
 
     try:
@@ -64,23 +74,23 @@ def run_ml_pipeline(
     details["xgb_confidence"] = round(float(conf), 4)
     details["whisper_used"] = False
 
-    # High-confidence XGB → decide immediately (no Whisper)
-    if conf >= high_thr:
-        details["ml_note"] = "xgb_high_confidence"
-        _maybe_save_sample(
-            save_low and conf < low_thr,
-            audio=audio,
-            sr=sr,
-            feats=feats,
-            silero=silero,
-            status=status,
-            confidence=conf,
-            probs=probs,
-            details=details,
-        )
+    # Keep clear SIT from hybrid when XGB is unsure HUMAN
+    if status == "HUMAN" and hybrid_status == "SIT" and hybrid_confidence >= 0.8:
+        status, conf = "SIT", float(hybrid_confidence)
+        details["ml_note"] = "keep_hybrid_sit"
         return status, float(conf), details
 
-    # Low confidence → optional Faster-Whisper Tiny
+    # Answering machine / IVR / SIT → accept as-is (no Whisper)
+    if status != "HUMAN":
+        details["ml_note"] = "non_human_accept"
+        return status, float(conf), details
+
+    # HUMAN + high confidence → pass to agent (no Whisper)
+    if conf >= high_thr:
+        details["ml_note"] = "human_high_confidence"
+        return status, float(conf), details
+
+    # HUMAN + below threshold → optional Faster-Whisper Tiny (protect agents)
     if whisper_on:
         try:
             from app.ai.whisper_amd import refine_with_whisper, whisper_available
@@ -93,23 +103,22 @@ def run_ml_pipeline(
                 details["whisper_used"] = True
                 if w_status:
                     status, conf = w_status, float(w_conf)
-                    details["ml_note"] = "whisper_refine"
+                    details["ml_note"] = "whisper_refine_uncertain_human"
                 else:
-                    details["ml_note"] = "xgb_low_conf_whisper_no_cue"
+                    details["ml_note"] = "human_low_conf_whisper_no_cue"
             else:
-                details["ml_note"] = "xgb_low_conf_whisper_unavailable"
-                details["whisper"] = {"whisper_ok": False, "error": "faster-whisper not installed"}
+                details["ml_note"] = "human_low_conf_whisper_unavailable"
+                details["whisper"] = {
+                    "whisper_ok": False,
+                    "error": "faster-whisper not installed",
+                }
         except Exception as exc:
-            details["ml_note"] = "xgb_low_conf_whisper_error"
+            details["ml_note"] = "human_low_conf_whisper_error"
             details["whisper_error"] = str(exc)
     else:
-        details["ml_note"] = "xgb_low_conf_whisper_disabled"
+        details["ml_note"] = "human_low_conf_whisper_disabled"
 
-    # Map SIT from hybrid if XGB uncertain and hybrid was SIT
-    if status == "HUMAN" and hybrid_status == "SIT" and hybrid_confidence >= 0.8:
-        status, conf = "SIT", float(hybrid_confidence)
-        details["ml_note"] = "keep_hybrid_sit"
-
+    # Save uncertain HUMAN (and post-Whisper still-low) for labeling
     _maybe_save_sample(
         save_low and conf < low_thr,
         audio=audio,
