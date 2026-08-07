@@ -378,20 +378,61 @@
                 </select>
               </div>
 
-              <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
+            <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
                 <button type="submit" id="server-submit-btn">Create server</button>
                 <button type="button" class="ghost hidden" id="server-cancel-edit">Cancel edit</button>
               </div>
               <p id="server-msg" class="hint"></p>
             </form>
+          </div>
+        </div>
 
-            <div class="panel-head" style="margin-top:1.5rem"><h3>Create API key</h3></div>
-            <form id="key-form" class="form-stack">
-              <label>Server</label>
-              <select name="server_id" id="key-server-select" required></select>
-              <label>Key name</label>
-              <input name="name" value="default" />
-              <button type="submit">Generate API key</button>
+        <div class="panel" style="margin-top:1rem">
+          <div class="panel-head"><h3>API keys</h3></div>
+          <p class="hint">
+            Select a VICIdial server to view its keys, create a new one, or delete an old key.
+            The full secret is shown <strong>only once</strong> when created — copy it into ViciBox immediately.
+          </p>
+          <div class="form-stack" style="max-width:520px;margin-top:.5rem">
+            <label for="key-server-select">VICIdial server</label>
+            <select id="key-server-select" required>
+              <option value="">— Select a server —</option>
+            </select>
+          </div>
+
+          <div id="key-manager" class="hidden" style="margin-top:1rem">
+            <div class="panel-head" style="padding:0;margin:0 0 .5rem">
+              <h3 style="font-size:1rem;margin:0">Keys for <span id="key-server-label">—</span></h3>
+              <button type="button" class="ghost" id="key-refresh-btn">Refresh</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Prefix</th>
+                    <th>Created</th>
+                    <th>Last used</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="keys-body">
+                  <tr><td colspan="6" class="hint">Select a server…</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <form id="key-form" class="form-stack" style="max-width:520px;margin-top:1.25rem">
+              <div class="panel-head" style="padding:0;margin:0 0 .35rem">
+                <h3 style="font-size:1rem;margin:0">Create new API key</h3>
+              </div>
+              <label for="key-name">Key name (label)</label>
+              <input id="key-name" name="name" value="default" placeholder="e.g. dialer-1 / backup" maxlength="64" required />
+              <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
+                <button type="submit" id="key-create-btn">Generate API key</button>
+                <button type="button" class="ghost hidden" id="key-copy-btn">Copy key</button>
+              </div>
               <p id="key-msg" class="hint"></p>
               <pre id="key-reveal" class="key-reveal hidden"></pre>
             </form>

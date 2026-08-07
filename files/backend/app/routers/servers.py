@@ -222,6 +222,22 @@ def delete_server(
     return {"ok": True}
 
 
+def _api_key_out(record: ApiKey, *, raw_key: str | None = None, server_name: str = "") -> ApiKeyOut:
+    return ApiKeyOut(
+        id=record.id,
+        server_id=record.server_id,
+        server_name=server_name
+        or (record.server.name if getattr(record, "server", None) is not None else ""),
+        key_prefix=record.key_prefix,
+        name=record.name or "default",
+        is_active=bool(record.is_active),
+        created_at=record.created_at,
+        last_used=record.last_used,
+        notes=record.notes or "",
+        api_key=raw_key,
+    )
+
+
 @router.post("/api-keys", response_model=ApiKeyOut)
 def create_api_key(
     payload: ApiKeyCreate,
@@ -237,50 +253,36 @@ def create_api_key(
         server_id=server.id,
         key_prefix=raw[:10],
         key_hash=hash_api_key(raw),
-        name=payload.name,
-        notes=payload.notes,
+        name=(payload.name or "default").strip() or "default",
+        notes=payload.notes or "",
     )
     db.add(record)
     db.commit()
     db.refresh(record)
 
-    return ApiKeyOut(
-        id=record.id,
-        server_id=record.server_id,
-        key_prefix=record.key_prefix,
-        name=record.name,
-        is_active=record.is_active,
-        created_at=record.created_at,
-        last_used=record.last_used,
-        notes=record.notes or "",
-        api_key=raw,
-    )
+    return _api_key_out(record, raw_key=raw, server_name=server.name)
 
 
 @router.get("/api-keys/list", response_model=list[ApiKeyOut])
 def list_api_keys(
     server_id: int | None = None,
+    active_only: bool = True,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     q = db.query(ApiKey)
     if server_id:
         q = q.filter(ApiKey.server_id == server_id)
+    if active_only:
+        q = q.filter(ApiKey.is_active == True)  # noqa: E712
     keys = q.order_by(ApiKey.id.desc()).all()
-    return [
-        ApiKeyOut(
-            id=k.id,
-            server_id=k.server_id,
-            key_prefix=k.key_prefix,
-            name=k.name,
-            is_active=k.is_active,
-            created_at=k.created_at,
-            last_used=k.last_used,
-            notes=k.notes or "",
-            api_key=None,
-        )
-        for k in keys
-    ]
+    # Prefetch server names
+    server_ids = {k.server_id for k in keys}
+    names = {}
+    if server_ids:
+        for s in db.query(VicidialServer).filter(VicidialServer.id.in_(server_ids)).all():
+            names[s.id] = s.name
+    return [_api_key_out(k, server_name=names.get(k.server_id, "")) for k in keys]
 
 
 @router.delete("/api-keys/{key_id}")
@@ -294,4 +296,4 @@ def revoke_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
     key.is_active = False
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "id": key_id, "deleted": True}

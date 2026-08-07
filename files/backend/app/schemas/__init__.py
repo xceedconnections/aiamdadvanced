@@ -111,6 +111,7 @@ class ApiKeyCreate(BaseModel):
 class ApiKeyOut(BaseModel):
     id: int
     server_id: int
+    server_name: str = ""
     key_prefix: str
     name: str
     is_active: bool

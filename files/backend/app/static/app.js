@@ -1255,10 +1255,27 @@ async function loadServers() {
     })
     .join("");
 
-  $("#key-server-select").innerHTML = servers
-    .filter((s) => s.is_active)
-    .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
-    .join("");
+  const select = $("#key-server-select");
+  if (select) {
+    select.innerHTML =
+      `<option value="">— Select a server —</option>` +
+      servers
+        .filter((s) => s.is_active)
+        .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
+        .join("");
+    const prev = window.__openamd_key_server_id;
+    if (prev) {
+      select.value = String(prev);
+      if (select.value === String(prev)) {
+        loadApiKeys();
+      } else {
+        window.__openamd_key_server_id = null;
+        $("#key-manager")?.classList.add("hidden");
+      }
+    } else {
+      $("#key-manager")?.classList.add("hidden");
+    }
+  }
 }
 
 function serverAmdMode() {
@@ -1398,35 +1415,180 @@ $("#server-form").addEventListener("submit", async (e) => {
   }
 });
 
-$("#key-form").addEventListener("submit", async (e) => {
+$("#key-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const fd = new FormData(e.target);
+  const msg = $("#key-msg");
+  const reveal = $("#key-reveal");
+  const copyBtn = $("#key-copy-btn");
+  const serverId = Number($("#key-server-select")?.value || 0);
+  if (!serverId) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Select a VICIdial server first.";
+    }
+    return;
+  }
+  const name = ($("#key-name")?.value || "default").toString().trim() || "default";
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Generating…";
+  }
+  if (reveal) {
+    reveal.classList.add("hidden");
+    reveal.textContent = "";
+  }
+  copyBtn?.classList.add("hidden");
   try {
     const data = await api("/api/servers/api-keys", {
       method: "POST",
       json: {
-        server_id: Number(fd.get("server_id")),
-        name: fd.get("name") || "default",
+        server_id: serverId,
+        name,
         notes: "",
       },
     });
-    $("#key-msg").textContent = "Copy this key now — it will not be shown again.";
-    $("#key-reveal").classList.remove("hidden");
     const key = data.api_key;
+    window.__openamd_last_api_key = key;
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent =
+        "Key created. Copy it now — the full secret will not be shown again.";
+    }
     const base = portalBaseUrl() || "https://YOUR_AI_AMD_HOST";
-    $("#key-reveal").textContent =
-      `${key}\n\n` +
-      `ViciBox install:\n` +
-      `curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\\n` +
-      `  | bash -s -- ${base} ${key}\n\n` +
-      `Or:\n` +
-      `bash /root/vicidialaiamd/vicibox_install.sh ${base} ${key}\n` +
-      `bash /root/vicidialaiamd/vicibox_install.sh http://${base.replace(/^https?:\/\//i, "")} ${key}\n` +
-      `bash /root/vicidialaiamd/vicibox_install.sh ${base.replace(/^https?:\/\//i, "")} ${key}`;
+    if (reveal) {
+      reveal.classList.remove("hidden");
+      reveal.textContent =
+        `${key}\n\n` +
+        `ViciBox install:\n` +
+        `curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\\n` +
+        `  | bash -s -- ${base} ${key}\n\n` +
+        `Or:\n` +
+        `bash /root/vicidialaiamd/vicibox_install.sh ${base} ${key}`;
+    }
+    copyBtn?.classList.remove("hidden");
+    if ($("#key-name")) $("#key-name").value = "default";
+    await loadApiKeys();
   } catch (err) {
-    $("#key-msg").textContent = err.message;
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
   }
 });
+
+$("#key-server-select")?.addEventListener("change", () => {
+  $("#key-reveal")?.classList.add("hidden");
+  $("#key-copy-btn")?.classList.add("hidden");
+  if ($("#key-msg")) {
+    $("#key-msg").textContent = "";
+    $("#key-msg").className = "hint";
+  }
+  loadApiKeys();
+});
+
+$("#key-refresh-btn")?.addEventListener("click", () => loadApiKeys());
+
+$("#key-copy-btn")?.addEventListener("click", async () => {
+  const key = window.__openamd_last_api_key;
+  const msg = $("#key-msg");
+  if (!key) return;
+  try {
+    await navigator.clipboard.writeText(key);
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "API key copied to clipboard.";
+    }
+  } catch (_) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Could not copy — select the key text manually.";
+    }
+  }
+});
+
+async function loadApiKeys() {
+  const select = $("#key-server-select");
+  const manager = $("#key-manager");
+  const body = $("#keys-body");
+  const label = $("#key-server-label");
+  if (!select || !manager || !body) return;
+
+  const serverId = Number(select.value || 0);
+  window.__openamd_key_server_id = serverId || null;
+
+  if (!serverId) {
+    manager.classList.add("hidden");
+    body.innerHTML = `<tr><td colspan="6" class="hint">Select a server…</td></tr>`;
+    return;
+  }
+
+  manager.classList.remove("hidden");
+  const servers = window.__openamd_servers || [];
+  const srv = servers.find((s) => s.id === serverId);
+  if (label) label.textContent = srv?.name || `#${serverId}`;
+  body.innerHTML = `<tr><td colspan="6" class="hint">Loading…</td></tr>`;
+
+  try {
+    const keys = await api(
+      `/api/servers/api-keys/list?server_id=${serverId}&active_only=true`
+    );
+    if (!keys.length) {
+      body.innerHTML = `<tr><td colspan="6" class="hint">No API keys yet — create one below.</td></tr>`;
+      return;
+    }
+    body.innerHTML = keys
+      .map(
+        (k) => `<tr>
+        <td><strong>${escapeHtml(k.name || "default")}</strong></td>
+        <td><code>${escapeHtml(k.key_prefix || "")}…</code></td>
+        <td>${fmtTime(k.created_at)}</td>
+        <td>${k.last_used ? fmtTime(k.last_used) : "—"}</td>
+        <td>${k.is_active ? "Active" : "Revoked"}</td>
+        <td>
+            ${
+            k.is_active
+              ? `<button type="button" class="ghost" data-key-id="${k.id}" data-key-name="${escapeHtml(
+                  k.name || "default"
+                )}" onclick="deleteApiKey(${k.id})">Delete</button>`
+              : ""
+          }
+        </td>
+      </tr>`
+      )
+      .join("");
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(
+      err.message || "Failed to load keys"
+    )}</td></tr>`;
+  }
+}
+
+window.deleteApiKey = async (keyId) => {
+  const btn = document.querySelector(`button[data-key-id="${keyId}"]`);
+  const name = btn?.getAttribute("data-key-name") || "default";
+  if (
+    !confirm(
+      `Delete API key "${name}"?\n\nDialers using this key will stop working until you install a new key.`
+    )
+  ) {
+    return;
+  }
+  try {
+    await api(`/api/servers/api-keys/${keyId}`, { method: "DELETE" });
+    const msg = $("#key-msg");
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "API key deleted.";
+    }
+    await loadApiKeys();
+  } catch (err) {
+    const msg = $("#key-msg");
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+};
 
 async function loadReports() {
   const days = $("#report-days").value;
