@@ -118,7 +118,28 @@ def run_ml_pipeline(
     else:
         details["ml_note"] = "human_low_conf_whisper_disabled"
 
-    # Save uncertain HUMAN (and post-Whisper still-low) for labeling
+    # Still HUMAN below threshold after Whisper (or Whisper off) → same as classic gate
+    if status == "HUMAN" and conf < high_thr:
+        action = str(cfg.get("below_threshold_action", "MACHINE")).strip().upper()
+        if action not in ("MACHINE", "IVR", "SIT", "ERROR"):
+            action = "MACHINE"
+        details["ml_gate_downgraded"] = True
+        details["ml_gate_action"] = action
+        details["ml_note"] = (details.get("ml_note") or "") + "+below_threshold_gate"
+        _maybe_save_sample(
+            save_low,
+            audio=audio,
+            sr=sr,
+            feats=feats,
+            silero=silero,
+            status="HUMAN",
+            confidence=conf,
+            probs=probs,
+            details=details,
+        )
+        return action, float(conf), details
+
+    # Whisper raised confidence enough, or flipped to non-HUMAN
     _maybe_save_sample(
         save_low and conf < low_thr,
         audio=audio,

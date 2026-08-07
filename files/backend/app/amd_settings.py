@@ -138,7 +138,11 @@ def apply_confidence_gate(
     Return (final_status, downgraded). Only HUMAN results are gated.
 
     If server_override is provided and confidence_gate_enabled is True,
-    use that server's min % / action. Otherwise use global amd_settings.json.
+    use that server's min % / action.
+
+    Otherwise:
+      - ML pipeline ON  → skip classic % gate (ML threshold already applied in pipeline)
+      - ML pipeline OFF → use global Minimum HUMAN confidence (%)
     """
     if status != "HUMAN":
         return status, False
@@ -153,6 +157,9 @@ def apply_confidence_gate(
         source = "server"
     else:
         cfg = load_amd_settings()
+        # Mutual exclusion: ML mode owns HUMAN confidence; classic gate is idle
+        if cfg.get("ml_pipeline_enabled"):
+            return status, False
         if not cfg.get("enabled", True):
             return status, False
         enabled = True
@@ -186,9 +193,22 @@ def gate_config_for_server(server: Any | None = None) -> dict[str, Any]:
             ),
             "below_threshold_action": action,
         }
+    if global_cfg.get("ml_pipeline_enabled"):
+        ml_pct = int(round(float(global_cfg.get("ml_xgb_high_confidence", 0.85)) * 100))
+        action = str(global_cfg.get("below_threshold_action", "MACHINE"))
+        if action not in _ALLOWED_ACTIONS:
+            action = "MACHINE"
+        return {
+            "source": "ml",
+            "enabled": True,
+            "min_human_confidence_percent": ml_pct,
+            "below_threshold_action": action,
+            "ml_pipeline_enabled": True,
+        }
     return {
         "source": "global",
         "enabled": bool(global_cfg.get("enabled", True)),
         "min_human_confidence_percent": int(global_cfg.get("min_human_confidence_percent", 70)),
         "below_threshold_action": str(global_cfg.get("below_threshold_action", "MACHINE")),
+        "ml_pipeline_enabled": False,
     }

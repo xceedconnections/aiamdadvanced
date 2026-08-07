@@ -601,19 +601,24 @@
       <section id="page-settings" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>AMD confidence gate</h3></div>
-          <p class="hint">
-            Only calls the AI marks <strong>HUMAN</strong> with confidence at or above this minimum are passed to
-            VICIdial agents. HUMAN calls below the minimum are downgraded (e.g. to MACHINE) and are not connected.
-            This is the <strong>global</strong> default. Individual VICIdial servers can override it on the
-            <strong>VICIdial Servers</strong> page when their per-server confidence gate is enabled.
+          <p class="hint" id="amd-gate-intro">
+            Only one HUMAN confidence rule is active at a time:
+            classic gate when ML is off, or ML threshold when ML is on.
           </p>
           <form id="amd-form" class="form-stack" style="max-width:460px;margin-top:.5rem">
-            <label class="inline">
-              <input type="checkbox" id="amd-enabled" checked />
-              Enable confidence gate
-            </label>
-            <label for="amd-min">Minimum HUMAN confidence (%)</label>
-            <input id="amd-min" type="number" min="0" max="100" step="1" value="70" required />
+            <div id="amd-classic-gate-block">
+              <label class="inline">
+                <input type="checkbox" id="amd-enabled" checked />
+                Enable confidence gate
+              </label>
+              <label for="amd-min">Minimum HUMAN confidence (%)</label>
+              <input id="amd-min" type="number" min="0" max="100" step="1" value="70" required />
+              <p class="hint" style="margin-top:0">
+                Classic mode (ML off). HUMAN at/above this % goes to agents; below → action below.
+                Per-server overrides still work on the VICIdial Servers page.
+              </p>
+            </div>
+
             <label for="amd-action">Below-threshold HUMAN becomes</label>
             <select id="amd-action">
               <option value="MACHINE">MACHINE (hang up / dispose)</option>
@@ -621,44 +626,44 @@
               <option value="SIT">CANCELLED</option>
               <option value="ERROR">ERROR</option>
             </select>
+
             <label class="inline" style="margin-top:.35rem">
               <input type="checkbox" id="amd-blank-as-machine" checked />
               Dispose blank / silent calls as MACHINE
             </label>
             <p class="hint" style="margin-top:0">
               When enabled, empty or near-silent recordings are marked MACHINE and are not passed to agents.
-              Disable to use the old behavior (blank calls may go to agents as HUMAN).
             </p>
 
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
-            <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">ML AMD pipeline (optional)</h3></div>
+            <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">ML AMD pipeline</h3></div>
             <p class="hint" style="margin-top:0">
-              Pipeline: Silero VAD → OpenAMD features → <strong>XGBoost</strong>.
-              <strong>MACHINE / IVR are accepted immediately</strong> (no Whisper).
-              Whisper runs only when XGBoost says <strong>HUMAN</strong> but confidence is
-              below the threshold below — to protect agents from uncertain “human” calls.
-              When disabled, the server uses the current hybrid engine only — no XGBoost/Whisper load.
+              Enable to use XGBoost (+ optional Whisper). This hides the classic Minimum HUMAN %
+              and uses the ML threshold instead — so the two never conflict.
             </p>
             <label class="inline">
               <input type="checkbox" id="amd-ml-enabled" />
               Enable ML pipeline (XGBoost + optional Whisper)
             </label>
-            <label class="inline">
-              <input type="checkbox" id="amd-ml-whisper" checked />
-              Use Faster-Whisper Tiny on uncertain HUMAN only (not on MACHINE/IVR)
-            </label>
-            <label class="inline">
-              <input type="checkbox" id="amd-ml-save-low" checked />
-              Save low-confidence clips for agent labeling / retrain
-            </label>
-            <label for="amd-ml-high">HUMAN confidence to skip Whisper (pass to agent at/above)</label>
-            <input id="amd-ml-high" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
-            <p class="hint" style="margin-top:0">
-              Example: 0.85 means HUMAN at 85%+ goes straight to the agent.
-              HUMAN below 85% is checked with Whisper (if enabled above). MACHINE/IVR never use Whisper.
-            </p>
-            <label for="amd-ml-low">Save / review threshold (below this → sample library)</label>
-            <input id="amd-ml-low" type="number" min="0.50" max="0.99" step="0.01" value="0.85" />
+
+            <div id="amd-ml-options-block" class="hidden">
+              <label for="amd-ml-high">Minimum HUMAN confidence (%) — ML mode</label>
+              <input id="amd-ml-high" type="number" min="50" max="99" step="1" value="85" />
+              <p class="hint" style="margin-top:0">
+                Replaces classic Minimum HUMAN confidence while ML is on.
+                HUMAN at/above this % → agent (no Whisper). Below → Whisper; still below → action above.
+              </p>
+              <label class="inline">
+                <input type="checkbox" id="amd-ml-whisper" checked />
+                Use Faster-Whisper Tiny on uncertain HUMAN only
+              </label>
+              <label class="inline">
+                <input type="checkbox" id="amd-ml-save-low" checked />
+                Save low-confidence clips for agent labeling / retrain
+              </label>
+              <label for="amd-ml-low">Save / review threshold (%)</label>
+              <input id="amd-ml-low" type="number" min="50" max="99" step="1" value="85" />
+            </div>
 
             <button type="submit">Save gate settings</button>
             <p id="amd-msg" class="hint"></p>

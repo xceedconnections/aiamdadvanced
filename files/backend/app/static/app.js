@@ -1012,6 +1012,20 @@ $("#cron-run-now")?.addEventListener("click", async () => {
   }
 });
 
+async function syncAmdGateUi() {
+  const mlOn = !!$("#amd-ml-enabled")?.checked;
+  const classic = $("#amd-classic-gate-block");
+  const mlOpts = $("#amd-ml-options-block");
+  const intro = $("#amd-gate-intro");
+  if (classic) classic.classList.toggle("hidden", mlOn);
+  if (mlOpts) mlOpts.classList.toggle("hidden", !mlOn);
+  if (intro) {
+    intro.textContent = mlOn
+      ? "ML mode is ON: Minimum HUMAN confidence (%) — ML mode controls who reaches agents. The classic Minimum HUMAN % gate is inactive."
+      : "Classic mode: only HUMAN calls at/above Minimum HUMAN confidence (%) go to agents. Enable ML below to switch to the ML threshold instead.";
+  }
+}
+
 async function loadAmdSettings() {
   const msg = $("#amd-msg");
   if (msg) {
@@ -1029,11 +1043,19 @@ async function loadAmdSettings() {
     if ($("#amd-ml-enabled")) $("#amd-ml-enabled").checked = !!cfg.ml_pipeline_enabled;
     if ($("#amd-ml-whisper")) $("#amd-ml-whisper").checked = cfg.ml_whisper_enabled !== false;
     if ($("#amd-ml-save-low")) $("#amd-ml-save-low").checked = cfg.ml_save_low_confidence !== false;
-    if ($("#amd-ml-high")) $("#amd-ml-high").value = cfg.ml_xgb_high_confidence ?? 0.85;
-    if ($("#amd-ml-low")) $("#amd-ml-low").value = cfg.ml_low_confidence_threshold ?? 0.85;
+    // Stored as 0–1; UI shows percent
+    if ($("#amd-ml-high")) {
+      const v = Number(cfg.ml_xgb_high_confidence ?? 0.85);
+      $("#amd-ml-high").value = String(Math.round((v <= 1 ? v * 100 : v)));
+    }
+    if ($("#amd-ml-low")) {
+      const v = Number(cfg.ml_low_confidence_threshold ?? 0.85);
+      $("#amd-ml-low").value = String(Math.round((v <= 1 ? v * 100 : v)));
+    }
     if ($("#amd-path")) {
       $("#amd-path").textContent = cfg.path ? `Settings file: ${cfg.path}` : "";
     }
+    syncAmdGateUi();
     if (cfg.ml_pipeline_enabled) loadMlSamples();
   } catch (err) {
     if (msg) {
@@ -1043,12 +1065,17 @@ async function loadAmdSettings() {
   }
 }
 
+$("#amd-ml-enabled")?.addEventListener("change", () => syncAmdGateUi());
+
 $("#amd-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const msg = $("#amd-msg");
   msg.className = "hint";
   msg.textContent = "Saving…";
   try {
+    const mlOn = $("#amd-ml-enabled") ? $("#amd-ml-enabled").checked : false;
+    const mlHighPct = Number($("#amd-ml-high")?.value || 85);
+    const mlLowPct = Number($("#amd-ml-low")?.value || 85);
     const data = await api("/api/settings/amd", {
       method: "PUT",
       json: {
@@ -1058,29 +1085,36 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
         blank_as_machine: $("#amd-blank-as-machine")
           ? $("#amd-blank-as-machine").checked
           : true,
-        ml_pipeline_enabled: $("#amd-ml-enabled") ? $("#amd-ml-enabled").checked : false,
+        ml_pipeline_enabled: mlOn,
         ml_whisper_enabled: $("#amd-ml-whisper") ? $("#amd-ml-whisper").checked : true,
         ml_save_low_confidence: $("#amd-ml-save-low") ? $("#amd-ml-save-low").checked : true,
-        ml_xgb_high_confidence: Number($("#amd-ml-high")?.value || 0.85),
-        ml_low_confidence_threshold: Number($("#amd-ml-low")?.value || 0.85),
+        ml_xgb_high_confidence: Math.min(0.99, Math.max(0.5, mlHighPct / 100)),
+        ml_low_confidence_threshold: Math.min(0.99, Math.max(0.5, mlLowPct / 100)),
       },
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
       ? " Blank/silent → MACHINE."
       : " Blank/silent may pass as HUMAN.";
-    const mlNote = data.ml_pipeline_enabled
-      ? " ML pipeline ON (XGBoost; Whisper only on uncertain HUMAN)."
-      : " ML pipeline OFF (hybrid engine only).";
-    msg.textContent = data.enabled
-      ? `Saved: HUMAN calls need ≥ ${data.min_human_confidence_percent}% confidence; below that → ${data.below_threshold_action}.${blankNote}${mlNote}`
-      : `Saved: confidence gate disabled — all HUMAN calls pass to agents.${blankNote}${mlNote}`;
+    if (data.ml_pipeline_enabled) {
+      const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);
+      msg.textContent =
+        `Saved: ML ON — HUMAN needs ≥ ${pct}% (Whisper below that); still low → ${data.below_threshold_action}.` +
+        ` Classic Minimum HUMAN % gate is inactive.${blankNote}`;
+    } else if (data.enabled) {
+      msg.textContent =
+        `Saved: ML OFF — classic gate: HUMAN ≥ ${data.min_human_confidence_percent}% → agent; below → ${data.below_threshold_action}.${blankNote}`;
+    } else {
+      msg.textContent =
+        `Saved: ML OFF, classic gate disabled — all HUMAN calls pass to agents.${blankNote}`;
+    }
     if (data.ml_warmup_warning) {
       msg.textContent += ` (ML warmup: ${data.ml_warmup_warning})`;
     }
     if ($("#amd-path")) {
       $("#amd-path").textContent = data.path ? `Settings file: ${data.path}` : "";
     }
+    syncAmdGateUi();
     if (data.ml_pipeline_enabled) loadMlSamples();
   } catch (err) {
     msg.className = "error";
