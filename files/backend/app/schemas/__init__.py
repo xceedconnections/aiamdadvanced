@@ -40,6 +40,7 @@ class ServerCreate(BaseModel):
     description: str = ""
     timezone: str = "UTC"
     ip_whitelist: str = ""
+    amd_mode: str = "global"  # global | classic | ml
     confidence_gate_enabled: bool = False
     min_human_confidence_percent: int = Field(70, ge=0, le=100)
     below_threshold_action: str = "MACHINE"
@@ -59,6 +60,7 @@ class ServerUpdate(BaseModel):
     timezone: Optional[str] = None
     ip_whitelist: Optional[str] = None
     is_active: Optional[bool] = None
+    amd_mode: Optional[str] = None
     confidence_gate_enabled: Optional[bool] = None
     min_human_confidence_percent: Optional[int] = Field(None, ge=0, le=100)
     below_threshold_action: Optional[str] = None
@@ -79,6 +81,7 @@ class ServerOut(BaseModel):
     timezone: str
     ip_whitelist: str
     is_active: bool
+    amd_mode: str = "global"
     confidence_gate_enabled: bool = False
     min_human_confidence_percent: int = 70
     below_threshold_action: str = "MACHINE"

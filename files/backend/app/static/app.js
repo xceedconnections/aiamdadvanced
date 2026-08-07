@@ -1012,18 +1012,14 @@ $("#cron-run-now")?.addEventListener("click", async () => {
   }
 });
 
-async function syncAmdGateUi() {
-  const mlOn = !!$("#amd-ml-enabled")?.checked;
+function syncAmdGateUi() {
+  const mlOn = !!$("#amd-mode-ml")?.checked;
   const classic = $("#amd-classic-gate-block");
   const mlOpts = $("#amd-ml-options-block");
-  const intro = $("#amd-gate-intro");
+  const lib = $("#amd-ml-library");
   if (classic) classic.classList.toggle("hidden", mlOn);
   if (mlOpts) mlOpts.classList.toggle("hidden", !mlOn);
-  if (intro) {
-    intro.textContent = mlOn
-      ? "ML mode is ON: Minimum HUMAN confidence (%) — ML mode controls who reaches agents. The classic Minimum HUMAN % gate is inactive."
-      : "Classic mode: only HUMAN calls at/above Minimum HUMAN confidence (%) go to agents. Enable ML below to switch to the ML threshold instead.";
-  }
+  if (lib) lib.classList.toggle("hidden", !mlOn);
 }
 
 async function loadAmdSettings() {
@@ -1034,29 +1030,32 @@ async function loadAmdSettings() {
   }
   try {
     const cfg = await api("/api/settings/amd");
-    $("#amd-enabled").checked = !!cfg.enabled;
+    const mlOn = !!cfg.ml_pipeline_enabled;
+    if ($("#amd-mode-classic")) $("#amd-mode-classic").checked = !mlOn;
+    if ($("#amd-mode-ml")) $("#amd-mode-ml").checked = mlOn;
+    $("#amd-enabled").checked = cfg.enabled !== false;
     $("#amd-min").value = cfg.min_human_confidence_percent ?? 70;
-    if ($("#amd-action")) $("#amd-action").value = cfg.below_threshold_action || "MACHINE";
+    const action = cfg.below_threshold_action || "MACHINE";
+    if ($("#amd-action")) $("#amd-action").value = action;
+    if ($("#amd-action-ml")) $("#amd-action-ml").value = action;
     if ($("#amd-blank-as-machine")) {
       $("#amd-blank-as-machine").checked = cfg.blank_as_machine !== false;
     }
-    if ($("#amd-ml-enabled")) $("#amd-ml-enabled").checked = !!cfg.ml_pipeline_enabled;
     if ($("#amd-ml-whisper")) $("#amd-ml-whisper").checked = cfg.ml_whisper_enabled !== false;
     if ($("#amd-ml-save-low")) $("#amd-ml-save-low").checked = cfg.ml_save_low_confidence !== false;
-    // Stored as 0–1; UI shows percent
     if ($("#amd-ml-high")) {
       const v = Number(cfg.ml_xgb_high_confidence ?? 0.85);
-      $("#amd-ml-high").value = String(Math.round((v <= 1 ? v * 100 : v)));
+      $("#amd-ml-high").value = String(Math.round(v <= 1 ? v * 100 : v));
     }
     if ($("#amd-ml-low")) {
       const v = Number(cfg.ml_low_confidence_threshold ?? 0.85);
-      $("#amd-ml-low").value = String(Math.round((v <= 1 ? v * 100 : v)));
+      $("#amd-ml-low").value = String(Math.round(v <= 1 ? v * 100 : v));
     }
     if ($("#amd-path")) {
       $("#amd-path").textContent = cfg.path ? `Settings file: ${cfg.path}` : "";
     }
     syncAmdGateUi();
-    if (cfg.ml_pipeline_enabled) loadMlSamples();
+    if (mlOn) loadMlSamples();
   } catch (err) {
     if (msg) {
       msg.className = "error";
@@ -1065,7 +1064,8 @@ async function loadAmdSettings() {
   }
 }
 
-$("#amd-ml-enabled")?.addEventListener("change", () => syncAmdGateUi());
+$("#amd-mode-classic")?.addEventListener("change", () => syncAmdGateUi());
+$("#amd-mode-ml")?.addEventListener("change", () => syncAmdGateUi());
 
 $("#amd-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1073,15 +1073,18 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
   msg.className = "hint";
   msg.textContent = "Saving…";
   try {
-    const mlOn = $("#amd-ml-enabled") ? $("#amd-ml-enabled").checked : false;
+    const mlOn = !!$("#amd-mode-ml")?.checked;
     const mlHighPct = Number($("#amd-ml-high")?.value || 85);
     const mlLowPct = Number($("#amd-ml-low")?.value || 85);
+    const action = mlOn
+      ? ($("#amd-action-ml")?.value || "MACHINE")
+      : ($("#amd-action")?.value || "MACHINE");
     const data = await api("/api/settings/amd", {
       method: "PUT",
       json: {
-        enabled: $("#amd-enabled").checked,
-        min_human_confidence_percent: Number($("#amd-min").value),
-        below_threshold_action: $("#amd-action").value,
+        enabled: mlOn ? true : $("#amd-enabled").checked,
+        min_human_confidence_percent: Number($("#amd-min").value || 70),
+        below_threshold_action: action,
         blank_as_machine: $("#amd-blank-as-machine")
           ? $("#amd-blank-as-machine").checked
           : true,
@@ -1094,19 +1097,18 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
-      ? " Blank/silent → MACHINE."
-      : " Blank/silent may pass as HUMAN.";
+      ? " Blank/silent → MACHINE (global)."
+      : " Blank/silent may pass as HUMAN (global).";
     if (data.ml_pipeline_enabled) {
       const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);
       msg.textContent =
-        `Saved: ML ON — HUMAN needs ≥ ${pct}% (Whisper below that); still low → ${data.below_threshold_action}.` +
-        ` Classic Minimum HUMAN % gate is inactive.${blankNote}`;
+        `Saved: Advanced ML — HUMAN ≥ ${pct}% → agent; below → Whisper then ${data.below_threshold_action}.${blankNote}`;
     } else if (data.enabled) {
       msg.textContent =
-        `Saved: ML OFF — classic gate: HUMAN ≥ ${data.min_human_confidence_percent}% → agent; below → ${data.below_threshold_action}.${blankNote}`;
+        `Saved: Classic — HUMAN ≥ ${data.min_human_confidence_percent}% → agent; below → ${data.below_threshold_action}.${blankNote}`;
     } else {
       msg.textContent =
-        `Saved: ML OFF, classic gate disabled — all HUMAN calls pass to agents.${blankNote}`;
+        `Saved: Classic gate off — all HUMAN results pass to agents.${blankNote}`;
     }
     if (data.ml_warmup_warning) {
       msg.textContent += ` (ML warmup: ${data.ml_warmup_warning})`;
@@ -1223,23 +1225,19 @@ async function loadServers() {
   window.__openamd_servers = servers;
   $("#servers-body").innerHTML = servers
     .map((s) => {
+      const mode = s.amd_mode || "global";
       let amd;
-      if (s.ml_pipeline_override_enabled) {
-        amd = s.ml_pipeline_enabled
-          ? `ML ≥${s.ml_min_human_confidence_percent}% → ${s.below_threshold_action}`
-          : "ML override OFF (hybrid)";
-      } else if (s.confidence_gate_enabled) {
-        amd = `Gate ≥${s.min_human_confidence_percent}% → ${s.below_threshold_action}`;
+      if (mode === "ml") {
+        amd = `Custom ML ≥${s.ml_min_human_confidence_percent}%`;
+      } else if (mode === "classic") {
+        amd = `Custom Classic ≥${s.min_human_confidence_percent}% → ${s.below_threshold_action}`;
       } else {
-        amd = "AMD: global Settings";
+        amd = "Global Settings";
       }
-      const loc = s.locale_pack_enabled
-        ? `Locale: ${(s.locale_pack || "usa").toUpperCase()}`
-        : "Locale: default";
       return `<tr>
       <td><strong>${escapeHtml(s.name)}</strong><div class="hint">${escapeHtml(s.description || "")}</div>
         <div class="hint">${escapeHtml(s.timezone || "")}</div>
-        <div class="hint">${escapeHtml(amd)} · ${escapeHtml(loc)}</div></td>
+        <div class="hint">${escapeHtml(amd)}</div></td>
       <td><span class="hint">${escapeHtml(s.ip_whitelist || "(any)")}</span></td>
       <td>${s.calls_today}</td>
       <td>${s.total_calls}</td>
@@ -1263,26 +1261,24 @@ async function loadServers() {
     .join("");
 }
 
+function serverAmdMode() {
+  if ($("#server-amd-ml")?.checked) return "ml";
+  if ($("#server-amd-classic")?.checked) return "classic";
+  return "global";
+}
+
 function syncServerAmdUi() {
-  const mlOverride = !!$("#server-ml-override")?.checked;
-  const mlOn = mlOverride && !!$("#server-ml-enabled")?.checked;
-  const mlBlock = $("#server-ml-block");
-  const mlOpts = $("#server-ml-options");
-  const classic = $("#server-classic-gate-block");
+  const mode = serverAmdMode();
+  $("#server-classic-fields")?.classList.toggle("hidden", mode !== "classic");
+  $("#server-ml-fields")?.classList.toggle("hidden", mode !== "ml");
   const intro = $("#server-amd-intro");
-  if (mlBlock) mlBlock.classList.toggle("hidden", !mlOverride);
-  if (mlOpts) mlOpts.classList.toggle("hidden", !mlOn);
-  if (classic) classic.classList.toggle("hidden", mlOn);
   if (intro) {
-    if (mlOn) {
-      intro.textContent =
-        "This server uses its own ML threshold (classic gate hidden). Other servers still follow global Settings unless overridden.";
-    } else if (mlOverride) {
-      intro.textContent =
-        "ML override is on but ML is disabled for this server (hybrid). You can still set a classic gate override below, or leave it off to use global classic Settings.";
+    if (mode === "global") {
+      intro.textContent = "This dialer uses whatever is set in Settings (Classic or Advanced ML).";
+    } else if (mode === "classic") {
+      intro.textContent = "Custom Classic: set the minimum HUMAN % for this dialer only.";
     } else {
-      intro.textContent =
-        "Leave overrides off to use Settings → AMD confidence gate / ML (global). Enable an override below to customize this VICIdial server only.";
+      intro.textContent = "Custom Advanced ML: XGBoost + optional Whisper for this dialer only.";
     }
   }
 }
@@ -1292,17 +1288,14 @@ function resetServerForm() {
   form.reset();
   $("#server-edit-id").value = "";
   $("#server-timezone").value = "America/New_York";
-  $("#server-gate-enabled").checked = false;
+  if ($("#server-amd-global")) $("#server-amd-global").checked = true;
   $("#server-gate-min").value = "70";
   $("#server-gate-action").value = "MACHINE";
-  if ($("#server-ml-override")) $("#server-ml-override").checked = false;
-  if ($("#server-ml-enabled")) $("#server-ml-enabled").checked = false;
   if ($("#server-ml-whisper")) $("#server-ml-whisper").checked = true;
   if ($("#server-ml-save")) $("#server-ml-save").checked = true;
   if ($("#server-ml-high")) $("#server-ml-high").value = "85";
   if ($("#server-ml-low")) $("#server-ml-low").value = "85";
-  $("#server-locale-enabled").checked = false;
-  $("#server-locale-pack").value = "usa";
+  if ($("#server-ml-action")) $("#server-ml-action").value = "MACHINE";
   $("#server-form-title").textContent = "Add VICIdial server";
   $("#server-submit-btn").textContent = "Create server";
   $("#server-cancel-edit").classList.add("hidden");
@@ -1319,13 +1312,13 @@ window.editServer = (id) => {
   $("#server-description").value = s.description || "";
   $("#server-timezone").value = s.timezone || "UTC";
   $("#server-ip-whitelist").value = s.ip_whitelist || "";
-  $("#server-gate-enabled").checked = !!s.confidence_gate_enabled;
+  const mode = s.amd_mode || "global";
+  if ($("#server-amd-global")) $("#server-amd-global").checked = mode === "global";
+  if ($("#server-amd-classic")) $("#server-amd-classic").checked = mode === "classic";
+  if ($("#server-amd-ml")) $("#server-amd-ml").checked = mode === "ml";
   $("#server-gate-min").value = String(s.min_human_confidence_percent ?? 70);
   $("#server-gate-action").value = s.below_threshold_action || "MACHINE";
-  if ($("#server-ml-override")) {
-    $("#server-ml-override").checked = !!s.ml_pipeline_override_enabled;
-  }
-  if ($("#server-ml-enabled")) $("#server-ml-enabled").checked = !!s.ml_pipeline_enabled;
+  if ($("#server-ml-action")) $("#server-ml-action").value = s.below_threshold_action || "MACHINE";
   if ($("#server-ml-whisper")) {
     $("#server-ml-whisper").checked = s.ml_whisper_enabled !== false;
   }
@@ -1338,12 +1331,10 @@ window.editServer = (id) => {
   if ($("#server-ml-low")) {
     $("#server-ml-low").value = String(s.ml_save_threshold_percent ?? 85);
   }
-  $("#server-locale-enabled").checked = !!s.locale_pack_enabled;
-  $("#server-locale-pack").value = s.locale_pack || "usa";
   $("#server-form-title").textContent = "Edit VICIdial server";
   $("#server-submit-btn").textContent = "Save changes";
   $("#server-cancel-edit").classList.remove("hidden");
-  $("#server-msg").textContent = `Editing #${s.id} — update server, AMD overrides, or locale pack.`;
+  $("#server-msg").textContent = `Editing #${s.id}`;
   syncServerAmdUi();
   $("#server-name").focus();
 };
@@ -1364,29 +1355,33 @@ window.activateServer = async (id) => {
 };
 
 $("#server-cancel-edit").addEventListener("click", () => resetServerForm());
-$("#server-ml-override")?.addEventListener("change", () => syncServerAmdUi());
-$("#server-ml-enabled")?.addEventListener("change", () => syncServerAmdUi());
+$("#server-amd-global")?.addEventListener("change", () => syncServerAmdUi());
+$("#server-amd-classic")?.addEventListener("change", () => syncServerAmdUi());
+$("#server-amd-ml")?.addEventListener("change", () => syncServerAmdUi());
 
 $("#server-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const id = (fd.get("id") || "").toString().trim();
+  const mode = serverAmdMode();
+  const action =
+    mode === "ml"
+      ? ($("#server-ml-action")?.value || "MACHINE")
+      : ($("#server-gate-action")?.value || "MACHINE");
   const payload = {
     name: (fd.get("name") || "").toString().trim(),
     description: (fd.get("description") || "").toString(),
     timezone: (fd.get("timezone") || "UTC").toString(),
     ip_whitelist: (fd.get("ip_whitelist") || "").toString().trim(),
-    confidence_gate_enabled: !!$("#server-gate-enabled")?.checked,
+    amd_mode: mode,
     min_human_confidence_percent: Number($("#server-gate-min")?.value || 70),
-    below_threshold_action: ($("#server-gate-action")?.value || "MACHINE").toString(),
-    ml_pipeline_override_enabled: !!$("#server-ml-override")?.checked,
-    ml_pipeline_enabled: !!$("#server-ml-enabled")?.checked,
+    below_threshold_action: action,
     ml_whisper_enabled: $("#server-ml-whisper") ? $("#server-ml-whisper").checked : true,
     ml_save_low_confidence: $("#server-ml-save") ? $("#server-ml-save").checked : true,
     ml_min_human_confidence_percent: Number($("#server-ml-high")?.value || 85),
     ml_save_threshold_percent: Number($("#server-ml-low")?.value || 85),
-    locale_pack_enabled: !!$("#server-locale-enabled")?.checked,
-    locale_pack: ($("#server-locale-pack")?.value || "usa").toString(),
+    locale_pack_enabled: false,
+    locale_pack: "usa",
   };
   try {
     if (id) {

@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.amd_settings import server_amd_mode
 from app.auth.security import generate_api_key, get_current_user, hash_api_key
 from app.database import get_db
-from app.locale_packs import ALLOWED_LOCALE_PACKS, locale_pack_meta, normalize_locale_pack
 from app.models.api_key import ApiKey
 from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
@@ -22,18 +22,37 @@ from app.schemas import (
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
+_ALLOWED_AMD_MODES = {"global", "classic", "ml"}
+
+
+def _apply_amd_mode_flags(fields: dict) -> dict:
+    """Sync legacy flags from amd_mode so older resolve paths stay consistent."""
+    out = dict(fields)
+    mode = str(out.get("amd_mode") or "global").strip().lower()
+    if mode not in _ALLOWED_AMD_MODES:
+        raise HTTPException(status_code=400, detail="amd_mode must be global, classic, or ml")
+    out["amd_mode"] = mode
+    # Locale packs removed from product UI
+    out["locale_pack_enabled"] = False
+    if mode == "global":
+        out["confidence_gate_enabled"] = False
+        out["ml_pipeline_override_enabled"] = False
+        out["ml_pipeline_enabled"] = False
+    elif mode == "classic":
+        out["confidence_gate_enabled"] = True
+        out["ml_pipeline_override_enabled"] = False
+        out["ml_pipeline_enabled"] = False
+    else:  # ml
+        out["confidence_gate_enabled"] = False
+        out["ml_pipeline_override_enabled"] = True
+        out["ml_pipeline_enabled"] = True
+    return out
 
 
 def _normalize_server_amd_fields(data: dict) -> dict:
     out = dict(data)
-    if "locale_pack" in out and out["locale_pack"] is not None:
-        pack = normalize_locale_pack(out["locale_pack"])
-        if pack not in ALLOWED_LOCALE_PACKS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"locale_pack must be one of: {', '.join(ALLOWED_LOCALE_PACKS)}",
-            )
-        out["locale_pack"] = pack
+    if "amd_mode" in out and out["amd_mode"] is not None:
+        out = _apply_amd_mode_flags(out)
     if "below_threshold_action" in out and out["below_threshold_action"] is not None:
         action = str(out["below_threshold_action"]).strip().upper()
         if action not in _ALLOWED_ACTIONS:
@@ -65,6 +84,7 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         .scalar()
         or 0
     )
+    mode = server_amd_mode(server)
     return ServerOut(
         id=server.id,
         name=server.name,
@@ -72,6 +92,7 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         timezone=server.timezone or "UTC",
         ip_whitelist=server.ip_whitelist or "",
         is_active=server.is_active,
+        amd_mode=mode,
         confidence_gate_enabled=bool(getattr(server, "confidence_gate_enabled", False)),
         min_human_confidence_percent=int(
             getattr(server, "min_human_confidence_percent", 70) or 70
@@ -91,18 +112,13 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         ml_save_threshold_percent=int(
             getattr(server, "ml_save_threshold_percent", 85) or 85
         ),
-        locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
-        locale_pack=normalize_locale_pack(getattr(server, "locale_pack", None) or "usa"),
+        locale_pack_enabled=False,
+        locale_pack="usa",
         last_seen=server.last_seen,
         created_at=server.created_at,
         total_calls=total,
         calls_today=today_count,
     )
-
-
-@router.get("/locale-packs")
-def list_locale_packs(user: User = Depends(get_current_user)):
-    return {"packs": locale_pack_meta()}
 
 
 @router.get("", response_model=list[ServerOut])
@@ -130,6 +146,7 @@ def create_server(
         description=fields.get("description") or "",
         timezone=fields.get("timezone") or "UTC",
         ip_whitelist=fields.get("ip_whitelist") or "",
+        amd_mode=str(fields.get("amd_mode") or "global"),
         confidence_gate_enabled=bool(fields.get("confidence_gate_enabled", False)),
         min_human_confidence_percent=int(fields.get("min_human_confidence_percent", 70)),
         below_threshold_action=str(fields.get("below_threshold_action") or "MACHINE"),
@@ -141,8 +158,8 @@ def create_server(
             fields.get("ml_min_human_confidence_percent", 85)
         ),
         ml_save_threshold_percent=int(fields.get("ml_save_threshold_percent", 85)),
-        locale_pack_enabled=bool(fields.get("locale_pack_enabled", False)),
-        locale_pack=str(fields.get("locale_pack") or "usa"),
+        locale_pack_enabled=False,
+        locale_pack="usa",
     )
     db.add(server)
     db.commit()
@@ -183,7 +200,8 @@ def update_server(
         if clash:
             raise HTTPException(status_code=400, detail="Server name already exists")
     for k, v in data.items():
-        setattr(server, k, v)
+        if hasattr(server, k):
+            setattr(server, k, v)
     server.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(server)
@@ -199,7 +217,6 @@ def delete_server(
     server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    # Soft delete
     server.is_active = False
     db.commit()
     return {"ok": True}

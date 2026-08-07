@@ -39,8 +39,8 @@ async def analyze(
     effective = resolve_effective_amd_settings(server)
     result = analyze_audio(
         raw,
-        locale_pack_enabled=bool(getattr(server, "locale_pack_enabled", False)),
-        locale_pack=str(getattr(server, "locale_pack", None) or "usa"),
+        locale_pack_enabled=False,
+        locale_pack="usa",
         amd_settings=effective,
     )
 

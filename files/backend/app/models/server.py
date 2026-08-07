@@ -15,12 +15,15 @@ class VicidialServer(Base):
     ip_whitelist = Column(Text, default="")  # comma-separated IPs, empty = allow all
     is_active = Column(Boolean, default=True)
 
-    # Per-server classic AMD confidence gate (if disabled → global amd_settings.json)
+    # AMD mode for this dialer: global | classic | ml
+    amd_mode = Column(String(16), default="global")
+
+    # Custom Classic fields (when amd_mode=classic)
     confidence_gate_enabled = Column(Boolean, default=False)
     min_human_confidence_percent = Column(Integer, default=70)
     below_threshold_action = Column(String(32), default="MACHINE")
 
-    # Per-server ML pipeline override (if disabled → global ML settings)
+    # Custom ML fields (when amd_mode=ml) — legacy override flags kept in sync
     ml_pipeline_override_enabled = Column(Boolean, default=False)
     ml_pipeline_enabled = Column(Boolean, default=False)
     ml_whisper_enabled = Column(Boolean, default=True)
@@ -28,9 +31,9 @@ class VicidialServer(Base):
     ml_min_human_confidence_percent = Column(Integer, default=85)
     ml_save_threshold_percent = Column(Integer, default=85)
 
-    # Locale / market threshold pack (if disabled → default engine thresholds)
+    # Locale packs removed from UI; columns kept so old DBs don't break
     locale_pack_enabled = Column(Boolean, default=False)
-    locale_pack = Column(String(32), default="usa")  # usa | uk | multilingual
+    locale_pack = Column(String(32), default="usa")
 
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

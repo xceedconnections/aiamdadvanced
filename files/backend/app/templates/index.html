@@ -323,73 +323,60 @@
               <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
               <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">AMD settings for this server</h3></div>
               <p class="hint" id="server-amd-intro">
-                Leave overrides off to use <strong>Settings → AMD confidence gate / ML</strong> (global).
-                Enable an override below to customize this VICIdial server only.
+                Choose how this dialer decides HUMAN vs MACHINE.
               </p>
 
-              <label class="inline">
-                <input type="checkbox" id="server-ml-override" name="ml_pipeline_override_enabled" />
-                Override ML pipeline for this server
-              </label>
-              <div id="server-ml-block" class="hidden">
+              <fieldset style="border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:.75rem 1rem;margin:0 0 .75rem">
+                <legend style="padding:0 .35rem">Source</legend>
                 <label class="inline">
-                  <input type="checkbox" id="server-ml-enabled" name="ml_pipeline_enabled" />
-                  Enable ML pipeline (XGBoost + optional Whisper)
+                  <input type="radio" name="server-amd-mode" id="server-amd-global" value="global" checked />
+                  <strong>Use Global settings</strong> — same as Settings menu
                 </label>
-                <div id="server-ml-options" class="hidden">
-                  <label for="server-ml-high">Minimum HUMAN confidence (%) — ML mode</label>
-                  <input id="server-ml-high" name="ml_min_human_confidence_percent" type="number" min="50" max="99" step="1" value="85" />
-                  <label class="inline">
-                    <input type="checkbox" id="server-ml-whisper" name="ml_whisper_enabled" checked />
-                    Use Faster-Whisper Tiny on uncertain HUMAN only
-                  </label>
-                  <label class="inline">
-                    <input type="checkbox" id="server-ml-save" name="ml_save_low_confidence" checked />
-                    Save low-confidence clips for labeling / retrain
-                  </label>
-                  <label for="server-ml-low">Save / review threshold (%)</label>
-                  <input id="server-ml-low" name="ml_save_threshold_percent" type="number" min="50" max="99" step="1" value="85" />
-                </div>
-                <p class="hint" style="margin-top:.35rem">
-                  When ML is enabled here, it replaces the classic Minimum HUMAN % for this server
-                  (same mutual exclusion as global Settings).
-                </p>
+                <label class="inline">
+                  <input type="radio" name="server-amd-mode" id="server-amd-classic" value="classic" />
+                  <strong>Custom — Classic</strong> — set your own minimum HUMAN %
+                </label>
+                <label class="inline">
+                  <input type="radio" name="server-amd-mode" id="server-amd-ml" value="ml" />
+                  <strong>Custom — Advanced ML</strong> — XGBoost + optional Whisper
+                </label>
+              </fieldset>
+
+              <div id="server-classic-fields" class="hidden">
+                <label for="server-gate-min">Minimum HUMAN confidence (%)</label>
+                <input id="server-gate-min" type="number" min="0" max="100" step="1" value="70" />
+                <p class="hint" style="margin-top:0">Below this % → marked as MACHINE (voicemail).</p>
+                <label for="server-gate-action">Below this % mark as</label>
+                <select id="server-gate-action">
+                  <option value="MACHINE">MACHINE (voicemail)</option>
+                  <option value="IVR">IVR</option>
+                  <option value="SIT">SIT</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
               </div>
 
-              <div id="server-classic-gate-block">
+              <div id="server-ml-fields" class="hidden">
+                <label for="server-ml-high">Minimum HUMAN confidence (%)</label>
+                <input id="server-ml-high" type="number" min="50" max="99" step="1" value="85" />
+                <p class="hint" style="margin-top:0">Below this % → Whisper check (if on); still low → MACHINE.</p>
                 <label class="inline">
-                  <input type="checkbox" id="server-gate-enabled" name="confidence_gate_enabled" />
-                  Override classic confidence gate for this server
+                  <input type="checkbox" id="server-ml-whisper" checked />
+                  Use Faster-Whisper Tiny on uncertain HUMAN only
                 </label>
-                <p class="hint">If enabled (and ML is not on for this server), uses this server’s Minimum HUMAN %. Otherwise global Settings apply.</p>
-                <div id="server-gate-fields">
-                  <label for="server-gate-min">Minimum HUMAN confidence (%) for this server</label>
-                  <input id="server-gate-min" name="min_human_confidence_percent" type="number" min="0" max="100" step="1" value="70" />
-                </div>
+                <label class="inline">
+                  <input type="checkbox" id="server-ml-save" checked />
+                  Save low-confidence clips for agent labeling / retrain
+                </label>
+                <label for="server-ml-low">Save clips when confidence below (%)</label>
+                <input id="server-ml-low" type="number" min="50" max="99" step="1" value="85" />
+                <label for="server-ml-action">Below this % mark as</label>
+                <select id="server-ml-action">
+                  <option value="MACHINE">MACHINE (voicemail)</option>
+                  <option value="IVR">IVR</option>
+                  <option value="SIT">SIT</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
               </div>
-
-              <label for="server-gate-action">Below threshold action</label>
-              <select id="server-gate-action" name="below_threshold_action">
-                <option value="MACHINE">MACHINE</option>
-                <option value="IVR">IVR</option>
-                <option value="SIT">SIT</option>
-                <option value="ERROR">ERROR</option>
-              </select>
-
-              <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
-              <label class="inline">
-                <input type="checkbox" id="server-locale-enabled" name="locale_pack_enabled" />
-                Enable locale / market threshold pack
-              </label>
-              <p class="hint">If enabled, acoustic cutoffs follow the selected market. If disabled, the engine uses the normal default thresholds (same as before).</p>
-              <label for="server-locale-pack">Market / language pack</label>
-              <select id="server-locale-pack" name="locale_pack">
-                <option value="usa">USA</option>
-                <option value="canada">Canada</option>
-                <option value="uk">UK</option>
-                <option value="multilingual">Multilingual / mixed trunks</option>
-              </select>
-              <p class="hint">USA / Canada / Multilingual share North-America voicemail blocking. UK stays more HUMAN-friendly. With the pack checkbox off, global default also uses NA voicemail blocking.</p>
 
               <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
                 <button type="submit" id="server-submit-btn">Create server</button>
@@ -640,12 +627,24 @@
 
       <section id="page-settings" class="page hidden">
         <div class="panel">
-          <div class="panel-head"><h3>AMD confidence gate</h3></div>
-          <p class="hint" id="amd-gate-intro">
-            Only one HUMAN confidence rule is active at a time:
-            classic gate when ML is off, or ML threshold when ML is on.
+          <div class="panel-head"><h3>AMD settings (global)</h3></div>
+          <p class="hint">
+            These are the default rules for every VICIdial server that uses <strong>Global settings</strong>.
+            Individual servers can override them on the VICIdial Servers page.
           </p>
-          <form id="amd-form" class="form-stack" style="max-width:460px;margin-top:.5rem">
+          <form id="amd-form" class="form-stack" style="max-width:480px;margin-top:.5rem">
+            <fieldset style="border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:.75rem 1rem;margin:0 0 .75rem">
+              <legend style="padding:0 .35rem">AMD engine mode</legend>
+              <label class="inline">
+                <input type="radio" name="amd-mode" id="amd-mode-classic" value="classic" checked />
+                <strong>Classic</strong> — Hybrid (Heuristic + Silero) + confidence %
+              </label>
+              <label class="inline">
+                <input type="radio" name="amd-mode" id="amd-mode-ml" value="ml" />
+                <strong>Advanced ML</strong> — XGBoost + Whisper on uncertain HUMAN
+              </label>
+            </fieldset>
+
             <div id="amd-classic-gate-block">
               <label class="inline">
                 <input type="checkbox" id="amd-enabled" checked />
@@ -654,44 +653,22 @@
               <label for="amd-min">Minimum HUMAN confidence (%)</label>
               <input id="amd-min" type="number" min="0" max="100" step="1" value="70" required />
               <p class="hint" style="margin-top:0">
-                Classic mode (ML off). HUMAN at/above this % goes to agents; below → action below.
-                Per-server overrides still work on the VICIdial Servers page.
+                HUMAN at or above this % goes to the agent. Below this % → marked as the action below (usually MACHINE / voicemail).
               </p>
+              <label for="amd-action">Below this % mark as</label>
+              <select id="amd-action">
+                <option value="MACHINE">MACHINE (voicemail / hang up)</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">CANCELLED</option>
+                <option value="ERROR">ERROR</option>
+              </select>
             </div>
 
-            <label for="amd-action">Below-threshold HUMAN becomes</label>
-            <select id="amd-action">
-              <option value="MACHINE">MACHINE (hang up / dispose)</option>
-              <option value="IVR">IVR</option>
-              <option value="SIT">CANCELLED</option>
-              <option value="ERROR">ERROR</option>
-            </select>
-
-            <label class="inline" style="margin-top:.35rem">
-              <input type="checkbox" id="amd-blank-as-machine" checked />
-              Dispose blank / silent calls as MACHINE
-            </label>
-            <p class="hint" style="margin-top:0">
-              When enabled, empty or near-silent recordings are marked MACHINE and are not passed to agents.
-            </p>
-
-            <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
-            <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">ML AMD pipeline</h3></div>
-            <p class="hint" style="margin-top:0">
-              Enable to use XGBoost (+ optional Whisper). This hides the classic Minimum HUMAN %
-              and uses the ML threshold instead — so the two never conflict.
-            </p>
-            <label class="inline">
-              <input type="checkbox" id="amd-ml-enabled" />
-              Enable ML pipeline (XGBoost + optional Whisper)
-            </label>
-
             <div id="amd-ml-options-block" class="hidden">
-              <label for="amd-ml-high">Minimum HUMAN confidence (%) — ML mode</label>
+              <label for="amd-ml-high">Minimum HUMAN confidence (%)</label>
               <input id="amd-ml-high" type="number" min="50" max="99" step="1" value="85" />
               <p class="hint" style="margin-top:0">
-                Replaces classic Minimum HUMAN confidence while ML is on.
-                HUMAN at/above this % → agent (no Whisper). Below → Whisper; still below → action above.
+                HUMAN at or above this % → agent. Below → check with Whisper (if enabled); still below → MACHINE.
               </p>
               <label class="inline">
                 <input type="checkbox" id="amd-ml-whisper" checked />
@@ -701,18 +678,34 @@
                 <input type="checkbox" id="amd-ml-save-low" checked />
                 Save low-confidence clips for agent labeling / retrain
               </label>
-              <label for="amd-ml-low">Save / review threshold (%)</label>
+              <label for="amd-ml-low">Save clips when confidence below (%)</label>
               <input id="amd-ml-low" type="number" min="50" max="99" step="1" value="85" />
+              <label for="amd-action-ml">Below this % mark as</label>
+              <select id="amd-action-ml">
+                <option value="MACHINE">MACHINE (voicemail / hang up)</option>
+                <option value="IVR">IVR</option>
+                <option value="SIT">CANCELLED</option>
+                <option value="ERROR">ERROR</option>
+              </select>
             </div>
 
-            <button type="submit">Save gate settings</button>
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
+            <label class="inline">
+              <input type="checkbox" id="amd-blank-as-machine" checked />
+              Dispose blank / silent calls as MACHINE
+            </label>
+            <p class="hint" style="margin-top:0">
+              Always applies globally (Classic and Advanced ML). Empty / silent audio is not sent to agents.
+            </p>
+
+            <button type="submit">Save settings</button>
             <p id="amd-msg" class="hint"></p>
             <p class="hint" id="amd-path"></p>
           </form>
 
-          <div style="margin-top:1.25rem;max-width:640px">
+          <div id="amd-ml-library" class="hidden" style="margin-top:1.25rem;max-width:640px">
             <div class="panel-head"><h3>ML sample library</h3></div>
-            <p class="hint" id="ml-stats">Enable the ML pipeline, then low-confidence calls appear here for labeling.</p>
+            <p class="hint" id="ml-stats">Low-confidence calls appear here for labeling when Advanced ML is on.</p>
             <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0">
               <button type="button" class="ghost" id="ml-refresh-btn">Refresh samples</button>
               <button type="button" id="ml-retrain-btn">Retrain XGBoost</button>
