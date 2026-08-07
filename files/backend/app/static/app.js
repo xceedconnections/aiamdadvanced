@@ -233,7 +233,7 @@ function teachButtons(r) {
     ["FAX", "Fax"],
   ];
   const options = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
-  return `<div class="teach-actions" title="Correct this call disposition (logged; does not force future AMD)">
+  return `<div class="teach-actions" title="Correct this call + add labeled ML sample for XGBoost retrain (does not force future phone AMD)">
     <select class="teach-select" data-teach-id="${id}" aria-label="Mark disposition">
       <option value="" selected>Mark as…</option>
       ${options}
@@ -1141,7 +1141,7 @@ async function loadMlSamples() {
     const data = await api("/api/settings/ml/samples?unlabeled_only=false&limit=40");
     const rows = data.samples || [];
     if (!rows.length) {
-      body.innerHTML = `<tr><td colspan="5" class="hint">No ML samples yet. Enable the pipeline and wait for low-confidence calls.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="hint">No ML samples yet. Mark calls in Training / Live, or wait for low-confidence ML clips.</td></tr>`;
       return;
     }
     body.innerHTML = rows
@@ -1150,6 +1150,12 @@ async function loadMlSamples() {
         const probTxt = ["HUMAN", "MACHINE", "IVR"]
           .map((k) => `${k[0]}${((probs[k] || 0) * 100).toFixed(0)}`)
           .join(" ");
+        const src =
+          s.source === "training_teach"
+            ? "train"
+            : s.extra_note
+              ? "low-conf"
+              : "sample";
         const labeled = s.label
           ? escapeHtml(s.label)
           : `<select data-ml-id="${escapeHtml(s.id)}" class="ml-label-select">
@@ -1159,7 +1165,8 @@ async function loadMlSamples() {
               <option value="IVR">IVR</option>
             </select>`;
         return `<tr>
-          <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}</td>
+          <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
+            <div class="hint">${escapeHtml(src)}</div></td>
           <td>${escapeHtml(s.predicted_status || "—")}</td>
           <td>${s.confidence != null ? (s.confidence * 100).toFixed(1) + "%" : "—"}</td>
           <td class="hint">${escapeHtml(probTxt)}</td>
@@ -1769,6 +1776,11 @@ window.quickTeach = async (id, status) => {
     }
     if ($("#page-cdr") && !$("#page-cdr").classList.contains("hidden")) loadCdr();
     if ($("#page-training") && !$("#page-training").classList.contains("hidden")) loadTraining();
+    if ($("#page-settings") && !$("#page-settings").classList.contains("hidden")) {
+      try {
+        loadMlSamples();
+      } catch (_) {}
+    }
     alert(msg);
   } catch (err) {
     alert(err.message || "Teach failed");

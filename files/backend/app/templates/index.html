@@ -479,7 +479,10 @@
           <div class="panel-head"><h3>Correct AI decisions</h3></div>
           <p class="hint">
             Search by <strong>called number</strong> or <strong>caller ID</strong>, play the recording, set the true label, and save.
-            Teaching corrects <strong>this call’s disposition</strong> and logs it for history. Every new dial is judged fresh from its recording — past teaches never force a phone status.
+            Teaching corrects <strong>this call’s disposition</strong> and logs it for history.
+            It also adds a <strong>labeled ML sample</strong> (when call features exist) so
+            <strong>Retrain XGBoost</strong> in Settings can learn from your Mark-as corrections.
+            Phone numbers are still never forced — every new dial is judged from its recording.
           </p>
           <div class="filter-bar">
             <label>
@@ -563,7 +566,8 @@
         <div class="panel">
           <div class="panel-head"><h3>What we taught the AI</h3></div>
           <p class="hint">
-            Audit log of every teach / correction. These records do not change future AMD — each call is always judged from its recording.
+            Audit log of every teach / correction. Teaches also add labeled ML samples for XGBoost retrain when call features exist.
+            They do not force future AMD by phone number — each call is judged from its recording.
             Use this page to review and fix a mistaken label on a past call.
           </p>
           <div class="filter-bar">
@@ -747,7 +751,7 @@
 
           <div id="amd-ml-library" class="hidden" style="margin-top:1.25rem;max-width:640px">
             <div class="panel-head"><h3>ML sample library</h3></div>
-            <p class="hint" id="ml-stats">Low-confidence calls appear here for labeling when Advanced ML is on.</p>
+            <p class="hint" id="ml-stats">Low-confidence calls and Training Mark-as corrections appear here for labeling / retrain.</p>
             <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0">
               <button type="button" class="ghost" id="ml-refresh-btn">Refresh samples</button>
               <button type="button" id="ml-retrain-btn">Retrain XGBoost</button>

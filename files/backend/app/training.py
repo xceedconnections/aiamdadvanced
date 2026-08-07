@@ -147,6 +147,25 @@ def upsert_override_from_call(
     db.flush()
     if override is not None:
         override.last_correction_id = correction.id
+
+    # Also feed Advanced ML retrain library (best-effort; never breaks teach)
+    ml_sample_id = None
+    try:
+        from app.ml_data import ingest_call_correction_as_ml_sample
+
+        ml_sample_id = ingest_call_correction_as_ml_sample(
+            call=call,
+            taught_status=status,
+            username=username,
+        )
+        if ml_sample_id and notes is not None:
+            # stash on correction notes for operators (optional short tag)
+            pass
+    except Exception as exc:
+        print(f"OpenAMD WARNING: ML sample ingest from training failed: {exc}")
+
+    # Attach for API callers (not a DB column)
+    setattr(correction, "ml_sample_id", ml_sample_id)
     return correction, override
 
 

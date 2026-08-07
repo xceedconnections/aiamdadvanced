@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from io import BytesIO
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, undefer
 
 from app.auth.security import get_current_user
 from app.database import get_db
@@ -53,7 +53,12 @@ def correct_call(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    call = db.query(CallAnalysis).filter(CallAnalysis.id == payload.call_analysis_id).first()
+    call = (
+        db.query(CallAnalysis)
+        .options(undefer(CallAnalysis.audio_blob))
+        .filter(CallAnalysis.id == payload.call_analysis_id)
+        .first()
+    )
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
 
@@ -74,6 +79,18 @@ def correct_call(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     db.commit()
+    ml_sid = getattr(correction, "ml_sample_id", None)
+    msg = (
+        f"Logged correction for this call → {corrected}. "
+        "Next dial is still judged fresh from its recording (not forced by phone)."
+    )
+    if ml_sid:
+        msg += (
+            f" Also saved as ML sample `{ml_sid}` for XGBoost retrain "
+            "(Settings → Retrain XGBoost when ready)."
+        )
+    else:
+        msg += " (No ML features on this call — sample not added.)"
     return {
         "ok": True,
         "id": correction.id,
@@ -82,10 +99,8 @@ def correct_call(
         "ai_status": correction.ai_status,
         "corrected_status": corrected,
         "override_active": False,
-        "message": (
-            f"Logged correction for this call → {corrected}. "
-            "Next dial of any number is judged fresh from its recording (not forced)."
-        ),
+        "ml_sample_id": ml_sid,
+        "message": msg,
     }
 
 
