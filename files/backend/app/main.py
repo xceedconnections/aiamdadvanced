@@ -212,6 +212,7 @@ def health():
 @app.get("/reports.php", response_class=HTMLResponse)
 @app.get("/training.php", response_class=HTMLResponse)
 @app.get("/training-history.php", response_class=HTMLResponse)
+@app.get("/ml-logs.php", response_class=HTMLResponse)
 @app.get("/settings.php", response_class=HTMLResponse)
 @app.get("/wipe.php", response_class=HTMLResponse)
 @app.get("/audio.php", response_class=HTMLResponse)

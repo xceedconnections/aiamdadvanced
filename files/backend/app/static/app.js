@@ -22,6 +22,7 @@ const routePages = {
   "/reports.php": "reports",
   "/training.php": "training",
   "/training-history.php": "training-history",
+  "/ml-logs.php": "ml-logs",
   "/wipe.php": "wipe",
   "/audio.php": "audio",
   "/cronjob.php": "cronjob",
@@ -138,6 +139,9 @@ function openPage(page) {
   }
   if (page === "training-history") {
     loadTrainingHistory();
+  }
+  if (page === "ml-logs") {
+    loadMlLogs();
   }
   if (page === "wipe") loadWipePage();
   if (page === "audio") loadAudioPage();
@@ -1219,6 +1223,246 @@ $("#ml-retrain-btn")?.addEventListener("click", async () => {
       msg.textContent = `Retrain OK — labeled used: ${data.n_labeled_used ?? 0}, train rows: ${data.n_train_total ?? "—"}`;
     }
     loadMlSamples();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+
+function mlSampleAudioUrl(sampleId) {
+  const token = encodeURIComponent(state.token || "");
+  return `/api/settings/ml/samples/${encodeURIComponent(sampleId)}/audio?token=${token}`;
+}
+
+function speakText(text) {
+  const t = String(text || "").trim();
+  if (!t) return;
+  if (!window.speechSynthesis) {
+    alert("Text-to-speak is not supported in this browser");
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(t);
+  u.rate = 1;
+  window.speechSynthesis.speak(u);
+}
+
+async function playMlSample(sampleId) {
+  const bar = $("#player-bar");
+  const audio = $("#player-audio");
+  const label = $("#player-label");
+  if (!audio || !bar) return;
+  try {
+    stopPlayer();
+    const url = mlSampleAudioUrl(sampleId);
+    audio.src = url;
+    if (label) label.textContent = `ML sample ${sampleId}`;
+    bar.classList.remove("hidden");
+    await audio.play();
+  } catch (err) {
+    alert(err.message || "Play failed — sample WAV may be missing");
+  }
+}
+
+async function loadMlLogs() {
+  const body = $("#ml-logs-body");
+  const statsEl = $("#ml-logs-stats");
+  const msg = $("#ml-logs-msg");
+  const dirEl = $("#ml-logs-dir");
+  if (!body) return;
+  const phone = ($("#ml-logs-phone")?.value || "").trim();
+  const filter = $("#ml-logs-filter")?.value || "all";
+  const unlabeledOnly = filter === "unlabeled";
+  const labeledOnly = filter === "labeled";
+  try {
+    const st = await api("/api/settings/ml/stats");
+    if (dirEl && st.samples_dir) dirEl.textContent = st.samples_dir;
+    if (statsEl) {
+      const m = st.model || {};
+      statsEl.textContent =
+        `Samples: ${st.samples_labeled || 0} labeled / ${st.samples_unlabeled || 0} unlabeled` +
+        ` · Whisper: ${st.whisper_installed ? "installed" : "not installed"}` +
+        ` · Model: ${m.model_exists ? "trained/ready" : "bootstrap on enable"}` +
+        (m.model_path ? ` · ${m.model_path}` : "");
+    }
+    const qs = new URLSearchParams({
+      unlabeled_only: unlabeledOnly ? "true" : "false",
+      labeled_only: labeledOnly ? "true" : "false",
+      limit: "200",
+    });
+    if (phone) qs.set("phone", phone);
+    const data = await api(`/api/settings/ml/samples?${qs}`);
+    const rows = data.samples || [];
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="7" class="hint">No ML logs yet. Enable Advanced ML, wait for uncertain HUMAN clips, or Mark-as on Training.</td></tr>`;
+      return;
+    }
+    body.innerHTML = rows
+      .map((s) => {
+        const phoneTxt = s.phone_number || s.called_number || s.ani || "—";
+        const transcript = s.whisper_transcript || "";
+        const cue = s.whisper_cue ? ` [${s.whisper_cue}]` : "";
+        const src =
+          s.source === "training_teach"
+            ? "teach"
+            : s.whisper_used
+              ? "whisper"
+              : "low-conf";
+        const labeled = s.label
+          ? `<strong>${escapeHtml(s.label)}</strong>`
+          : `<select data-ml-log-id="${escapeHtml(s.id)}" class="ml-log-label">
+              <option value="">— label —</option>
+              <option value="HUMAN">HUMAN</option>
+              <option value="MACHINE">MACHINE</option>
+              <option value="IVR">IVR</option>
+            </select>`;
+        const playBtn = s.has_audio
+          ? `<button type="button" class="ghost btn-icon ml-log-play" data-id="${escapeHtml(s.id)}" title="Play WAV">▶</button>`
+          : `<span class="hint">no wav</span>`;
+        const speakBtn = transcript
+          ? `<button type="button" class="ghost btn-icon ml-log-speak" data-text="${escapeHtml(transcript)}" title="Text to speak">🔊</button>`
+          : "";
+        return `<tr>
+          <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
+            <div class="hint">${escapeHtml(src)} · ${escapeHtml(s.id || "")}</div></td>
+          <td><strong>${escapeHtml(phoneTxt)}</strong>
+            ${s.caller_id ? `<div class="hint">from ${escapeHtml(s.caller_id)}</div>` : ""}</td>
+          <td>${escapeHtml(s.predicted_status || "—")}</td>
+          <td>${s.confidence != null ? (Number(s.confidence) * 100).toFixed(1) + "%" : "—"}</td>
+          <td class="hint" style="max-width:220px;white-space:normal">
+            ${transcript ? escapeHtml(transcript) + escapeHtml(cue) : s.whisper_used ? "(empty transcript)" : "—"}
+          </td>
+          <td>${labeled}</td>
+          <td style="white-space:nowrap">
+            ${playBtn}${speakBtn}
+            <button type="button" class="ghost btn-icon ml-log-del" data-id="${escapeHtml(s.id)}" title="Delete log">⌫</button>
+          </td>
+        </tr>`;
+      })
+      .join("");
+
+    $$(".ml-log-label").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        const id = sel.getAttribute("data-ml-log-id");
+        const label = sel.value;
+        if (!id || !label) return;
+        try {
+          await api(`/api/settings/ml/samples/${encodeURIComponent(id)}/label`, {
+            method: "POST",
+            json: { label },
+          });
+          if (msg) {
+            msg.className = "ok";
+            msg.textContent = `Labeled ${id} as ${label}`;
+          }
+          loadMlLogs();
+        } catch (err) {
+          if (msg) {
+            msg.className = "error";
+            msg.textContent = err.message;
+          }
+        }
+      });
+    });
+    $$(".ml-log-play").forEach((btn) => {
+      btn.addEventListener("click", () => playMlSample(btn.getAttribute("data-id")));
+    });
+    $$(".ml-log-speak").forEach((btn) => {
+      btn.addEventListener("click", () => speakText(btn.getAttribute("data-text")));
+    });
+    $$(".ml-log-del").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        if (!id || !confirm(`Delete ML log ${id}?`)) return;
+        try {
+          await api(`/api/settings/ml/samples/${encodeURIComponent(id)}`, { method: "DELETE" });
+          loadMlLogs();
+        } catch (err) {
+          if (msg) {
+            msg.className = "error";
+            msg.textContent = err.message;
+          }
+        }
+      });
+    });
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+}
+
+$("#ml-logs-refresh")?.addEventListener("click", () => loadMlLogs());
+$("#ml-logs-phone")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    loadMlLogs();
+  }
+});
+$("#ml-logs-filter")?.addEventListener("change", () => loadMlLogs());
+$("#ml-logs-retrain")?.addEventListener("click", async () => {
+  const msg = $("#ml-logs-msg");
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Retraining XGBoost from labeled logs…";
+  }
+  try {
+    const data = await api("/api/settings/ml/retrain", { method: "POST", json: {} });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Retrain OK — labeled used: ${data.n_labeled_used ?? 0}`;
+    }
+    loadMlLogs();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+$("#ml-logs-reset-model")?.addEventListener("click", async () => {
+  const msg = $("#ml-logs-msg");
+  if (!confirm("Reset XGBoost to a fresh bootstrap model? Sample logs are kept.")) return;
+  try {
+    await api("/api/settings/ml/reset-model", { method: "POST", json: {} });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "Model reset to fresh bootstrap.";
+    }
+    loadMlLogs();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+$("#ml-logs-wipe")?.addEventListener("click", async () => {
+  const msg = $("#ml-logs-msg");
+  const typed = prompt(
+    'This deletes ALL ML sample logs (JSON+WAV) and rebuilds a fresh XGBoost.\nType WIPE to confirm:'
+  );
+  if (String(typed || "").trim().toUpperCase() !== "WIPE") {
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = "Wipe cancelled.";
+    }
+    return;
+  }
+  try {
+    const data = await api("/api/settings/ml/wipe", {
+      method: "POST",
+      json: { confirm: "WIPE", reset_model: true },
+    });
+    const s = data.samples || {};
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Wiped ${s.deleted_json || 0} JSON / ${s.deleted_wav || 0} WAV — fresh XGBoost ready.`;
+    }
+    loadMlLogs();
   } catch (err) {
     if (msg) {
       msg.className = "error";

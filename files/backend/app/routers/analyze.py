@@ -36,12 +36,26 @@ async def analyze(
     if len(raw) < 100:
         raise HTTPException(status_code=400, detail="Audio file too small / empty")
 
+    called_number = (called or "").strip()
+    caller_id = (caller or "").strip()
+    ani_value = (ani or called_number or "").strip()
+
+    call_meta = {
+        "callid": callid,
+        "called_number": called_number,
+        "caller_id": caller_id,
+        "ani": ani_value,
+        "phone_number": called_number or ani_value,
+        "campaign": campaign or "",
+    }
+
     effective = resolve_effective_amd_settings(server)
     result = analyze_audio(
         raw,
         locale_pack_enabled=False,
         locale_pack="usa",
         amd_settings=effective,
+        call_meta=call_meta,
     )
 
     # Classic gate only when ML is off for this effective config
@@ -52,10 +66,6 @@ async def analyze(
         result.confidence,
         effective=effective,
     )
-
-    called_number = (called or "").strip()
-    caller_id = (caller or "").strip()
-    ani_value = (ani or called_number or "").strip()
 
     # Always judge from this recording (engine + confidence gate).
     # Training corrections are audit/history only — they never force future AMD.
@@ -86,6 +96,9 @@ async def analyze(
             "min_human_confidence_percent": effective.get("min_human_confidence_percent"),
         },
         "training_override": False,
+        "called_number": called_number,
+        "caller_id": caller_id,
+        "ani": ani_value,
     }
 
     row = CallAnalysis(
@@ -110,6 +123,25 @@ async def analyze(
     server.last_seen = datetime.utcnow()
     db.commit()
     db.refresh(row)
+
+    # Attach DB id + phones onto the ML sample log (if one was saved this call)
+    ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+    sample_id = ml_block.get("ml_sample_id")
+    if sample_id:
+        try:
+            from app.ml_data import attach_call_to_sample
+
+            attach_call_to_sample(
+                sample_id,
+                call_analysis_id=row.id,
+                vicidial_call_id=callid,
+                called_number=called_number,
+                caller_id=caller_id,
+                ani=ani_value,
+                phone_number=called_number or ani_value,
+            )
+        except Exception:
+            pass
 
     if path:
         linked = link_analysis_recording(row.id, path)

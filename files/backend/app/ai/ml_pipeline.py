@@ -30,6 +30,7 @@ def run_ml_pipeline(
     hybrid_status: str,
     hybrid_confidence: float,
     cfg: Optional[Dict[str, Any]] = None,
+    call_meta: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, float, Dict[str, Any]]:
     """
     Returns (status, confidence, ml_details).
@@ -46,6 +47,7 @@ def run_ml_pipeline(
     whisper_on = bool(cfg.get("ml_whisper_enabled", True))
     save_low = bool(cfg.get("ml_save_low_confidence", True))
     low_thr = float(cfg.get("ml_low_confidence_threshold", 0.85))
+    call_meta = call_meta or {}
 
     details: Dict[str, Any] = {
         "ml_pipeline": True,
@@ -137,6 +139,7 @@ def run_ml_pipeline(
             confidence=conf,
             probs=probs,
             details=details,
+            call_meta=call_meta,
         )
         return action, float(conf), details
 
@@ -151,6 +154,7 @@ def run_ml_pipeline(
         confidence=conf,
         probs=probs,
         details=details,
+        call_meta=call_meta,
     )
     return status, float(conf), details
 
@@ -166,6 +170,7 @@ def _maybe_save_sample(
     confidence: float,
     probs: Dict[str, float],
     details: Dict[str, Any],
+    call_meta: Optional[Dict[str, Any]] = None,
 ) -> None:
     if not should:
         return
@@ -181,6 +186,7 @@ def _maybe_save_sample(
             confidence=confidence,
             class_probs=probs,
             extra=details,
+            call_meta=call_meta,
         )
         details["ml_sample_id"] = sample_id
     except Exception as exc:

@@ -36,6 +36,7 @@ def save_low_confidence_sample(
     confidence: float,
     class_probs: Dict[str, float],
     extra: Optional[Dict[str, Any]] = None,
+    call_meta: Optional[Dict[str, Any]] = None,
     max_seconds: float = 5.0,
 ) -> str:
     """Persist first max_seconds of audio + feature JSON. Returns sample id."""
@@ -51,13 +52,16 @@ def save_low_confidence_sample(
 
         sf.write(str(wav_path), clip, sr, subtype="PCM_16")
     except Exception:
-        # Fallback: raw float32 dump is useless for agents — skip audio, keep meta
         wav_path = Path("")
 
+    extra = extra or {}
+    call_meta = call_meta or {}
+    whisper = extra.get("whisper") if isinstance(extra.get("whisper"), dict) else {}
     feat_vec = vectorize(feats, silero).tolist()
     meta = {
         "id": sid,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "source": "ml_low_conf",
         "predicted_status": predicted_status,
         "confidence": round(float(confidence), 4),
         "class_probs": {k: round(float(v), 4) for k, v in class_probs.items()},
@@ -84,13 +88,60 @@ def save_low_confidence_sample(
             "mean_prob": silero.get("mean_prob"),
         },
         "audio_path": str(wav_path) if wav_path else "",
-        "extra_note": (extra or {}).get("ml_note", ""),
+        "extra_note": extra.get("ml_note", ""),
+        "whisper_transcript": (whisper.get("transcript") or "")[:500],
+        "whisper_cue": whisper.get("cue") or "",
+        "whisper_used": bool(extra.get("whisper_used")),
+        "called_number": str(call_meta.get("called_number") or call_meta.get("called") or ""),
+        "caller_id": str(call_meta.get("caller_id") or call_meta.get("caller") or ""),
+        "ani": str(call_meta.get("ani") or ""),
+        "vicidial_call_id": str(call_meta.get("callid") or call_meta.get("vicidial_call_id") or ""),
+        "call_analysis_id": call_meta.get("call_analysis_id"),
+        "phone_number": str(
+            call_meta.get("phone_number")
+            or call_meta.get("called_number")
+            or call_meta.get("called")
+            or call_meta.get("ani")
+            or ""
+        ),
     }
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return sid
 
 
-def list_samples(*, unlabeled_only: bool = False, limit: int = 100) -> List[Dict[str, Any]]:
+def attach_call_to_sample(sample_id: str, **fields: Any) -> bool:
+    """Update an existing sample with call_analysis_id / phones after DB insert."""
+    path = samples_dir() / f"{sample_id}.json"
+    if not path.exists():
+        return False
+    try:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    for k, v in fields.items():
+        if v is None or v == "":
+            continue
+        meta[k] = v
+    if fields.get("called_number") or fields.get("ani"):
+        meta["phone_number"] = str(
+            fields.get("phone_number")
+            or fields.get("called_number")
+            or fields.get("ani")
+            or meta.get("phone_number")
+            or ""
+        )
+    path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def list_samples(
+    *,
+    unlabeled_only: bool = False,
+    labeled_only: bool = False,
+    limit: int = 100,
+    phone: str = "",
+) -> List[Dict[str, Any]]:
+    phone_q = "".join(ch for ch in str(phone or "") if ch.isdigit())
     rows: List[Dict[str, Any]] = []
     for path in sorted(samples_dir().glob("*.json"), reverse=True):
         try:
@@ -99,6 +150,22 @@ def list_samples(*, unlabeled_only: bool = False, limit: int = 100) -> List[Dict
             continue
         if unlabeled_only and meta.get("label"):
             continue
+        if labeled_only and not meta.get("label"):
+            continue
+        if phone_q:
+            hay = "".join(
+                ch
+                for ch in str(
+                    meta.get("phone_number")
+                    or meta.get("called_number")
+                    or meta.get("ani")
+                    or meta.get("caller_id")
+                    or ""
+                )
+                if ch.isdigit()
+            )
+            if phone_q not in hay:
+                continue
         rows.append(
             {
                 "id": meta.get("id"),
@@ -107,15 +174,122 @@ def list_samples(*, unlabeled_only: bool = False, limit: int = 100) -> List[Dict
                 "confidence": meta.get("confidence"),
                 "class_probs": meta.get("class_probs"),
                 "label": meta.get("label"),
+                "labeled_by": meta.get("labeled_by"),
                 "audio_path": meta.get("audio_path"),
+                "has_audio": bool(
+                    (meta.get("audio_path") and Path(str(meta.get("audio_path"))).is_file())
+                    or (samples_dir() / f"{meta.get('id')}.wav").is_file()
+                ),
                 "extra_note": meta.get("extra_note"),
                 "source": meta.get("source") or "ml_low_conf",
                 "call_analysis_id": meta.get("call_analysis_id"),
+                "vicidial_call_id": meta.get("vicidial_call_id") or "",
+                "phone_number": meta.get("phone_number")
+                or meta.get("called_number")
+                or meta.get("ani")
+                or "",
+                "called_number": meta.get("called_number") or "",
+                "caller_id": meta.get("caller_id") or "",
+                "ani": meta.get("ani") or "",
+                "whisper_transcript": meta.get("whisper_transcript") or "",
+                "whisper_cue": meta.get("whisper_cue") or "",
+                "whisper_used": bool(meta.get("whisper_used")),
             }
         )
         if len(rows) >= limit:
             break
     return rows
+
+
+def get_sample(sample_id: str) -> Optional[Dict[str, Any]]:
+    path = samples_dir() / f"{sample_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def sample_audio_path(sample_id: str) -> Optional[Path]:
+    meta = get_sample(sample_id)
+    if not meta:
+        return None
+    p = Path(str(meta.get("audio_path") or ""))
+    if p.is_file():
+        return p
+    fallback = samples_dir() / f"{sample_id}.wav"
+    return fallback if fallback.is_file() else None
+
+
+def delete_sample(sample_id: str) -> bool:
+    meta_path = samples_dir() / f"{sample_id}.json"
+    wav_path = samples_dir() / f"{sample_id}.wav"
+    ok = False
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            ap = Path(str(meta.get("audio_path") or ""))
+            if ap.is_file() and ap != wav_path:
+                ap.unlink(missing_ok=True)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        meta_path.unlink(missing_ok=True)  # type: ignore[call-arg]
+        ok = True
+    if wav_path.exists():
+        wav_path.unlink(missing_ok=True)  # type: ignore[call-arg]
+        ok = True
+    return ok
+
+
+def wipe_all_samples() -> Dict[str, int]:
+    n_json = 0
+    n_wav = 0
+    for path in list(samples_dir().glob("*.json")):
+        try:
+            path.unlink()
+            n_json += 1
+        except OSError:
+            pass
+    for path in list(samples_dir().glob("*.wav")):
+        try:
+            path.unlink()
+            n_wav += 1
+        except OSError:
+            pass
+    return {"deleted_json": n_json, "deleted_wav": n_wav}
+
+
+def reset_xgb_model(*, bootstrap: bool = True) -> Dict[str, Any]:
+    """Delete saved XGBoost model; optionally rebuild synthetic bootstrap."""
+    from app.ai.xgb_model import ensure_model, meta_path, model_path
+
+    removed = []
+    for p in (model_path(), meta_path()):
+        if p.exists():
+            p.unlink()
+            removed.append(str(p))
+    # Clear in-memory booster
+    try:
+        import app.ai.xgb_model as xm
+
+        with xm._lock:
+            xm._booster = None
+            xm._loaded_path = None
+    except Exception:
+        pass
+    out: Dict[str, Any] = {"removed": removed, "bootstrapped": False}
+    if bootstrap:
+        ensure_model()
+        out["bootstrapped"] = True
+    return out
+
+
+def wipe_ml_training(*, reset_model: bool = True) -> Dict[str, Any]:
+    """Delete all ML sample logs and optionally reset XGBoost to fresh bootstrap."""
+    samples = wipe_all_samples()
+    model = reset_xgb_model(bootstrap=True) if reset_model else {"removed": [], "bootstrapped": False}
+    return {"samples": samples, "model": model}
 
 
 def _map_train_label(label: str) -> str:
@@ -224,6 +398,15 @@ def ingest_call_correction_as_ml_sample(
         audio_saved = ""
 
     feat_vec = vectorize(feats, silero).tolist()
+    whisper = details.get("whisper") if isinstance(details.get("whisper"), dict) else {}
+    ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+    if not whisper and isinstance(ml_block.get("whisper"), dict):
+        whisper = ml_block["whisper"]
+    phone = (
+        str(getattr(call, "called_number", "") or "")
+        or str(getattr(call, "ani", "") or "")
+        or str(details.get("called_number") or details.get("ani") or "")
+    )
     meta = {
         "id": sid,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -252,6 +435,17 @@ def ingest_call_correction_as_ml_sample(
         "silero": silero,
         "audio_path": audio_saved,
         "extra_note": "from_training_correction",
+        "whisper_transcript": (whisper.get("transcript") or details.get("whisper_transcript") or "")[:500],
+        "whisper_cue": whisper.get("cue") or "",
+        "whisper_used": bool(
+            ml_block.get("whisper_used")
+            or details.get("whisper_used")
+            or whisper.get("transcript")
+        ),
+        "called_number": str(getattr(call, "called_number", "") or details.get("called_number") or ""),
+        "caller_id": str(getattr(call, "caller_id", "") or details.get("caller_id") or ""),
+        "ani": str(getattr(call, "ani", "") or details.get("ani") or ""),
+        "phone_number": phone,
     }
     # Preserve first-created timestamp if updating same call teach
     if meta_path.exists():
@@ -259,6 +453,11 @@ def ingest_call_correction_as_ml_sample(
             old = json.loads(meta_path.read_text(encoding="utf-8"))
             if old.get("created_at"):
                 meta["created_at"] = old["created_at"]
+            # Keep prior whisper text if teach overwrite has none
+            if not meta.get("whisper_transcript") and old.get("whisper_transcript"):
+                meta["whisper_transcript"] = old["whisper_transcript"]
+                meta["whisper_cue"] = old.get("whisper_cue") or meta.get("whisper_cue")
+                meta["whisper_used"] = old.get("whisper_used") or meta.get("whisper_used")
         except (OSError, json.JSONDecodeError):
             pass
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")

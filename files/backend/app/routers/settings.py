@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.amd_settings import load_amd_settings, save_amd_settings
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, get_current_user_bearer_or_query
 from app.models.user import User
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -22,6 +23,11 @@ class AmdSettingsUpdate(BaseModel):
 
 class MlLabelBody(BaseModel):
     label: str = Field(..., max_length=16)
+
+
+class MlWipeBody(BaseModel):
+    reset_model: bool = True
+    confirm: str = Field("", max_length=32)
 
 
 def _require_admin(user: User):
@@ -79,14 +85,55 @@ def get_ml_stats(user: User = Depends(get_current_user)):
 
 @router.get("/ml/samples")
 def get_ml_samples(
-    unlabeled_only: bool = True,
-    limit: int = 50,
+    unlabeled_only: bool = False,
+    labeled_only: bool = False,
+    limit: int = 100,
+    phone: str = "",
     user: User = Depends(get_current_user),
 ):
     _require_admin(user)
     from app.ml_data import list_samples
 
-    return {"samples": list_samples(unlabeled_only=unlabeled_only, limit=max(1, min(limit, 200)))}
+    return {
+        "samples": list_samples(
+            unlabeled_only=unlabeled_only,
+            labeled_only=labeled_only,
+            limit=max(1, min(limit, 500)),
+            phone=phone,
+        )
+    }
+
+
+@router.get("/ml/samples/{sample_id}")
+def get_ml_sample_detail(sample_id: str, user: User = Depends(get_current_user)):
+    _require_admin(user)
+    from app.ml_data import get_sample
+
+    meta = get_sample(sample_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="sample not found")
+    out = {k: v for k, v in meta.items() if k != "feature_vector"}
+    out["feature_vector_len"] = len(meta.get("feature_vector") or [])
+    return out
+
+
+@router.get("/ml/samples/{sample_id}/audio")
+def get_ml_sample_audio(
+    sample_id: str,
+    user: User = Depends(get_current_user_bearer_or_query),
+):
+    _require_admin(user)
+    from app.ml_data import sample_audio_path
+
+    path = sample_audio_path(sample_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="sample audio not found")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"{sample_id}.wav",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/ml/samples/{sample_id}/label")
@@ -106,6 +153,16 @@ def post_ml_label(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.delete("/ml/samples/{sample_id}")
+def delete_ml_sample(sample_id: str, user: User = Depends(get_current_user)):
+    _require_admin(user)
+    from app.ml_data import delete_sample
+
+    if not delete_sample(sample_id):
+        raise HTTPException(status_code=404, detail="sample not found")
+    return {"ok": True, "deleted": sample_id}
+
+
 @router.post("/ml/retrain")
 def post_ml_retrain(user: User = Depends(get_current_user)):
     _require_admin(user)
@@ -115,3 +172,29 @@ def post_ml_retrain(user: User = Depends(get_current_user)):
         return retrain_model()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"retrain failed: {exc}") from exc
+
+
+@router.post("/ml/wipe")
+def post_ml_wipe(body: MlWipeBody, user: User = Depends(get_current_user)):
+    """Delete all ML sample logs and optionally reset XGBoost to a fresh bootstrap model."""
+    _require_admin(user)
+    if str(body.confirm or "").strip().upper() != "WIPE":
+        raise HTTPException(
+            status_code=400,
+            detail='Type confirm: "WIPE" to delete all ML training logs',
+        )
+    from app.ml_data import wipe_ml_training
+
+    result = wipe_ml_training(reset_model=bool(body.reset_model))
+    result["ok"] = True
+    result["wiped_by"] = user.username
+    return result
+
+
+@router.post("/ml/reset-model")
+def post_ml_reset_model(user: User = Depends(get_current_user)):
+    """Reset XGBoost only (keep sample logs)."""
+    _require_admin(user)
+    from app.ml_data import reset_xgb_model
+
+    return reset_xgb_model(bootstrap=True)

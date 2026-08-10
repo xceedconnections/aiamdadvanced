@@ -494,6 +494,7 @@ def analyze_audio(
     locale_pack_enabled: bool = False,
     locale_pack: str = "usa",
     amd_settings: Optional[Dict[str, Any]] = None,
+    call_meta: Optional[Dict[str, Any]] = None,
 ) -> AnalysisResult:
     t0 = time.perf_counter()
 
@@ -601,6 +602,7 @@ def analyze_audio(
                 hybrid_status=status,
                 hybrid_confidence=confidence,
                 cfg=amd_settings,
+                call_meta=call_meta,
             )
             status, confidence = ml_status, ml_conf
             details["ml_pipeline_enabled"] = True
