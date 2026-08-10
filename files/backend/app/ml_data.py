@@ -333,13 +333,16 @@ def ingest_call_correction_as_ml_sample(
     call: Any,
     taught_status: str,
     username: str = "",
+    phone_number: str = "",
     max_seconds: float = 5.0,
+    run_whisper: bool = True,
 ) -> Optional[str]:
     """
     Turn a Training Mark-as correction into a labeled XGBoost sample.
 
     Uses features_json from the call (and optional audio clip). Safe to call
     even when ML pipeline is off — samples wait until Retrain XGBoost.
+    When audio is available, also runs Whisper WAV→text for the Training Logs page.
     Returns sample id or None if features are missing.
     """
     details: Dict[str, Any] = {}
@@ -372,6 +375,8 @@ def ingest_call_correction_as_ml_sample(
 
     # Optional audio clip (best-effort)
     audio_saved = ""
+    audio_arr = None
+    audio_sr = 8000
     try:
         import soundfile as sf
 
@@ -394,6 +399,8 @@ def ingest_call_correction_as_ml_sample(
             clip = np.asarray(audio[:n], dtype=np.float32)
             sf.write(str(wav_path), clip, int(sr) or 8000, subtype="PCM_16")
             audio_saved = str(wav_path)
+            audio_arr = clip
+            audio_sr = int(sr) or 8000
     except Exception:
         audio_saved = ""
 
@@ -402,10 +409,35 @@ def ingest_call_correction_as_ml_sample(
     ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
     if not whisper and isinstance(ml_block.get("whisper"), dict):
         whisper = ml_block["whisper"]
+
+    transcript = (whisper.get("transcript") or details.get("whisper_transcript") or "")[:500]
+    cue = whisper.get("cue") or ""
+    whisper_used = bool(
+        ml_block.get("whisper_used")
+        or details.get("whisper_used")
+        or transcript
+    )
+
+    # Teach samples rarely have live Whisper — run WAV→text when we have audio
+    if run_whisper and audio_arr is not None and not transcript:
+        try:
+            from app.ai.whisper_amd import transcribe_audio, whisper_available
+
+            if whisper_available():
+                w = transcribe_audio(audio_arr, audio_sr, max_seconds=max_seconds)
+                if w.get("whisper_ok"):
+                    transcript = (w.get("transcript") or "")[:500]
+                    cue = w.get("cue") or cue
+                    whisper_used = True
+        except Exception:
+            pass
+
     phone = (
-        str(getattr(call, "called_number", "") or "")
-        or str(getattr(call, "ani", "") or "")
-        or str(details.get("called_number") or details.get("ani") or "")
+        str(phone_number or "").strip()
+        or str(getattr(call, "called_number", "") or "").strip()
+        or str(getattr(call, "ani", "") or "").strip()
+        or str(getattr(call, "caller_id", "") or "").strip()
+        or str(details.get("called_number") or details.get("ani") or details.get("caller_id") or "")
     )
     meta = {
         "id": sid,
@@ -435,14 +467,10 @@ def ingest_call_correction_as_ml_sample(
         "silero": silero,
         "audio_path": audio_saved,
         "extra_note": "from_training_correction",
-        "whisper_transcript": (whisper.get("transcript") or details.get("whisper_transcript") or "")[:500],
-        "whisper_cue": whisper.get("cue") or "",
-        "whisper_used": bool(
-            ml_block.get("whisper_used")
-            or details.get("whisper_used")
-            or whisper.get("transcript")
-        ),
-        "called_number": str(getattr(call, "called_number", "") or details.get("called_number") or ""),
+        "whisper_transcript": transcript,
+        "whisper_cue": cue,
+        "whisper_used": whisper_used,
+        "called_number": str(getattr(call, "called_number", "") or details.get("called_number") or phone or ""),
         "caller_id": str(getattr(call, "caller_id", "") or details.get("caller_id") or ""),
         "ani": str(getattr(call, "ani", "") or details.get("ani") or ""),
         "phone_number": phone,
@@ -458,10 +486,196 @@ def ingest_call_correction_as_ml_sample(
                 meta["whisper_transcript"] = old["whisper_transcript"]
                 meta["whisper_cue"] = old.get("whisper_cue") or meta.get("whisper_cue")
                 meta["whisper_used"] = old.get("whisper_used") or meta.get("whisper_used")
+            if not meta.get("phone_number") and old.get("phone_number"):
+                meta["phone_number"] = old["phone_number"]
         except (OSError, json.JSONDecodeError):
             pass
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return sid
+
+
+def ensure_sample_audio_from_call(sample_id: str, db: Any, *, max_seconds: float = 5.0) -> bool:
+    """If sample has no WAV, copy clip from linked call_analyses recording."""
+    meta = get_sample(sample_id)
+    if not meta:
+        return False
+    if sample_audio_path(sample_id):
+        return True
+    cid = meta.get("call_analysis_id")
+    if not cid:
+        return False
+    try:
+        from app.models.call import CallAnalysis
+        from app.recordings import resolve_recording_path
+
+        row = db.query(CallAnalysis).filter(CallAnalysis.id == int(cid)).first()
+        if not row:
+            return False
+        import soundfile as sf
+
+        audio = None
+        sr = 8000
+        blob = getattr(row, "audio_blob", None)
+        if blob:
+            import io
+
+            audio, sr = sf.read(io.BytesIO(blob), dtype="float32", always_2d=False)
+        else:
+            path = resolve_recording_path(row)
+            if path and path.is_file():
+                audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+        if audio is None or len(audio) == 0:
+            return False
+        if getattr(audio, "ndim", 1) > 1:
+            audio = np.mean(audio, axis=1)
+        n = int(min(len(audio), max(1, int(sr * max_seconds))))
+        clip = np.asarray(audio[:n], dtype=np.float32)
+        wav_path = samples_dir() / f"{sample_id}.wav"
+        sf.write(str(wav_path), clip, int(sr) or 8000, subtype="PCM_16")
+        meta["audio_path"] = str(wav_path)
+        (samples_dir() / f"{sample_id}.json").write_text(
+            json.dumps(meta, indent=2) + "\n", encoding="utf-8"
+        )
+        return True
+    except Exception:
+        return False
+
+
+def transcribe_sample(sample_id: str, *, force: bool = False, db: Any = None) -> Dict[str, Any]:
+    """Run Whisper WAV→text on an existing sample and update its JSON log."""
+    meta = get_sample(sample_id)
+    if not meta:
+        raise FileNotFoundError(f"sample not found: {sample_id}")
+
+    if meta.get("whisper_transcript") and not force:
+        return {
+            "id": sample_id,
+            "ok": True,
+            "skipped": True,
+            "whisper_transcript": meta.get("whisper_transcript"),
+            "whisper_cue": meta.get("whisper_cue") or "",
+        }
+
+    path = sample_audio_path(sample_id)
+    if not path and db is not None:
+        if ensure_sample_audio_from_call(sample_id, db):
+            path = sample_audio_path(sample_id)
+    if not path:
+        raise FileNotFoundError(
+            f"sample audio not found: {sample_id} (no WAV — Mark-as may have had no recording)"
+        )
+
+    from app.ai.whisper_amd import transcribe_audio, whisper_available
+
+    if not whisper_available():
+        raise RuntimeError(
+            "faster-whisper not installed — run: pip install faster-whisper"
+        )
+
+    import soundfile as sf
+
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if getattr(audio, "ndim", 1) > 1:
+        audio = np.mean(audio, axis=1)
+
+    w = transcribe_audio(audio, int(sr) or 8000, max_seconds=5.0)
+    if not w.get("whisper_ok"):
+        raise RuntimeError(w.get("error") or "whisper failed")
+
+    meta = get_sample(sample_id) or meta
+    meta["whisper_transcript"] = (w.get("transcript") or "")[:500]
+    meta["whisper_cue"] = w.get("cue") or ""
+    meta["whisper_used"] = True
+    meta["whisper_transcribed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    meta_path = samples_dir() / f"{sample_id}.json"
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return {
+        "id": sample_id,
+        "ok": True,
+        "skipped": False,
+        "whisper_transcript": meta["whisper_transcript"],
+        "whisper_cue": meta["whisper_cue"],
+    }
+
+
+def transcribe_missing_samples(*, limit: int = 50, force: bool = False, db: Any = None) -> Dict[str, Any]:
+    """Backfill Whisper text for samples that have WAV but no transcript."""
+    done = []
+    errors = []
+    skipped = 0
+    for s in list_samples(limit=limit):
+        sid = s.get("id")
+        if not sid:
+            continue
+        if s.get("whisper_transcript") and not force:
+            skipped += 1
+            continue
+        if not s.get("has_audio") and db is not None:
+            ensure_sample_audio_from_call(sid, db)
+            s["has_audio"] = bool(sample_audio_path(sid))
+        if not s.get("has_audio") and not sample_audio_path(sid):
+            skipped += 1
+            continue
+        try:
+            done.append(transcribe_sample(sid, force=force, db=db))
+        except Exception as exc:
+            errors.append({"id": sid, "error": str(exc)})
+    return {
+        "ok": True,
+        "transcribed": len(done),
+        "skipped": skipped,
+        "errors": errors,
+        "results": done,
+    }
+
+
+def enrich_sample_phones_from_db(db: Any, *, limit: int = 200) -> Dict[str, Any]:
+    """Fill empty phone_number on samples from call_analyses / training corrections."""
+    from app.models.call import CallAnalysis
+    from app.models.correction import TrainingCorrection
+
+    updated = 0
+    for s in list_samples(limit=limit):
+        if s.get("phone_number") or s.get("called_number") or s.get("ani"):
+            continue
+        sid = s.get("id")
+        if not sid:
+            continue
+        meta = get_sample(sid)
+        if not meta:
+            continue
+        phone = ""
+        cid = meta.get("call_analysis_id")
+        if cid:
+            row = db.query(CallAnalysis).filter(CallAnalysis.id == int(cid)).first()
+            if row:
+                phone = (
+                    (row.called_number or "").strip()
+                    or (row.ani or "").strip()
+                    or (row.caller_id or "").strip()
+                )
+                if phone:
+                    meta["called_number"] = row.called_number or meta.get("called_number") or ""
+                    meta["caller_id"] = row.caller_id or meta.get("caller_id") or ""
+                    meta["ani"] = row.ani or meta.get("ani") or ""
+                if not phone:
+                    corr = (
+                        db.query(TrainingCorrection)
+                        .filter(TrainingCorrection.call_id == int(cid))
+                        .order_by(TrainingCorrection.id.desc())
+                        .first()
+                    )
+                    if corr and corr.phone_number:
+                        phone = corr.phone_number
+        if not phone:
+            continue
+        meta["phone_number"] = phone
+        if not meta.get("called_number"):
+            meta["called_number"] = phone
+        path = samples_dir() / f"{sid}.json"
+        path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        updated += 1
+    return {"ok": True, "updated": updated}
 
 
 def label_sample(sample_id: str, label: str, *, username: str = "") -> Dict[str, Any]:

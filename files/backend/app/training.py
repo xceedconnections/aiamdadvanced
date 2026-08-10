@@ -157,6 +157,7 @@ def upsert_override_from_call(
             call=call,
             taught_status=status,
             username=username,
+            phone_number=phone,
         )
         if ml_sample_id and notes is not None:
             # stash on correction notes for operators (optional short tag)

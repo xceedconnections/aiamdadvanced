@@ -1324,6 +1324,17 @@ async function loadMlLogs() {
         const speakBtn = transcript
           ? `<button type="button" class="ghost btn-icon ml-log-speak" data-text="${escapeHtml(transcript)}" title="Text to speak">🔊</button>`
           : "";
+        const whisperBtn =
+          s.has_audio && !transcript
+            ? `<button type="button" class="ghost btn-icon ml-log-whisper" data-id="${escapeHtml(s.id)}" title="WAV → text (Whisper)">📝</button>`
+            : s.has_audio && transcript
+              ? `<button type="button" class="ghost btn-icon ml-log-whisper" data-id="${escapeHtml(s.id)}" title="Re-run Whisper">📝</button>`
+              : "";
+        const textCell = transcript
+          ? escapeHtml(transcript) + escapeHtml(cue)
+          : s.has_audio
+            ? `<span class="hint">no text yet — click 📝 or Fill Whisper text</span>`
+            : `<span class="hint">no WAV (cannot transcribe)</span>`;
         return `<tr>
           <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
             <div class="hint">${escapeHtml(src)} · ${escapeHtml(s.id || "")}</div></td>
@@ -1331,12 +1342,10 @@ async function loadMlLogs() {
             ${s.caller_id ? `<div class="hint">from ${escapeHtml(s.caller_id)}</div>` : ""}</td>
           <td>${escapeHtml(s.predicted_status || "—")}</td>
           <td>${s.confidence != null ? (Number(s.confidence) * 100).toFixed(1) + "%" : "—"}</td>
-          <td class="hint" style="max-width:220px;white-space:normal">
-            ${transcript ? escapeHtml(transcript) + escapeHtml(cue) : s.whisper_used ? "(empty transcript)" : "—"}
-          </td>
+          <td class="hint" style="max-width:240px;white-space:normal">${textCell}</td>
           <td>${labeled}</td>
           <td style="white-space:nowrap">
-            ${playBtn}${speakBtn}
+            ${playBtn}${whisperBtn}${speakBtn}
             <button type="button" class="ghost btn-icon ml-log-del" data-id="${escapeHtml(s.id)}" title="Delete log">⌫</button>
           </td>
         </tr>`;
@@ -1372,6 +1381,36 @@ async function loadMlLogs() {
     $$(".ml-log-speak").forEach((btn) => {
       btn.addEventListener("click", () => speakText(btn.getAttribute("data-text")));
     });
+    $$(".ml-log-whisper").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        if (!id) return;
+        btn.disabled = true;
+        if (msg) {
+          msg.className = "hint";
+          msg.textContent = `Running Whisper on ${id}…`;
+        }
+        try {
+          const data = await api(
+            `/api/settings/ml/samples/${encodeURIComponent(id)}/transcribe`,
+            { method: "POST", json: {} }
+          );
+          if (msg) {
+            msg.className = "ok";
+            msg.textContent = data.whisper_transcript
+              ? `WAV→text: “${data.whisper_transcript}”`
+              : `Whisper ran but heard no speech on ${id}`;
+          }
+          loadMlLogs();
+        } catch (err) {
+          if (msg) {
+            msg.className = "error";
+            msg.textContent = err.message;
+          }
+          btn.disabled = false;
+        }
+      });
+    });
     $$(".ml-log-del").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
@@ -1396,6 +1435,37 @@ async function loadMlLogs() {
 }
 
 $("#ml-logs-refresh")?.addEventListener("click", () => loadMlLogs());
+$("#ml-logs-transcribe")?.addEventListener("click", async () => {
+  const msg = $("#ml-logs-msg");
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Filling Whisper text on samples with WAV… (may take a minute)";
+  }
+  try {
+    const data = await api("/api/settings/ml/transcribe-missing", {
+      method: "POST",
+      json: {},
+    });
+    if (msg) {
+      msg.className = "ok";
+      const errN = (data.errors || []).length;
+      msg.textContent =
+        `Whisper filled ${data.transcribed || 0} log(s)` +
+        (data.phones_updated ? `, phones updated ${data.phones_updated}` : "") +
+        (data.skipped ? `, skipped ${data.skipped}` : "") +
+        (errN ? `, errors ${errN}` : "");
+      if (errN && data.errors[0]) {
+        msg.textContent += ` — e.g. ${data.errors[0].id}: ${data.errors[0].error}`;
+      }
+    }
+    loadMlLogs();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
 $("#ml-logs-phone")?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();

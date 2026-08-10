@@ -123,3 +123,68 @@ def refine_with_whisper(
 
     # No strong cue — leave XGB decision
     return None, 0.0, {**details, "cue": "none"}
+
+
+def transcribe_audio(
+    audio,  # np.ndarray float32 mono
+    sr: int,
+    *,
+    max_seconds: float = 5.0,
+) -> Dict[str, Any]:
+    """WAV→text only (no AMD status refine). Used for Training Logs display."""
+    model = _get_model()
+    if model is None:
+        return {
+            "whisper_ok": False,
+            "transcript": "",
+            "error": _model_error or "not_installed",
+        }
+
+    import numpy as np
+
+    if audio is None or len(audio) == 0:
+        return {"whisper_ok": False, "transcript": "", "error": "empty_audio"}
+
+    clip = np.asarray(audio, dtype=np.float32)
+    n = int(min(len(clip), max(1, int(sr * max_seconds))))
+    clip = clip[:n]
+    if sr != 16000 and len(clip) > 1:
+        duration = len(clip) / float(sr)
+        new_len = max(1, int(duration * 16000))
+        x_old = np.linspace(0, 1, num=len(clip), endpoint=False)
+        x_new = np.linspace(0, 1, num=new_len, endpoint=False)
+        clip = np.interp(x_new, x_old, clip).astype(np.float32)
+
+    try:
+        segments, info = model.transcribe(
+            clip,
+            language="en",
+            beam_size=1,
+            vad_filter=False,
+            without_timestamps=True,
+        )
+        text_parts = []
+        for seg in segments:
+            if seg.text:
+                text_parts.append(seg.text.strip())
+        text = " ".join(text_parts).strip()
+    except Exception as exc:
+        return {"whisper_ok": False, "transcript": "", "error": str(exc)}
+
+    cue = ""
+    if text:
+        if _IVR_RE.search(text):
+            cue = "ivr"
+        elif _MACHINE_RE.search(text):
+            cue = "voicemail"
+        elif _HUMAN_RE.search(text) and len(text.split()) <= 6:
+            cue = "human_short"
+        else:
+            cue = "none"
+
+    return {
+        "whisper_ok": True,
+        "transcript": text[:500],
+        "cue": cue,
+        "language": getattr(info, "language", "") or "",
+    }

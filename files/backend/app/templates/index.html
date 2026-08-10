@@ -626,7 +626,8 @@
             If XGBoost says <strong>HUMAN</strong> but confidence is below your threshold,
             <strong>Whisper</strong> (speech→text) runs on that clip only — that is
             “XGBoost + Whisper on uncertain HUMAN”. MACHINE/IVR skip Whisper.
-            Mark-as on Training / Live labels that call and adds a sample here for retrain.
+            <strong>Training Mark-as</strong> rows also get Whisper WAV→text when audio exists
+            (or click <em>Fill Whisper text</em> / the 📝 button for older logs).
             Numbers are never forced — each dial is judged from its recording.
           </p>
           <p class="hint" id="ml-logs-stats">Loading…</p>
@@ -645,6 +646,7 @@
               </select>
             </label>
             <button type="button" class="ghost" id="ml-logs-refresh">Refresh</button>
+            <button type="button" class="ghost" id="ml-logs-transcribe" title="Run Whisper on logs that have WAV but no text">Fill Whisper text</button>
             <button type="button" id="ml-logs-retrain">Retrain XGBoost</button>
           </div>
           <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0 1rem">

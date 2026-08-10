@@ -163,6 +163,44 @@ def delete_ml_sample(sample_id: str, user: User = Depends(get_current_user)):
     return {"ok": True, "deleted": sample_id}
 
 
+@router.post("/ml/samples/{sample_id}/transcribe")
+def post_ml_transcribe(sample_id: str, user: User = Depends(get_current_user)):
+    """Run Whisper WAV→text on one sample log (fills the Training Logs column)."""
+    _require_admin(user)
+    from app.database import SessionLocal
+    from app.ml_data import enrich_sample_phones_from_db, transcribe_sample
+
+    db = SessionLocal()
+    try:
+        enrich_sample_phones_from_db(db, limit=500)
+        return transcribe_sample(sample_id, force=True, db=db)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"transcribe failed: {exc}") from exc
+    finally:
+        db.close()
+
+
+@router.post("/ml/transcribe-missing")
+def post_ml_transcribe_missing(user: User = Depends(get_current_user)):
+    """Backfill Whisper text for all samples that have WAV but empty transcript."""
+    _require_admin(user)
+    from app.database import SessionLocal
+    from app.ml_data import enrich_sample_phones_from_db, transcribe_missing_samples
+
+    db = SessionLocal()
+    try:
+        phones = enrich_sample_phones_from_db(db, limit=500)
+        result = transcribe_missing_samples(limit=100, force=False, db=db)
+        result["phones_updated"] = phones.get("updated", 0)
+        return result
+    finally:
+        db.close()
+
+
 @router.post("/ml/retrain")
 def post_ml_retrain(user: User = Depends(get_current_user)):
     _require_admin(user)
