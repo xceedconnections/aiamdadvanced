@@ -92,6 +92,26 @@
         </div>
         <div class="topbar-meta">
           <span class="pill" id="health-pill">SYSTEM ONLINE</span>
+          <label class="inline" style="gap:.35rem;margin:0" title="Display timezone for clock, Live, CDR (does not change server OS time)">
+            <span class="hint" style="white-space:nowrap">TZ</span>
+            <select id="display-timezone" style="max-width:11rem;font-size:.8rem">
+              <option value="UTC">UTC</option>
+              <option value="America/New_York">America/New_York</option>
+              <option value="America/Chicago">America/Chicago</option>
+              <option value="America/Denver">America/Denver</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+              <option value="America/Toronto">America/Toronto</option>
+              <option value="America/Vancouver">America/Vancouver</option>
+              <option value="Europe/London">Europe/London</option>
+              <option value="Europe/Paris">Europe/Paris</option>
+              <option value="Asia/Karachi">Asia/Karachi</option>
+              <option value="Asia/Dubai">Asia/Dubai</option>
+              <option value="Asia/Kolkata">Asia/Kolkata</option>
+              <option value="Asia/Singapore">Asia/Singapore</option>
+              <option value="Australia/Sydney">Australia/Sydney</option>
+              <option value="Pacific/Auckland">Pacific/Auckland</option>
+            </select>
+          </label>
           <span id="clock"></span>
         </div>
       </header>
@@ -169,6 +189,21 @@
           </div>
           <div class="filter-bar">
             <label>
+              Show last
+              <select id="live-window">
+                <option value="4">4 seconds</option>
+                <option value="10">10 seconds</option>
+                <option value="30" selected>30 seconds</option>
+                <option value="60">1 minute</option>
+                <option value="120">2 minutes</option>
+                <option value="300">5 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600">1 hour</option>
+                <option value="">All recent (no time limit)</option>
+              </select>
+            </label>
+            <label>
               VICIdial
               <select id="live-server-filter">
                 <option value="">ALL</option>
@@ -188,6 +223,7 @@
             </label>
             <button class="ghost" type="button" id="live-filter-apply">Apply</button>
           </div>
+          <p class="hint" id="live-window-hint">Showing calls from the selected time window. Times use your Display TZ.</p>
           <div class="table-wrap calls-table">
             <table>
               <thead>
@@ -224,6 +260,37 @@
           </div>
           <div class="filter-bar">
             <label>
+              Mode
+              <select id="cdr-mode">
+                <option value="recent" selected>Last N minutes</option>
+                <option value="dates">Date range</option>
+                <option value="all">All CDR</option>
+              </select>
+            </label>
+            <label id="cdr-recent-wrap">
+              Show last
+              <select id="cdr-window">
+                <option value="300">5 minutes</option>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600" selected>1 hour</option>
+                <option value="10800">3 hours</option>
+                <option value="21600">6 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400">24 hours</option>
+                <option value="259200">3 days</option>
+                <option value="604800">7 days</option>
+              </select>
+            </label>
+            <label id="cdr-date-from-wrap" class="hidden">
+              From
+              <input id="cdr-date-from" type="date" />
+            </label>
+            <label id="cdr-date-to-wrap" class="hidden">
+              To
+              <input id="cdr-date-to" type="date" />
+            </label>
+            <label>
               Search
               <input id="cdr-search" type="search" maxlength="64" placeholder="Called number or caller ID" />
             </label>
@@ -247,7 +314,7 @@
             </label>
             <button class="ghost" type="button" id="cdr-search-btn">Apply</button>
           </div>
-          <p class="hint">Export uses the same search / VICIdial / type filters (up to 20,000 rows).</p>
+          <p class="hint">Export uses the same filters (up to 20,000 rows). Times use your Display TZ. Whisper 📝 appears when speech-to-text ran on uncertain HUMAN.</p>
           <div class="table-wrap calls-table">
             <table>
               <thead>
@@ -577,12 +644,18 @@
               <input id="thist-phone" type="search" maxlength="32" placeholder="Filter by number" />
             </label>
             <button class="ghost" type="button" id="thist-refresh">Refresh</button>
+            <button class="ghost" type="button" id="thist-delete-selected">Delete selected</button>
+            <button type="button" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff" id="thist-delete-all">
+              Delete all history
+            </button>
           </div>
           <p class="hint" id="thist-meta"></p>
+          <p id="thist-msg" class="hint"></p>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th><input type="checkbox" id="thist-check-all" title="Select all" /></th>
                   <th>When</th>
                   <th>Phone</th>
                   <th>AI said</th>
@@ -591,6 +664,7 @@
                   <th>Action</th>
                   <th>By</th>
                   <th>Notes</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="thist-body"></tbody>
@@ -850,6 +924,15 @@
               <button type="submit">Update password</button>
               <p id="password-msg" class="hint"></p>
             </form>
+            <div class="panel-head" style="margin-top:1rem"><h3>Display timezone</h3></div>
+            <p class="hint">
+              Changes how the top clock, Live Calls, and CDR show times. Does <strong>not</strong> change the server OS clock.
+              Same control as the TZ dropdown in the top bar.
+            </p>
+            <label for="settings-display-timezone">Timezone</label>
+            <select id="settings-display-timezone" style="max-width:280px"></select>
+            <button type="button" class="ghost" id="settings-tz-save" style="margin-top:.5rem">Save timezone</button>
+            <p id="settings-tz-msg" class="hint"></p>
             <div class="panel-head" style="margin-top:1rem"><h3>Recordings link repair</h3></div>
             <p class="hint">If Play shows missing audio, repair scans <code>/opt/openamd/recordings</code> and relinks WAV files to Call IDs.</p>
             <button type="button" class="ghost" id="repair-recordings-btn">Repair recording links</button>

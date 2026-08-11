@@ -30,6 +30,10 @@ class MlWipeBody(BaseModel):
     confirm: str = Field("", max_length=32)
 
 
+class DisplayTimezoneBody(BaseModel):
+    display_timezone: str = Field("UTC", max_length=64)
+
+
 def _require_admin(user: User):
     if user.role not in ("superadmin", "admin"):
         raise HTTPException(status_code=403, detail="Admin role required")
@@ -39,6 +43,31 @@ def _require_admin(user: User):
 def get_amd_settings(user: User = Depends(get_current_user)):
     _require_admin(user)
     return load_amd_settings()
+
+
+@router.get("/display")
+def get_display_settings(user: User = Depends(get_current_user)):
+    """Portal display prefs (timezone). Does not change OS/server clock."""
+    cfg = load_amd_settings()
+    return {
+        "display_timezone": cfg.get("display_timezone") or "UTC",
+    }
+
+
+@router.put("/display")
+def put_display_settings(
+    payload: DisplayTimezoneBody,
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    from app.amd_settings import save_display_timezone
+
+    try:
+        saved = save_display_timezone(payload.display_timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    saved["updated_by"] = user.username
+    return saved
 
 
 @router.put("/amd")

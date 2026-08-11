@@ -160,6 +160,10 @@ class CallOut(BaseModel):
     recording_filename: Optional[str] = None
     recording_bytes: int = 0
     audio_path: str = ""
+    whisper_used: bool = False
+    whisper_transcript: str = ""
+    whisper_cue: str = ""
+    ml_note: str = ""
 
     class Config:
         from_attributes = True

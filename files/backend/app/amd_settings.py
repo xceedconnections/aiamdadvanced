@@ -24,6 +24,8 @@ DEFAULTS = {
     "ml_xgb_high_confidence": 0.85,
     "ml_low_confidence_threshold": 0.85,
     "ml_save_low_confidence": True,
+    # Portal display only — does not change OS/server clock
+    "display_timezone": "UTC",
 }
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
@@ -64,10 +66,33 @@ def load_amd_settings() -> dict[str, Any]:
                             data[key] = max(0.5, min(0.99, float(raw[key])))
                         except (TypeError, ValueError):
                             pass
+                tz = str(raw.get("display_timezone") or "").strip()
+                if tz:
+                    data["display_timezone"] = tz[:64]
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
     data["path"] = str(path)
     return data
+
+
+def save_display_timezone(timezone: str) -> dict[str, Any]:
+    """Persist portal display timezone only (does not change OS clock)."""
+    tz = str(timezone or "UTC").strip() or "UTC"
+    if len(tz) > 64:
+        raise ValueError("timezone too long")
+    path = settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prev: dict[str, Any] = {}
+    if path.exists():
+        try:
+            prev = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(prev, dict):
+                prev = {}
+        except (OSError, json.JSONDecodeError):
+            prev = {}
+    prev["display_timezone"] = tz
+    path.write_text(json.dumps(prev, indent=2) + "\n", encoding="utf-8")
+    return {"display_timezone": tz, "path": str(path)}
 
 
 def save_amd_settings(

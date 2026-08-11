@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 from io import BytesIO, StringIO
 from typing import Optional
@@ -49,7 +50,39 @@ def _sanitize_search(q: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def _ml_fields_from_features(raw: Optional[str]) -> dict:
+    """Extract Whisper / ML display fields from call features_json."""
+    out = {
+        "whisper_used": False,
+        "whisper_transcript": "",
+        "whisper_cue": "",
+        "ml_note": "",
+    }
+    if not raw:
+        return out
+    try:
+        details = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except (TypeError, json.JSONDecodeError):
+        return out
+    if not isinstance(details, dict):
+        return out
+    ml = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+    whisper = ml.get("whisper") if isinstance(ml.get("whisper"), dict) else {}
+    if not whisper and isinstance(details.get("whisper"), dict):
+        whisper = details["whisper"]
+    used = bool(ml.get("whisper_used") or details.get("whisper_used") or whisper.get("transcript"))
+    transcript = str(whisper.get("transcript") or details.get("whisper_transcript") or "")[:240]
+    cue = str(whisper.get("cue") or "")
+    note = str(ml.get("ml_note") or details.get("ml_note") or "")
+    out["whisper_used"] = used
+    out["whisper_transcript"] = transcript
+    out["whisper_cue"] = cue
+    out["ml_note"] = note
+    return out
+
+
 def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
+    ml = _ml_fields_from_features(getattr(r, "features_json", None))
     return CallOut(
         id=r.id,
         server_id=r.server_id,
@@ -69,6 +102,10 @@ def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
         recording_filename=meta["recording_filename"],
         recording_bytes=meta["recording_bytes"],
         audio_path=meta.get("audio_path") or (r.audio_path or ""),
+        whisper_used=ml["whisper_used"],
+        whisper_transcript=ml["whisper_transcript"],
+        whisper_cue=ml["whisper_cue"],
+        ml_note=ml["ml_note"],
     )
 
 
@@ -99,6 +136,9 @@ def _filtered_query(
     server_id: Optional[int] = None,
     status: Optional[str] = None,
     q: Optional[str] = None,
+    within_seconds: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ):
     query = db.query(CallAnalysis).order_by(CallAnalysis.id.desc())
     if server_id is not None and int(server_id) > 0:
@@ -117,6 +157,22 @@ def _filtered_query(
                 CallAnalysis.call_id.ilike(like),
             )
         )
+    if within_seconds is not None and int(within_seconds) > 0:
+        since = datetime.utcnow() - timedelta(seconds=int(within_seconds))
+        query = query.filter(CallAnalysis.created_at >= since)
+    else:
+        if date_from:
+            try:
+                start = datetime.strptime(date_from.strip()[:10], "%Y-%m-%d")
+                query = query.filter(CallAnalysis.created_at >= start)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Invalid date_from (YYYY-MM-DD)") from exc
+        if date_to:
+            try:
+                end = datetime.strptime(date_to.strip()[:10], "%Y-%m-%d") + timedelta(days=1)
+                query = query.filter(CallAnalysis.created_at < end)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Invalid date_to (YYYY-MM-DD)") from exc
     return query
 
 
@@ -135,10 +191,13 @@ def _export_headers() -> list[str]:
         "confidence",
         "processing_ms",
         "audio_seconds",
+        "whisper_used",
+        "whisper_transcript",
     ]
 
 
 def _export_row(r: CallAnalysis, server_map: dict) -> list[str]:
+    ml = _ml_fields_from_features(getattr(r, "features_json", None))
     return [
         str(r.id),
         r.call_id or "",
@@ -153,6 +212,8 @@ def _export_row(r: CallAnalysis, server_map: dict) -> list[str]:
         f"{float(r.confidence or 0):.4f}",
         str(r.processing_ms or 0),
         f"{float(r.audio_seconds or 0):.3f}",
+        "1" if ml["whisper_used"] else "0",
+        ml["whisper_transcript"],
     ]
 
 
@@ -164,7 +225,6 @@ def _build_csv(rows: list[CallAnalysis], server_map: dict) -> bytes:
     writer.writerow(_export_headers())
     for r in rows:
         writer.writerow(_export_row(r, server_map))
-    # UTF-8 BOM so Excel opens numbers/phones correctly
     return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
@@ -198,10 +258,19 @@ def live_calls(
     server_id: Optional[int] = None,
     status: Optional[str] = Query(None, max_length=16),
     q: Optional[str] = Query(None, max_length=64),
+    within_seconds: Optional[int] = Query(
+        None, ge=1, le=86400, description="Only calls from the last N seconds"
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    rows = _filtered_query(db, server_id=server_id, status=status, q=q).limit(limit).all()
+    rows = _filtered_query(
+        db,
+        server_id=server_id,
+        status=status,
+        q=q,
+        within_seconds=within_seconds,
+    ).limit(limit).all()
     return _call_out_list(db, rows, repair=False)
 
 
@@ -212,10 +281,23 @@ def cdr_calls(
     server_id: Optional[int] = None,
     status: Optional[str] = Query(None, max_length=16),
     q: Optional[str] = Query(None, max_length=64, description="Search called number or caller ID"),
+    within_seconds: Optional[int] = Query(
+        None, ge=1, le=604800, description="Only calls from the last N seconds"
+    ),
+    date_from: Optional[str] = Query(None, max_length=10, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, max_length=10, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    base = _filtered_query(db, server_id=server_id, status=status, q=q)
+    base = _filtered_query(
+        db,
+        server_id=server_id,
+        status=status,
+        q=q,
+        within_seconds=within_seconds,
+        date_from=date_from,
+        date_to=date_to,
+    )
     total = base.count()
     offset = (page - 1) * page_size
     rows = base.offset(offset).limit(page_size).all()
@@ -233,11 +315,22 @@ def cdr_export(
     server_id: Optional[int] = None,
     status: Optional[str] = Query(None, max_length=16),
     q: Optional[str] = Query(None, max_length=64),
+    within_seconds: Optional[int] = Query(None, ge=1, le=604800),
+    date_from: Optional[str] = Query(None, max_length=10),
+    date_to: Optional[str] = Query(None, max_length=10),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """Export filtered CDR as CSV or Excel (.xls SpreadsheetML)."""
-    base = _filtered_query(db, server_id=server_id, status=status, q=q)
+    base = _filtered_query(
+        db,
+        server_id=server_id,
+        status=status,
+        q=q,
+        within_seconds=within_seconds,
+        date_from=date_from,
+        date_to=date_to,
+    )
     rows = base.limit(_EXPORT_MAX_ROWS).all()
     server_map = {s.id: s.name for s in db.query(VicidialServer).all()}
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")

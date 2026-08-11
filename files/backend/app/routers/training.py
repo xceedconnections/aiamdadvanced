@@ -38,6 +38,10 @@ class TeachByPhone(BaseModel):
     notes: str = ""
 
 
+class BulkDeleteHistory(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
 class WipeTrainingRequest(BaseModel):
     confirm: str = Field(..., max_length=32)
 
@@ -162,10 +166,13 @@ def training_history(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     phone: Optional[str] = Query(None, max_length=32),
+    active_only: bool = True,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     q = db.query(TrainingCorrection)
+    if active_only:
+        q = q.filter(TrainingCorrection.is_active == True)  # noqa: E712
     if phone:
         key = normalize_phone(phone)
         if key:
@@ -268,6 +275,42 @@ def delete_history_item(
             ov.updated_at = datetime.utcnow()
     db.commit()
     return {"ok": True}
+
+
+@router.post("/history/delete")
+def bulk_delete_history(
+    payload: BulkDeleteHistory,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Soft-delete selected training history rows (checkbox delete)."""
+    _require_admin(user)
+    ids = [int(i) for i in (payload.ids or []) if int(i) > 0]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No history ids selected")
+    deleted = 0
+    for cid in ids[:500]:
+        row = db.query(TrainingCorrection).filter(TrainingCorrection.id == cid).first()
+        if not row:
+            continue
+        phone = row.phone_number or ""
+        row.is_active = False
+        row.action = "revert"
+        note = row.notes or ""
+        if "[deleted from history]" not in note:
+            row.notes = note + " [deleted from history]"
+        if phone:
+            ov = (
+                db.query(TrainingOverride)
+                .filter(TrainingOverride.phone_number == phone)
+                .first()
+            )
+            if ov and ov.last_correction_id == row.id:
+                ov.is_active = False
+                ov.updated_at = datetime.utcnow()
+        deleted += 1
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @router.get("/backup")

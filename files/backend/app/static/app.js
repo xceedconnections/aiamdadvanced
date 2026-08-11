@@ -1,6 +1,7 @@
 const state = {
   token: localStorage.getItem("openamd_token") || "",
   username: localStorage.getItem("openamd_user") || "",
+  displayTimezone: localStorage.getItem("openamd_tz") || "UTC",
   liveTimer: null,
   audioObjectUrl: null,
   cdrPage: 1,
@@ -62,8 +63,10 @@ function showApp(show) {
     // Relink any on-disk WAVs to call rows (by call id)
     api("/api/recordings/repair", { method: "POST" }).catch(() => {});
     loadHealth();
-    openPage(routePages[window.location.pathname] || "dashboard");
-    startLiveTimer();
+    loadDisplayTimezone().finally(() => {
+      openPage(routePages[window.location.pathname] || "dashboard");
+      startLiveTimer();
+    });
   } else {
     stopLiveTimer();
     stopPlayer();
@@ -132,6 +135,7 @@ function openPage(page) {
     state.cdrPage = 1;
     const sizeSel = $("#cdr-page-size");
     if (sizeSel) state.cdrPageSize = Number(sizeSel.value) || 50;
+    syncCdrModeUi();
     fillServerFilters().finally(() => loadCdr());
   }
   if (page === "training") {
@@ -149,6 +153,7 @@ function openPage(page) {
   if (page === "settings") {
     loadHealth();
     loadAmdSettings();
+    syncTimezoneSelects();
   }
   if (page === "dashboard") loadDashboard();
 }
@@ -253,7 +258,7 @@ function dashLiveRowHtml(r) {
     <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id)}</td>
     <td>${escapeHtml(r.caller_id || "—")}</td>
     <td>${dur}</td>
-    <td>${statusBadge(r.status)}</td>
+    <td>${statusBadge(r.status)}${whisperBadge(r)}</td>
     <td><span class="${confClass(r.confidence)}">${confPct}%</span></td>
     <td>${actionChip(r.status)}</td>
     <td>${waveformHtml(r.status)}</td>
@@ -265,7 +270,81 @@ function dashLiveRowHtml(r) {
 function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return "—";
+  const tz = state.displayTimezone || "UTC";
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .format(d)
+      .replace(",", "");
+  } catch (e) {
+    return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  }
+}
+
+function getDisplayTimezone() {
+  return state.displayTimezone || "UTC";
+}
+
+async function loadDisplayTimezone() {
+  try {
+    const data = await api("/api/settings/display");
+    const tz = (data.display_timezone || "UTC").trim() || "UTC";
+    state.displayTimezone = tz;
+    localStorage.setItem("openamd_tz", tz);
+  } catch (e) {
+    /* keep local */
+  }
+  syncTimezoneSelects();
+  tickClock();
+}
+
+function syncTimezoneSelects() {
+  const tz = getDisplayTimezone();
+  const top = $("#display-timezone");
+  const settings = $("#settings-display-timezone");
+  if (top) {
+    ensureTimezoneOption(top, tz);
+    top.value = tz;
+  }
+  if (settings) {
+    if (!settings.options.length && top) {
+      settings.innerHTML = top.innerHTML;
+    }
+    ensureTimezoneOption(settings, tz);
+    settings.value = tz;
+  }
+}
+
+function ensureTimezoneOption(sel, tz) {
+  if (!sel || !tz) return;
+  const exists = Array.from(sel.options).some((o) => o.value === tz);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = tz;
+    opt.textContent = tz;
+    sel.appendChild(opt);
+  }
+}
+
+async function saveDisplayTimezone(tz) {
+  const value = String(tz || "UTC").trim() || "UTC";
+  state.displayTimezone = value;
+  localStorage.setItem("openamd_tz", value);
+  syncTimezoneSelects();
+  tickClock();
+  await api("/api/settings/display", {
+    method: "PUT",
+    json: { display_timezone: value },
+  });
 }
 
 function pct(n, total) {
@@ -306,6 +385,22 @@ function gatedNote(r) {
   return "";
 }
 
+function whisperBadge(r) {
+  if (!r || !r.whisper_used) return "";
+  const text = (r.whisper_transcript || "").trim();
+  const cue = r.whisper_cue ? ` [${r.whisper_cue}]` : "";
+  const tip = text
+    ? `Whisper: ${text}${cue}`
+    : `Whisper used${cue || ""}`;
+  const speak = text
+    ? ` <button type="button" class="ghost btn-icon whisper-speak" data-text="${escapeHtml(text)}" title="Text to speak">🔊</button>`
+    : "";
+  return `<div class="whisper-badge" title="${escapeHtml(tip)}" style="margin-top:.2rem">
+    <span class="hint">📝 Whisper</span>${speak}
+    ${text ? `<div class="hint" style="max-width:160px;white-space:normal">${escapeHtml(text)}</div>` : ""}
+  </div>`;
+}
+
 function callRowHtml(r) {
   return `<tr>
     <td class="audio-cell">${audioButtons(r)}</td>
@@ -315,7 +410,7 @@ function callRowHtml(r) {
     <td>${escapeHtml(r.called_number || "—")}</td>
     <td>${escapeHtml(r.caller_id || "—")}</td>
     <td>${escapeHtml(r.campaign || "—")}</td>
-    <td>${statusBadge(r.status)}${gatedNote(r)}</td>
+    <td>${statusBadge(r.status)}${gatedNote(r)}${whisperBadge(r)}</td>
     <td>${(r.confidence * 100).toFixed(1)}%</td>
     <td>${r.processing_ms}</td>
     <td>${teachButtons(r)}</td>
@@ -328,6 +423,7 @@ function callCardHtml(r) {
       ${statusBadge(r.status)}
       <span class="hint">${fmtTime(r.created_at)}</span>
     </div>
+    ${whisperBadge(r)}
     <div class="call-card-grid">
       <div><div class="k">Call ID</div><div class="v">${escapeHtml(r.call_id)}</div></div>
       <div><div class="k">Server</div><div class="v">${escapeHtml(r.server_name || "—")}</div></div>
@@ -742,8 +838,10 @@ function liveQueryParams(limit = 100) {
   params.set("limit", String(limit));
   const serverId = $("#live-server-filter")?.value || "";
   const status = $("#live-status-filter")?.value || "";
+  const within = $("#live-window")?.value || "";
   if (serverId) params.set("server_id", serverId);
   if (status) params.set("status", status);
+  if (within) params.set("within_seconds", within);
   return params.toString();
 }
 
@@ -754,10 +852,27 @@ function cdrQueryParams() {
   const serverId = $("#cdr-server-filter")?.value || "";
   const status = $("#cdr-status-filter")?.value || "";
   const q = ($("#cdr-search")?.value || "").trim();
+  const mode = $("#cdr-mode")?.value || "recent";
   if (serverId) params.set("server_id", serverId);
   if (status) params.set("status", status);
   if (q) params.set("q", q);
+  if (mode === "recent") {
+    const within = $("#cdr-window")?.value || "";
+    if (within) params.set("within_seconds", within);
+  } else if (mode === "dates") {
+    const from = $("#cdr-date-from")?.value || "";
+    const to = $("#cdr-date-to")?.value || "";
+    if (from) params.set("date_from", from);
+    if (to) params.set("date_to", to);
+  }
   return params.toString();
+}
+
+function syncCdrModeUi() {
+  const mode = $("#cdr-mode")?.value || "recent";
+  $("#cdr-recent-wrap")?.classList.toggle("hidden", mode !== "recent");
+  $("#cdr-date-from-wrap")?.classList.toggle("hidden", mode !== "dates");
+  $("#cdr-date-to-wrap")?.classList.toggle("hidden", mode !== "dates");
 }
 
 async function fillServerFilters() {
@@ -913,7 +1028,25 @@ function resetCdrToFirstPage() {
 $("#live-filter-apply")?.addEventListener("click", () => loadLive());
 $("#live-server-filter")?.addEventListener("change", () => loadLive());
 $("#live-status-filter")?.addEventListener("change", () => loadLive());
+$("#live-window")?.addEventListener("change", () => loadLive());
 $("#cdr-refresh")?.addEventListener("click", () => loadCdr());
+$("#cdr-mode")?.addEventListener("change", () => {
+  syncCdrModeUi();
+  state.cdrPage = 1;
+  loadCdr();
+});
+$("#cdr-window")?.addEventListener("change", () => {
+  state.cdrPage = 1;
+  loadCdr();
+});
+$("#cdr-date-from")?.addEventListener("change", () => {
+  state.cdrPage = 1;
+  loadCdr();
+});
+$("#cdr-date-to")?.addEventListener("change", () => {
+  state.cdrPage = 1;
+  loadCdr();
+});
 $("#cdr-search-btn")?.addEventListener("click", () => resetCdrToFirstPage());
 $("#cdr-server-filter")?.addEventListener("change", () => resetCdrToFirstPage());
 $("#cdr-status-filter")?.addEventListener("change", () => resetCdrToFirstPage());
@@ -2116,8 +2249,9 @@ document.addEventListener("change", (e) => {
 
 async function loadTrainingHistory() {
   const phone = ($("#thist-phone")?.value || "").trim();
-  const params = new URLSearchParams({ limit: "150" });
+  const params = new URLSearchParams({ limit: "150", active_only: "true" });
   if (phone) params.set("phone", phone);
+  const msg = $("#thist-msg");
   try {
     const [hist, ovs, stats] = await Promise.all([
       api(`/api/training/history?${params}`),
@@ -2126,11 +2260,13 @@ async function loadTrainingHistory() {
     ]);
     if ($("#thist-meta")) {
       $("#thist-meta").textContent =
-        `${hist.total || 0} history rows (corrections do not force future AMD)`;
+        `${hist.total || 0} history rows (corrections do not force future AMD)` +
+        (stats ? ` · active teaches tracked in ML when labeled` : "");
     }
     $("#thist-body").innerHTML = (hist.items || [])
       .map(
         (r) => `<tr>
+        <td><input type="checkbox" class="thist-check" value="${r.id}" /></td>
         <td>${fmtTime(r.created_at)}</td>
         <td>${escapeHtml(r.phone_number || "—")}</td>
         <td>${statusBadge(r.ai_status || "ERROR")}</td>
@@ -2139,26 +2275,128 @@ async function loadTrainingHistory() {
         <td>${escapeHtml(r.action || "teach")}</td>
         <td>${escapeHtml(r.corrected_by || "—")}</td>
         <td class="hint">${escapeHtml(r.notes || "")}</td>
+        <td><button type="button" class="ghost btn-icon thist-del-one" data-id="${r.id}" title="Delete">⌫</button></td>
       </tr>`
       )
-      .join("") || `<tr><td colspan="8" class="hint">No training history yet</td></tr>`;
+      .join("") || `<tr><td colspan="10" class="hint">No training history yet</td></tr>`;
+
+    $$(".thist-del-one").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        if (!id || !confirm("Delete this history row?")) return;
+        try {
+          await api(`/api/training/history/${id}`, { method: "DELETE" });
+          loadTrainingHistory();
+        } catch (err) {
+          if (msg) {
+            msg.className = "error";
+            msg.textContent = err.message;
+          }
+        }
+      });
+    });
 
     $("#thist-overrides").innerHTML = (ovs.items || [])
       .map(
         (o) => `<tr>
         <td>${escapeHtml(o.phone_number)}</td>
-        <td>${statusBadge(o.taught_status)}</td>
+        <td>${statusBadge(o.taught_status || "ERROR")}</td>
         <td>${o.hit_count || 0}</td>
         <td>${escapeHtml(o.taught_by || "—")}</td>
-        <td>${fmtTime(o.updated_at)}</td>
-        <td><button type="button" class="ghost" onclick="revertOverride(${o.id})">Revert</button></td>
+        <td>${fmtTime(o.updated_at || o.created_at)}</td>
+        <td><button type="button" class="ghost" data-revert-ov="${o.id}">Revert</button></td>
       </tr>`
       )
-      .join("") || `<tr><td colspan="6" class="hint">No active overrides</td></tr>`;
+      .join("") || `<tr><td colspan="6" class="hint">No legacy override rows</td></tr>`;
+
+    $$("[data-revert-ov]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-revert-ov");
+        try {
+          await api(`/api/training/overrides/${id}/revert`, { method: "POST", json: {} });
+          loadTrainingHistory();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+    });
+    if ($("#thist-check-all")) $("#thist-check-all").checked = false;
   } catch (err) {
-    if ($("#thist-meta")) $("#thist-meta").textContent = err.message;
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
   }
 }
+
+$("#thist-check-all")?.addEventListener("change", () => {
+  const on = !!$("#thist-check-all")?.checked;
+  $$(".thist-check").forEach((c) => {
+    c.checked = on;
+  });
+});
+
+$("#thist-delete-selected")?.addEventListener("click", async () => {
+  const msg = $("#thist-msg");
+  const ids = $$(".thist-check")
+    .filter((c) => c.checked)
+    .map((c) => Number(c.value))
+    .filter((n) => n > 0);
+  if (!ids.length) {
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = "Select one or more rows first.";
+    }
+    return;
+  }
+  if (!confirm(`Delete ${ids.length} selected history row(s)?`)) return;
+  try {
+    const data = await api("/api/training/history/delete", {
+      method: "POST",
+      json: { ids },
+    });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Deleted ${data.deleted || ids.length} row(s).`;
+    }
+    loadTrainingHistory();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+
+$("#thist-delete-all")?.addEventListener("click", async () => {
+  const msg = $("#thist-msg");
+  const typed = prompt(
+    'Delete ALL training history? Type WIPE TRAINING to confirm:'
+  );
+  if (String(typed || "").trim().toUpperCase() !== "WIPE TRAINING") {
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = "Delete all cancelled.";
+    }
+    return;
+  }
+  try {
+    await api("/api/training/wipe", {
+      method: "POST",
+      json: { confirm: "WIPE TRAINING" },
+    });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "All training history wiped.";
+    }
+    loadTrainingHistory();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
 
 window.revertOverride = async (id) => {
   if (!confirm("Mark this legacy override inactive? (AMD already judges every call from audio.)")) return;
@@ -2413,10 +2651,71 @@ $("#audio-form").addEventListener("submit", async (e) => {
 function tickClock() {
   const el = $("#clock");
   if (!el) return;
+  const tz = getDisplayTimezone();
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  el.textContent = `Server Time ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  let stamp;
+  try {
+    stamp = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .format(d)
+      .replace(",", "");
+  } catch (e) {
+    const pad = (n) => String(n).padStart(2, "0");
+    stamp = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  }
+  el.textContent = `${stamp} (${tz})`;
 }
+
+$("#display-timezone")?.addEventListener("change", async () => {
+  const tz = $("#display-timezone").value || "UTC";
+  try {
+    await saveDisplayTimezone(tz);
+    // Refresh visible tables so times re-render
+    if ($("#page-live") && !$("#page-live").classList.contains("hidden")) loadLive(true);
+    if ($("#page-cdr") && !$("#page-cdr").classList.contains("hidden")) loadCdr();
+    if ($("#page-training-history") && !$("#page-training-history").classList.contains("hidden")) {
+      loadTrainingHistory();
+    }
+    if ($("#page-dashboard") && !$("#page-dashboard").classList.contains("hidden")) {
+      refreshDashboardLive();
+    }
+  } catch (err) {
+    alert(err.message || "Failed to save timezone");
+  }
+});
+
+$("#settings-tz-save")?.addEventListener("click", async () => {
+  const msg = $("#settings-tz-msg");
+  const tz = $("#settings-display-timezone")?.value || "UTC";
+  try {
+    await saveDisplayTimezone(tz);
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Display timezone saved: ${tz}`;
+    }
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+
+document.addEventListener("click", (e) => {
+  const speakBtn = e.target.closest(".whisper-speak");
+  if (speakBtn) {
+    e.preventDefault();
+    speakText(speakBtn.getAttribute("data-text"));
+  }
+});
 
 async function refreshDashboardLive() {
   try {
