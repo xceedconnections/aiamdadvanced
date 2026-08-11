@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from typing import Optional
 from xml.sax.saxutils import escape as xml_escape
@@ -27,6 +27,15 @@ router = APIRouter(prefix="/api", tags=["reports"])
 
 _ALLOWED_STATUS = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR", "ALL"}
 _EXPORT_MAX_ROWS = 20000
+
+
+def _utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Mark naive DB timestamps as UTC so JSON clients convert TZ correctly."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _normalize_status(status: Optional[str]) -> Optional[str]:
@@ -96,7 +105,7 @@ def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
         confidence=r.confidence,
         processing_ms=r.processing_ms,
         audio_seconds=r.audio_seconds,
-        created_at=r.created_at,
+        created_at=_utc_aware(r.created_at),
         server_name=server_map.get(r.server_id),
         has_recording=meta["has_recording"],
         recording_filename=meta["recording_filename"],
@@ -158,21 +167,22 @@ def _filtered_query(
             )
         )
     if within_seconds is not None and int(within_seconds) > 0:
+        # created_at is stored as naive UTC
         since = datetime.utcnow() - timedelta(seconds=int(within_seconds))
         query = query.filter(CallAnalysis.created_at >= since)
-    else:
-        if date_from:
-            try:
-                start = datetime.strptime(date_from.strip()[:10], "%Y-%m-%d")
-                query = query.filter(CallAnalysis.created_at >= start)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail="Invalid date_from (YYYY-MM-DD)") from exc
-        if date_to:
-            try:
-                end = datetime.strptime(date_to.strip()[:10], "%Y-%m-%d") + timedelta(days=1)
-                query = query.filter(CallAnalysis.created_at < end)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail="Invalid date_to (YYYY-MM-DD)") from exc
+        return query
+    if date_from:
+        try:
+            start = datetime.strptime(date_from.strip()[:10], "%Y-%m-%d")
+            query = query.filter(CallAnalysis.created_at >= start)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_from (YYYY-MM-DD)") from exc
+    if date_to:
+        try:
+            end = datetime.strptime(date_to.strip()[:10], "%Y-%m-%d") + timedelta(days=1)
+            query = query.filter(CallAnalysis.created_at < end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid date_to (YYYY-MM-DD)") from exc
     return query
 
 

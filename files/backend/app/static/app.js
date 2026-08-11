@@ -267,11 +267,22 @@ function dashLiveRowHtml(r) {
   </tr>`;
 }
 
+function parseServerDate(iso) {
+  // DB stores UTC naive timestamps. Treat missing offset as UTC so Asia/Karachi (+5) is correct.
+  if (!iso) return null;
+  let s = String(iso).trim();
+  if (!s) return null;
+  if (s.includes(" ") && !s.includes("T")) s = s.replace(" ", "T");
+  if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) s += "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function fmtTime(iso) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const tz = state.displayTimezone || "UTC";
+  const d = parseServerDate(iso);
+  if (!d) return "—";
+  const tz = getDisplayTimezone();
   try {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: tz,
@@ -291,17 +302,44 @@ function fmtTime(iso) {
 }
 
 function getDisplayTimezone() {
-  return state.displayTimezone || "UTC";
+  const sel = ($("#display-timezone")?.value || "").trim();
+  if (sel) {
+    state.displayTimezone = sel;
+    return sel;
+  }
+  return (
+    (state.displayTimezone || "").trim() ||
+    (localStorage.getItem("openamd_tz") || "").trim() ||
+    "UTC"
+  );
 }
 
 async function loadDisplayTimezone() {
+  const local = (localStorage.getItem("openamd_tz") || "").trim();
+  if (local) state.displayTimezone = local;
   try {
     const data = await api("/api/settings/display");
-    const tz = (data.display_timezone || "UTC").trim() || "UTC";
-    state.displayTimezone = tz;
-    localStorage.setItem("openamd_tz", tz);
+    const serverTz = (data.display_timezone || "").trim();
+    if (serverTz && serverTz !== "UTC") {
+      state.displayTimezone = serverTz;
+      localStorage.setItem("openamd_tz", serverTz);
+    } else if (local && local !== "UTC") {
+      // Keep admin's local choice and persist it (save may have failed earlier)
+      state.displayTimezone = local;
+      try {
+        await api("/api/settings/display", {
+          method: "PUT",
+          json: { display_timezone: local },
+        });
+      } catch (e) {
+        /* ignore */
+      }
+    } else {
+      state.displayTimezone = serverTz || local || "UTC";
+      localStorage.setItem("openamd_tz", state.displayTimezone);
+    }
   } catch (e) {
-    /* keep local */
+    if (local) state.displayTimezone = local;
   }
   syncTimezoneSelects();
   tickClock();
@@ -344,6 +382,16 @@ async function saveDisplayTimezone(tz) {
   await api("/api/settings/display", {
     method: "PUT",
     json: { display_timezone: value },
+  });
+}
+
+function filterRowsByWindow(rows, withinSeconds) {
+  const sec = Number(withinSeconds || 0);
+  if (!sec || sec <= 0) return rows || [];
+  const cutoff = Date.now() - sec * 1000;
+  return (rows || []).filter((r) => {
+    const t = parseServerDate(r.created_at);
+    return t && t.getTime() >= cutoff;
   });
 }
 
@@ -969,11 +1017,25 @@ function formatUptime(seconds) {
 
 async function loadLive(silent = false) {
   try {
+    const within = $("#live-window")?.value || "";
     const live = await api(`/api/live?${liveQueryParams(100)}`);
-    renderCallLists(live, "#live-body", "#live-cards");
+    // Always enforce window in the browser (UTC-correct) so "last 4 sec" never shows older CDR
+    const rows = filterRowsByWindow(live || [], within);
+    renderCallLists(rows, "#live-body", "#live-cards");
+    const hint = $("#live-window-hint");
+    if (hint) {
+      if (within) {
+        const n = Number(within);
+        const label =
+          n < 60 ? `${n} second${n === 1 ? "" : "s"}` : `${Math.round(n / 60)} minute(s)`;
+        hint.textContent = `Showing ${rows.length} call(s) from the last ${label}. Times: ${getDisplayTimezone()}.`;
+      } else {
+        hint.textContent = `Showing latest calls (no time window). Times: ${getDisplayTimezone()}.`;
+      }
+    }
     if (!silent && $("#page-dashboard") && !$("#page-dashboard").classList.contains("hidden")) {
-      $("#dash-live-body").innerHTML = live.slice(0, 12).map(dashLiveRowHtml).join("");
-      $("#dash-live-cards").innerHTML = live.slice(0, 12).map(callCardHtml).join("");
+      $("#dash-live-body").innerHTML = rows.slice(0, 12).map(dashLiveRowHtml).join("");
+      $("#dash-live-cards").innerHTML = rows.slice(0, 12).map(callCardHtml).join("");
     }
   } catch (e) {
     /* ignore transient */
