@@ -17,13 +17,20 @@ _lock = threading.Lock()
 _model = None
 _model_error = ""
 
-# Phrase cues (English NA + common IVR). Keep small — tiny model transcripts are noisy.
+# Phrase cues (English NA + common IVR). Tiny often mishears "person" as "passion".
 _MACHINE_RE = re.compile(
     r"\b("
-    r"leave\s+(a\s+)?message|voicemail|voice\s*mail|not\s+available|"
+    r"leave\s+(a\s+)?message|voicemail|voice\s*mail|not\s+available|unavailable|"
     r"can'?t\s+take\s+your\s+call|unable\s+to\s+take|after\s+the\s+(tone|beep)|"
-    r"record\s+your\s+message|please\s+leave|mailbox|the\s+person\s+you\s+(have\s+)?called|"
-    r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automated"
+    r"at\s+the\s+(tone|beep)|record\s+your\s+message|please\s+leave|mailbox|"
+    # Classic carrier VM: "The person you're calling…" (Tiny: passion/party/portion)
+    r"the\s+(person|passion|party|portion|passenger|persons?)\s+"
+    r"you(?:'re|\s+are|\s+have)?\s*(calling|called|call)|"
+    r"you(?:'re|\s+are)\s+calling|"
+    r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automated|"
+    r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
+    r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
+    r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep"
     r")\b",
     re.I,
 )
@@ -113,9 +120,10 @@ _DIGIT_WORDS = {
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias Tiny toward short phone greetings + digits (helps stop YouTube outros)
+# Bias Tiny toward short phone greetings + digits + classic VM (helps stop YouTube outros)
 _AMD_INITIAL_PROMPT = (
     "Hello. Hi. Yeah. Yes. Zero. Oh. One. Two. Three. Four. Five. "
+    "The person you are calling is not available. "
     "Voicemail. Please leave a message after the beep. Press one for English."
 )
 
@@ -198,7 +206,7 @@ def classify_transcript(
 ) -> Tuple[Optional[str], float, str]:
     """Return (status_or_None, confidence, cue). None = no strong cue.
 
-    Spoken digits / IVR prompts → MACHINE so VICIdial hangs up as AA.
+    Spoken digits / IVR prompts / voicemail phrases → MACHINE (VICIdial AA).
     """
     probs = xgb_probs or {}
     t, hall = clean_transcript(text)
@@ -207,13 +215,17 @@ def classify_transcript(
     if not t:
         return None, 0.0, "none"
 
-    if _IVR_RE.search(t) or is_number_readout(t):
-        # Digits / keypad prompts: portal IVR cue, disposition MACHINE for AA
-        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "ivr_digits"
+    # Voicemail phrases first (incl. Tiny mishears like "passion you're calling")
     if _MACHINE_RE.search(t):
-        return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
+        return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if _IVR_RE.search(t) or is_number_readout(t):
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "ivr_digits"
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
+    # Scripted line with "calling" and no human greeting → treat as AM
+    if re.search(r"\b(you(?:'re|\s+are)\s+calling|you\s+have\s+called)\b", t, re.I):
+        if not _HUMAN_RE.search(t):
+            return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
     return None, 0.0, "none"
 
 
