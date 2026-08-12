@@ -34,10 +34,11 @@ _IVR_RE = re.compile(
 )
 _HUMAN_RE = re.compile(
     r"\b("
-    r"hello|hi|hey|yeah|yes|yep|yo|speaking|this\s+is|"
+    r"hello+|hullo|hallo|halo|allo|yellow|"
+    r"hi|hey|yeah|yes|yep|yup|yo|speaking|this\s+is|"
     r"who(?:'s|\s+is)\s+this|good\s+(morning|afternoon|evening)|"
     r"how\s+are\s+you|can\s+i\s+help|what'?s\s+up|go\s+ahead|"
-    r"i'?m\s+here|who(?:'s|\s+is)\s+calling"
+    r"i'?m\s+here|who(?:'s|\s+is)\s+calling|pardon|sorry"
     r")\b",
     re.I,
 )

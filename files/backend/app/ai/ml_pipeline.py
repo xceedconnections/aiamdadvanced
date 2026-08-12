@@ -3,8 +3,8 @@
 Whisper runs when:
   - XGBoost would send HUMAN to an agent (any confidence) — catches IVR
     number-readouts like "four four seven" that XGB scores as HUMAN, or
-  - XGBoost says MACHINE/IVR on a short live pickup ("hello") so we do not
-    hang up a person. Beep / long greetings still skip Whisper.
+  - XGBoost says MACHINE/IVR without a beep / long greeting — catches a
+    live "hello" that XGB scored as a weak MACHINE (e.g. 67%).
 
 Only imported when Settings → ML pipeline is enabled. Disabled = zero overhead
 beyond the existing hybrid engine.
@@ -96,6 +96,14 @@ def run_ml_pipeline(
     details["whisper_used"] = False
     looks_human = _looks_like_short_human(feats, silero)
     no_beep = float(feats.get("beep", 0.0) or 0.0) < 0.5
+    strong_machine = (
+        not no_beep
+        or (
+            float(feats.get("duration", 0.0)) >= 2.1
+            and float(feats.get("speech_ratio", 0.0)) >= 0.42
+            and float(silero.get("longest_speech_ms", 0.0) or 0.0) >= 1400
+        )
+    )
 
     # Keep clear SIT from hybrid when XGB is unsure HUMAN
     if status == "HUMAN" and hybrid_status == "SIT" and hybrid_confidence >= 0.8:
@@ -135,20 +143,17 @@ def run_ml_pipeline(
             details["ml_note"] = note + "_whisper_error"
         return None
 
-    # XGB MACHINE/IVR on a short live pickup — do not hang up without Whisper
-    if (
-        status in ("MACHINE", "IVR")
-        and no_beep
-        and (looks_human or hybrid_status == "HUMAN")
-    ):
-        details["ml_note"] = "xgb_machine_possible_human"
-        rescued = _apply_whisper("xgb_machine_possible_human")
+    # MACHINE/IVR: Whisper unless it is a strong beep / long greeting.
+    # 67% "hello" must not hang up — only high-confidence dense AM skips Whisper.
+    if status in ("MACHINE", "IVR") and no_beep and not strong_machine:
+        details["ml_note"] = "xgb_machine_whisper_check"
+        rescued = _apply_whisper("xgb_machine_whisper_check")
         if rescued:
             return rescued[0], rescued[1], details
-        # Empty transcript / no cue — prefer live pickup only if not digit-like
-        if looks_human or hybrid_status == "HUMAN":
-            details["ml_note"] = (details.get("ml_note") or "") + "+keep_short_human"
-            return "HUMAN", max(float(hybrid_confidence), 0.84), details
+        # No Whisper cue: prefer HUMAN when the clip is a sparse pickup or XGB is unsure
+        if looks_human or hybrid_status == "HUMAN" or conf < high_thr:
+            details["ml_note"] = (details.get("ml_note") or "") + "+uncertain_machine_to_human"
+            return "HUMAN", max(float(hybrid_confidence), 0.82), details
 
     # Answering machine / IVR / SIT / BLANK with strong evidence → accept
     if status != "HUMAN":

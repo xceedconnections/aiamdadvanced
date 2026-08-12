@@ -129,7 +129,7 @@ def _looks_like_short_human(
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
     duration = float(feats.get("duration", 0.0))
-    if duration < 0.7 or duration > 3.4:
+    if duration < 0.7 or duration > 3.8:
         return False
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
@@ -140,8 +140,9 @@ def _looks_like_short_human(
         return False
     if speech_ratio >= 0.62 and duration >= 2.2:
         return False
-    # Three+ short islands is digit/IVR readout ("four four seven"), not "hello"
-    if num_bursts >= 3 and longest_burst <= 550:
+    # Digit/IVR readout is several short words with real speech fill
+    # A noisy "hello" can also split into 3 energy blips — do not treat those as IVR
+    if num_bursts >= 3 and longest_burst <= 550 and speech_ratio >= 0.28:
         return False
 
     if silero and silero.get("ok"):
@@ -150,12 +151,12 @@ def _looks_like_short_human(
         s_ratio = float(silero.get("speech_ratio", 0.0))
         if s_long >= 1500 and s_ratio >= 0.38:
             return False
-        if s_segs >= 3:
+        if s_segs >= 3 and s_ratio >= 0.28:
             return False
-        if s_segs <= 2 and s_long <= 1200 and s_long >= 120:
+        if s_segs <= 2 and s_long <= 1200 and s_long >= 80:
             return True
 
-    if num_bursts <= 2 and longest_burst <= 1200 and speech_ratio <= 0.55:
+    if num_bursts <= 4 and longest_burst <= 1200 and speech_ratio <= 0.45:
         return True
     return False
 
@@ -716,6 +717,17 @@ def analyze_audio(
         status, confidence = "HUMAN", max(float(confidence), 0.86)
         details["short_human_safety_override"] = True
         details["fuse_note"] = "short_human_greeting"
+    elif (
+        status in ("MACHINE", "IVR")
+        and float(confidence) < 0.80
+        and float(feats.get("beep", 0.0)) < 0.5
+        and not whisper_non_human
+        and not _is_blank(feats, silero)
+    ):
+        # Weak MACHINE (e.g. 67%) is not evidence enough to hang up a live hello
+        status, confidence = "HUMAN", max(float(confidence), 0.78)
+        details["uncertain_machine_to_human"] = True
+        details["fuse_note"] = "uncertain_machine_to_human"
 
     # Safety net: never send blank/silent clips to agents (ML can false-HUMAN)
     if (
