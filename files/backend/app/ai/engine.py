@@ -115,6 +115,39 @@ def _is_blank(
     return False
 
 
+def _looks_like_spoken_digit(
+    feats: Dict[str, float],
+    silero: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Isolated spoken digit / prompt syllable ('zero', 'oh', 'one') in AMD window.
+
+    Not a live 'hello' — compact single burst with most of the clip silent.
+    """
+    if float(feats.get("beep", 0.0)) >= 0.5:
+        return False
+    if float(feats.get("sit", 0.0)) >= 0.5:
+        return False
+    duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    if duration < 0.8 or duration > 3.8:
+        return False
+    # One compact syllable; speech fills little of a ~3s AMD clip
+    if not (num_bursts <= 2 and 100.0 <= longest_burst <= 750.0):
+        return False
+    if not (0.06 <= speech_ratio <= 0.38):
+        return False
+    if silero and silero.get("ok"):
+        s_long = float(silero.get("longest_speech_ms", 0.0))
+        s_segs = int(silero.get("num_segments", 0))
+        if s_segs > 2:
+            return False
+        if s_long > 0 and not (80.0 <= s_long <= 800.0):
+            return False
+    return True
+
+
 def _looks_like_short_human(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
@@ -127,6 +160,9 @@ def _looks_like_short_human(
     if float(feats.get("beep", 0.0)) >= 0.5:
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
+        return False
+    # Spoken digit / IVR prompt syllable is not a live hello
+    if _looks_like_spoken_digit(feats, silero):
         return False
     duration = float(feats.get("duration", 0.0))
     if duration < 0.7 or duration > 3.8:
@@ -728,6 +764,14 @@ def analyze_audio(
         status, confidence = "HUMAN", max(float(confidence), 0.78)
         details["uncertain_machine_to_human"] = True
         details["fuse_note"] = "uncertain_machine_to_human"
+
+    # Safety net: spoken digit / IVR syllable must not reach agents
+    if status == "HUMAN" and _looks_like_spoken_digit(feats, silero) and not (
+        w_cue == "human_short"
+    ):
+        status, confidence = "MACHINE", max(float(confidence), 0.9)
+        details["digit_safety_override"] = True
+        details["fuse_note"] = "spoken_digit_machine"
 
     # Safety net: never send blank/silent clips to agents (ML can false-HUMAN)
     if (

@@ -53,7 +53,12 @@ def run_ml_pipeline(
     low_thr = float(cfg.get("ml_low_confidence_threshold", 0.85))
     call_meta = call_meta or {}
 
-    from app.ai.engine import _blank_disposition, _is_blank, _looks_like_short_human
+    from app.ai.engine import (
+        _blank_disposition,
+        _is_blank,
+        _looks_like_short_human,
+        _looks_like_spoken_digit,
+    )
     from app.amd_settings import is_blank_as_machine_enabled
 
     if is_blank_as_machine_enabled() and _is_blank(feats, silero):
@@ -95,6 +100,7 @@ def run_ml_pipeline(
     details["xgb_confidence"] = round(float(conf), 4)
     details["whisper_used"] = False
     looks_human = _looks_like_short_human(feats, silero)
+    looks_digit = _looks_like_spoken_digit(feats, silero)
     no_beep = float(feats.get("beep", 0.0) or 0.0) < 0.5
     strong_machine = (
         not no_beep
@@ -131,17 +137,30 @@ def run_ml_pipeline(
             details["whisper"] = w_det
             details["whisper_used"] = True
             transcript = str((w_det or {}).get("transcript") or "")
+            cue = str((w_det or {}).get("cue") or "")
             if w_status:
                 details["ml_note"] = note + f"_whisper_{w_status.lower()}"
                 return w_status, float(w_conf)
             if transcript and is_number_readout(transcript):
                 details["ml_note"] = note + "_whisper_digits"
                 details["whisper"]["cue"] = "ivr_digits"
-                return "IVR", max(0.92, float(probs.get("IVR", 0.5)))
+                return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5)))
+            if cue == "hallucination" and looks_digit:
+                details["ml_note"] = note + "_hallucination_digit_machine"
+                return "MACHINE", 0.9
         except Exception as exc:
             details["whisper_error"] = str(exc)
             details["ml_note"] = note + "_whisper_error"
         return None
+
+    # Spoken digit / IVR syllable before any HUMAN path
+    if looks_digit and status == "HUMAN":
+        details["ml_note"] = "acoustic_digit_check"
+        rescued = _apply_whisper("acoustic_digit_check")
+        if rescued:
+            return rescued[0], rescued[1], details
+        details["ml_note"] = "acoustic_digit_machine"
+        return "MACHINE", 0.9, details
 
     # MACHINE/IVR: Whisper unless it is a strong beep / long greeting.
     # 67% "hello" must not hang up — only high-confidence dense AM skips Whisper.
@@ -150,6 +169,9 @@ def run_ml_pipeline(
         rescued = _apply_whisper("xgb_machine_whisper_check")
         if rescued:
             return rescued[0], rescued[1], details
+        if looks_digit:
+            details["ml_note"] = (details.get("ml_note") or "") + "+digit_machine"
+            return "MACHINE", 0.9, details
         # No Whisper cue: prefer HUMAN when the clip is a sparse pickup or XGB is unsure
         if looks_human or hybrid_status == "HUMAN" or conf < high_thr:
             details["ml_note"] = (details.get("ml_note") or "") + "+uncertain_machine_to_human"
@@ -172,10 +194,18 @@ def run_ml_pipeline(
         if status != "HUMAN":
             details["ml_note"] = (details.get("ml_note") or "") + "+block_non_human"
             return status, float(conf), details
-    elif whisper_on and not details.get("whisper_used"):
-        details["ml_note"] = "human_whisper_unavailable"
-    elif not whisper_on:
-        details["ml_note"] = "human_whisper_disabled"
+    else:
+        # Whisper invented junk ("Here I go") or empty — don't send digits to agents
+        w_cue = ""
+        if isinstance(details.get("whisper"), dict):
+            w_cue = str(details["whisper"].get("cue") or "")
+        if looks_digit or (w_cue == "hallucination" and not looks_human):
+            details["ml_note"] = (details.get("ml_note") or "") + "+digit_or_hallucination_machine"
+            return "MACHINE", 0.9, details
+        if whisper_on and not details.get("whisper_used"):
+            details["ml_note"] = "human_whisper_unavailable"
+        elif not whisper_on:
+            details["ml_note"] = "human_whisper_disabled"
 
     # Still HUMAN below threshold after Whisper (or Whisper off) → same as classic gate
     if status == "HUMAN" and conf < high_thr:

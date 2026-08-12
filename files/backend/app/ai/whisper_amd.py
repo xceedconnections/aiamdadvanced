@@ -47,11 +47,13 @@ _HUMAN_RE = re.compile(
     re.I,
 )
 
-# Whisper Tiny / Base common hallucinations on silence or short "hello"
+# Whisper Tiny / Base common hallucinations on silence or short clips
 _HALLUCINATION_RE = re.compile(
     r"("
     r"i'?ll\s+see\s+you\s+(next\s+time|later|soon)|"
     r"see\s+you\s+(next\s+time|later|soon)|"
+    r"here\s+i\s+go|here\s+we\s+go|there\s+(you|we)\s+go|"
+    r"here\s+we\s+are|that'?s\s+it\.?|"
     r"thanks?\s+for\s+(watching|listening|tuning\s+in)|"
     r"thank\s+you\s+for\s+(watching|listening)|"
     r"please\s+subscribe|subscribe\s+(and\s+)?(like|comment)|"
@@ -111,10 +113,10 @@ _DIGIT_WORDS = {
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias Tiny toward short phone greetings (helps stop YouTube outros)
+# Bias Tiny toward short phone greetings + digits (helps stop YouTube outros)
 _AMD_INITIAL_PROMPT = (
-    "Hello. Hi. Yeah. Yes. Voicemail. Please leave a message after the beep. "
-    "Press one for English."
+    "Hello. Hi. Yeah. Yes. Zero. Oh. One. Two. Three. Four. Five. "
+    "Voicemail. Please leave a message after the beep. Press one for English."
 )
 
 
@@ -133,17 +135,23 @@ def _is_digit_token(tok: str) -> bool:
 def is_number_readout(text: str) -> bool:
     """True when Whisper heard an IVR / CLI / account number being spoken.
 
-    Examples: 'Four, four, seven.'  '4, 4, 7, 4.'  'zero one two'
+    Examples: '0'  'zero'  'Four, four, seven.'  '4, 4, 7, 4.'  'zero one two'
     """
-    toks = [t for t in _tokens(text) if t not in ("and",)]
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    # Bare digit(s): "0", "00", "447"
+    compact = re.sub(r"[^0-9]", "", raw)
+    toks = [t for t in _tokens(raw) if t not in ("and",)]
+    if compact and len(toks) <= 1 and len(compact) >= 1:
+        return True
+    if len(toks) == 1 and _is_digit_token(toks[0]):
+        return True
     if len(toks) < 2:
-        # Compact numeric blob: "447" / "0123"
-        compact = re.sub(r"[^0-9]", "", text or "")
         return len(compact) >= 3
     digit_n = sum(1 for t in toks if _is_digit_token(t))
     if digit_n >= 2 and digit_n >= max(2, int(round(len(toks) * 0.6))):
         return True
-    compact = re.sub(r"[^0-9]", "", text or "")
     return len(compact) >= 3 and digit_n >= 2
 
 
@@ -154,10 +162,17 @@ def is_whisper_hallucination(text: str) -> bool:
         return False
     if _HALLUCINATION_RE.search(t):
         return True
-    # Long invented sentence on a short AMD window is almost never real speech
     words = t.split()
+    # Short invented filler that is not a phone greeting / digit / VM phrase
+    if 2 <= len(words) <= 5:
+        if not _HUMAN_RE.search(t) and not _MACHINE_RE.search(t) and not is_number_readout(t):
+            if re.search(
+                r"\b(go|going|goes|watching|subscribe|video|channel|episode|music)\b",
+                t,
+                re.I,
+            ):
+                return True
     if len(words) >= 6 and not _HUMAN_RE.search(t) and not _MACHINE_RE.search(t) and not is_number_readout(t):
-        # e.g. "and I'll see you next time" already matched above; catch variants
         if re.search(r"\b(watching|subscribe|video|channel|episode)\b", t, re.I):
             return True
     return False
@@ -181,7 +196,10 @@ def classify_transcript(
     text: str,
     xgb_probs: Optional[Dict[str, float]] = None,
 ) -> Tuple[Optional[str], float, str]:
-    """Return (status_or_None, confidence, cue). None = no strong cue."""
+    """Return (status_or_None, confidence, cue). None = no strong cue.
+
+    Spoken digits / IVR prompts → MACHINE so VICIdial hangs up as AA.
+    """
     probs = xgb_probs or {}
     t, hall = clean_transcript(text)
     if hall:
@@ -190,7 +208,8 @@ def classify_transcript(
         return None, 0.0, "none"
 
     if _IVR_RE.search(t) or is_number_readout(t):
-        return "IVR", max(0.92, float(probs.get("IVR", 0.5))), "ivr_digits"
+        # Digits / keypad prompts: portal IVR cue, disposition MACHINE for AA
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "ivr_digits"
     if _MACHINE_RE.search(t):
         return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
