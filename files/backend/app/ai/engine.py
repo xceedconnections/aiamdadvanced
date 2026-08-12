@@ -140,6 +140,9 @@ def _looks_like_short_human(
         return False
     if speech_ratio >= 0.62 and duration >= 2.2:
         return False
+    # Three+ short islands is digit/IVR readout ("four four seven"), not "hello"
+    if num_bursts >= 3 and longest_burst <= 550:
+        return False
 
     if silero and silero.get("ok"):
         s_long = float(silero.get("longest_speech_ms", 0.0))
@@ -147,16 +150,12 @@ def _looks_like_short_human(
         s_ratio = float(silero.get("speech_ratio", 0.0))
         if s_long >= 1500 and s_ratio >= 0.38:
             return False
-        if s_segs >= 4 and duration >= 2.0 and s_ratio >= 0.32:
+        if s_segs >= 3:
             return False
         if s_segs <= 2 and s_long <= 1200 and s_long >= 120:
             return True
-        if s_segs <= 3 and s_long <= 900 and duration <= 2.8:
-            return True
 
-    if num_bursts <= 5 and longest_burst <= 1200 and speech_ratio <= 0.55:
-        return True
-    if num_bursts <= 8 and longest_burst <= 450 and speech_ratio <= 0.38 and duration <= 2.6:
+    if num_bursts <= 2 and longest_burst <= 1200 and speech_ratio <= 0.55:
         return True
     return False
 
@@ -695,10 +694,24 @@ def analyze_audio(
             # Keep hybrid decision on any ML failure
 
     # Safety net: XGBoost often scores a short "hello" as MACHINE at 98%+
+    # Never undo Whisper IVR / digit-readout / voicemail.
+    ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+    w_block = ml_block.get("whisper") if isinstance(ml_block.get("whisper"), dict) else {}
+    w_cue = str(w_block.get("cue") or "")
+    w_text = str(w_block.get("transcript") or "")
+    whisper_non_human = w_cue in ("ivr", "ivr_digits", "voicemail", "digits")
+    if not whisper_non_human and w_text:
+        try:
+            from app.ai.whisper_amd import is_number_readout
+
+            whisper_non_human = is_number_readout(w_text)
+        except Exception:
+            whisper_non_human = False
     if (
         status in ("MACHINE", "IVR")
         and float(feats.get("beep", 0.0)) < 0.5
         and _looks_like_short_human(feats, silero)
+        and not whisper_non_human
     ):
         status, confidence = "HUMAN", max(float(confidence), 0.86)
         details["short_human_safety_override"] = True

@@ -850,7 +850,9 @@
               <label for="amd-ml-high">Minimum HUMAN confidence (%)</label>
               <input id="amd-ml-high" type="number" min="50" max="99" step="1" value="85" />
               <p class="hint" style="margin-top:0">
-                HUMAN at or above this % → agent. Below → check with Whisper (if enabled); still below → MACHINE.
+                HUMAN at or above this % → agent only after Whisper check. Digit/IVR
+                readouts (e.g. “four four seven”) are blocked even at high %.
+                Below → Whisper; still HUMAN below this % → MACHINE.
               </p>
               <label class="inline">
                 <input type="checkbox" id="amd-ml-whisper" checked />

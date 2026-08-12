@@ -1,4 +1,4 @@
-"""Optional Faster-Whisper Tiny refine — used ONLY on low-confidence XGB calls.
+"""Optional Faster-Whisper Tiny refine — used on uncertain / HUMAN-bound calls.
 
 Lazy-imported. If faster-whisper is not installed, refine is skipped (XGB wins).
 """
@@ -26,7 +26,9 @@ _MACHINE_RE = re.compile(
 _IVR_RE = re.compile(
     r"\b("
     r"press\s+\d|for\s+(english|spanish)|menu|your\s+call\s+is\s+important|"
-    r"please\s+hold|enter\s+your|dial\s+\d|options?\s+are|to\s+speak\s+to"
+    r"please\s+hold|enter\s+your|dial\s+\d|options?\s+are|to\s+speak\s+to|"
+    r"extension|account\s+number|pin\s+number|pound|hash\s+key|"
+    r"using\s+your\s+keypad|touch\s*tone"
     r")\b",
     re.I,
 )
@@ -39,6 +41,97 @@ _HUMAN_RE = re.compile(
     r")\b",
     re.I,
 )
+
+_DIGIT_WORDS = {
+    "zero",
+    "oh",
+    "o",
+    "nought",
+    "naught",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "niner",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+    "hundred",
+    "thousand",
+    "double",
+    "triple",
+    "and",
+}
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
+
+
+def _tokens(text: str) -> list[str]:
+    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
+
+
+def _is_digit_token(tok: str) -> bool:
+    if not tok:
+        return False
+    if tok.isdigit():
+        return True
+    return tok in _DIGIT_WORDS
+
+
+def is_number_readout(text: str) -> bool:
+    """True when Whisper heard an IVR / CLI / account number being spoken.
+
+    Examples: 'Four, four, seven.'  '4, 4, 7, 4.'  'zero one two'
+    """
+    toks = [t for t in _tokens(text) if t not in ("and",)]
+    if len(toks) < 2:
+        # Compact numeric blob: "447" / "0123"
+        compact = re.sub(r"[^0-9]", "", text or "")
+        return len(compact) >= 3
+    digit_n = sum(1 for t in toks if _is_digit_token(t))
+    if digit_n >= 2 and digit_n >= max(2, int(round(len(toks) * 0.6))):
+        return True
+    compact = re.sub(r"[^0-9]", "", text or "")
+    return len(compact) >= 3 and digit_n >= 2
+
+
+def classify_transcript(
+    text: str,
+    xgb_probs: Optional[Dict[str, float]] = None,
+) -> Tuple[Optional[str], float, str]:
+    """Return (status_or_None, confidence, cue). None = no strong cue."""
+    probs = xgb_probs or {}
+    t = (text or "").strip()
+    if not t:
+        return None, 0.0, "none"
+
+    if _IVR_RE.search(t) or is_number_readout(t):
+        return "IVR", max(0.92, float(probs.get("IVR", 0.5))), "ivr_digits"
+    if _MACHINE_RE.search(t):
+        return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
+        return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
+    return None, 0.0, "none"
 
 
 def whisper_available() -> bool:
@@ -67,24 +160,16 @@ def _get_model():
             return None
 
 
-def refine_with_whisper(
-    audio,  # np.ndarray float32 mono
-    sr: int,
-    *,
-    xgb_probs: Dict[str, float],
-    max_seconds: float = 4.0,
-) -> Tuple[Optional[str], float, Dict[str, Any]]:
-    """Return (status_or_None, confidence, details). None status = keep XGB decision."""
+def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict[str, Any]]:
     model = _get_model()
     if model is None:
-        return None, 0.0, {"whisper_ok": False, "error": _model_error or "not_installed"}
+        return "", None, {"whisper_ok": False, "error": _model_error or "not_installed"}
 
     import numpy as np
 
     if audio is None or len(audio) == 0:
-        return None, 0.0, {"whisper_ok": False, "error": "empty_audio"}
+        return "", None, {"whisper_ok": False, "error": "empty_audio"}
 
-    # faster-whisper expects 16 kHz float32
     clip = np.asarray(audio, dtype=np.float32)
     n = int(min(len(clip), max(1, int(sr * max_seconds))))
     clip = clip[:n]
@@ -109,7 +194,22 @@ def refine_with_whisper(
                 text_parts.append(seg.text.strip())
         text = " ".join(text_parts).strip()
     except Exception as exc:
-        return None, 0.0, {"whisper_ok": False, "error": str(exc)}
+        return "", None, {"whisper_ok": False, "error": str(exc)}
+
+    return text, info, {"whisper_ok": True}
+
+
+def refine_with_whisper(
+    audio,  # np.ndarray float32 mono
+    sr: int,
+    *,
+    xgb_probs: Dict[str, float],
+    max_seconds: float = 4.0,
+) -> Tuple[Optional[str], float, Dict[str, Any]]:
+    """Return (status_or_None, confidence, details). None status = keep XGB decision."""
+    text, info, base = _transcribe_clip(audio, sr, max_seconds)
+    if not base.get("whisper_ok"):
+        return None, 0.0, base
 
     details: Dict[str, Any] = {
         "whisper_ok": True,
@@ -117,17 +217,13 @@ def refine_with_whisper(
         "language": getattr(info, "language", "") or "",
     }
     if not text:
-        return None, 0.0, details
+        return None, 0.0, {**details, "cue": "none"}
 
-    if _IVR_RE.search(text):
-        return "IVR", max(0.9, float(xgb_probs.get("IVR", 0.5))), {**details, "cue": "ivr"}
-    if _MACHINE_RE.search(text):
-        return "MACHINE", max(0.92, float(xgb_probs.get("MACHINE", 0.5))), {**details, "cue": "voicemail"}
-    if _HUMAN_RE.search(text) and len(text.split()) <= 10:
-        return "HUMAN", max(0.90, float(xgb_probs.get("HUMAN", 0.5))), {**details, "cue": "human_short"}
-
-    # No strong cue — leave XGB decision
-    return None, 0.0, {**details, "cue": "none"}
+    status, conf, cue = classify_transcript(text, xgb_probs)
+    details["cue"] = cue
+    if status:
+        return status, conf, details
+    return None, 0.0, details
 
 
 def transcribe_audio(
@@ -137,59 +233,21 @@ def transcribe_audio(
     max_seconds: float = 5.0,
 ) -> Dict[str, Any]:
     """WAV→text only (no AMD status refine). Used for Training Logs display."""
-    model = _get_model()
-    if model is None:
+    text, info, base = _transcribe_clip(audio, sr, max_seconds)
+    if not base.get("whisper_ok"):
         return {
             "whisper_ok": False,
             "transcript": "",
-            "error": _model_error or "not_installed",
+            "error": base.get("error") or "whisper_failed",
         }
-
-    import numpy as np
-
-    if audio is None or len(audio) == 0:
-        return {"whisper_ok": False, "transcript": "", "error": "empty_audio"}
-
-    clip = np.asarray(audio, dtype=np.float32)
-    n = int(min(len(clip), max(1, int(sr * max_seconds))))
-    clip = clip[:n]
-    if sr != 16000 and len(clip) > 1:
-        duration = len(clip) / float(sr)
-        new_len = max(1, int(duration * 16000))
-        x_old = np.linspace(0, 1, num=len(clip), endpoint=False)
-        x_new = np.linspace(0, 1, num=new_len, endpoint=False)
-        clip = np.interp(x_new, x_old, clip).astype(np.float32)
-
-    try:
-        segments, info = model.transcribe(
-            clip,
-            language="en",
-            beam_size=1,
-            vad_filter=False,
-            without_timestamps=True,
-        )
-        text_parts = []
-        for seg in segments:
-            if seg.text:
-                text_parts.append(seg.text.strip())
-        text = " ".join(text_parts).strip()
-    except Exception as exc:
-        return {"whisper_ok": False, "transcript": "", "error": str(exc)}
 
     cue = ""
     if text:
-        if _IVR_RE.search(text):
-            cue = "ivr"
-        elif _MACHINE_RE.search(text):
-            cue = "voicemail"
-        elif _HUMAN_RE.search(text) and len(text.split()) <= 10:
-            cue = "human_short"
-        else:
-            cue = "none"
+        _status, _conf, cue = classify_transcript(text, {})
 
     return {
         "whisper_ok": True,
         "transcript": text[:500],
-        "cue": cue,
+        "cue": cue or "none",
         "language": getattr(info, "language", "") or "",
     }

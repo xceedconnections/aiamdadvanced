@@ -1,7 +1,8 @@
 """Optional ML AMD pipeline (Silero features → XGBoost → Whisper).
 
 Whisper runs when:
-  - XGBoost would send HUMAN to an agent below the Settings threshold, or
+  - XGBoost would send HUMAN to an agent (any confidence) — catches IVR
+    number-readouts like "four four seven" that XGB scores as HUMAN, or
   - XGBoost says MACHINE/IVR on a short live pickup ("hello") so we do not
     hang up a person. Beep / long greetings still skip Whisper.
 
@@ -61,7 +62,7 @@ def run_ml_pipeline(
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
-            "whisper_policy": "human_low_confidence_only",
+            "whisper_policy": "whisper_before_agent",
             "ml_note": "blank_audio",
         }
         return b_status, b_conf, details
@@ -70,7 +71,7 @@ def run_ml_pipeline(
         "ml_pipeline": True,
         "hybrid_status": hybrid_status,
         "hybrid_confidence": round(float(hybrid_confidence), 4),
-        "whisper_policy": "human_low_confidence_only",
+        "whisper_policy": "whisper_before_agent",
     }
 
     try:
@@ -102,6 +103,38 @@ def run_ml_pipeline(
         details["ml_note"] = "keep_hybrid_sit"
         return status, float(conf), details
 
+    def _apply_whisper(note: str) -> Optional[Tuple[str, float]]:
+        nonlocal status, conf
+        if not whisper_on:
+            return None
+        try:
+            from app.ai.whisper_amd import (
+                is_number_readout,
+                refine_with_whisper,
+                whisper_available,
+            )
+
+            if not whisper_available():
+                details["ml_note"] = note + "_whisper_unavailable"
+                return None
+            w_status, w_conf, w_det = refine_with_whisper(
+                audio, sr, xgb_probs=probs, max_seconds=4.0
+            )
+            details["whisper"] = w_det
+            details["whisper_used"] = True
+            transcript = str((w_det or {}).get("transcript") or "")
+            if w_status:
+                details["ml_note"] = note + f"_whisper_{w_status.lower()}"
+                return w_status, float(w_conf)
+            if transcript and is_number_readout(transcript):
+                details["ml_note"] = note + "_whisper_digits"
+                details["whisper"]["cue"] = "ivr_digits"
+                return "IVR", max(0.92, float(probs.get("IVR", 0.5)))
+        except Exception as exc:
+            details["whisper_error"] = str(exc)
+            details["ml_note"] = note + "_whisper_error"
+        return None
+
     # XGB MACHINE/IVR on a short live pickup — do not hang up without Whisper
     if (
         status in ("MACHINE", "IVR")
@@ -109,29 +142,10 @@ def run_ml_pipeline(
         and (looks_human or hybrid_status == "HUMAN")
     ):
         details["ml_note"] = "xgb_machine_possible_human"
-        if whisper_on:
-            try:
-                from app.ai.whisper_amd import refine_with_whisper, whisper_available
-
-                if whisper_available():
-                    w_status, w_conf, w_det = refine_with_whisper(
-                        audio, sr, xgb_probs=probs, max_seconds=4.0
-                    )
-                    details["whisper"] = w_det
-                    details["whisper_used"] = True
-                    if w_status == "HUMAN":
-                        details["ml_note"] = "whisper_rescue_human"
-                        return w_status, float(w_conf), details
-                    if w_status in ("MACHINE", "IVR", "SIT"):
-                        details["ml_note"] = "whisper_confirm_non_human"
-                        return w_status, float(w_conf), details
-                    # Transcript empty / no cue — prefer live pickup
-                    if looks_human or hybrid_status == "HUMAN":
-                        details["ml_note"] = "whisper_no_cue_keep_human"
-                        return "HUMAN", max(float(hybrid_confidence), 0.84), details
-            except Exception as exc:
-                details["whisper_error"] = str(exc)
-                details["ml_note"] = "whisper_rescue_error"
+        rescued = _apply_whisper("xgb_machine_possible_human")
+        if rescued:
+            return rescued[0], rescued[1], details
+        # Empty transcript / no cue — prefer live pickup only if not digit-like
         if looks_human or hybrid_status == "HUMAN":
             details["ml_note"] = (details.get("ml_note") or "") + "+keep_short_human"
             return "HUMAN", max(float(hybrid_confidence), 0.84), details
@@ -141,42 +155,22 @@ def run_ml_pipeline(
         details["ml_note"] = "non_human_accept"
         return status, float(conf), details
 
-    # HUMAN + high confidence → pass to agent (no Whisper) unless blank
-    if conf >= high_thr:
-        if is_blank_as_machine_enabled() and _is_blank(feats, silero):
-            b_status, b_conf, _ = _blank_disposition()
-            details["ml_note"] = "blank_override_high_human"
-            return b_status, b_conf, details
-        details["ml_note"] = "human_high_confidence"
-        return status, float(conf), details
+    # HUMAN (any confidence) → Whisper before sending to an agent
+    if is_blank_as_machine_enabled() and _is_blank(feats, silero):
+        b_status, b_conf, _ = _blank_disposition()
+        details["ml_note"] = "blank_override_high_human"
+        return b_status, b_conf, details
 
-    # HUMAN + below threshold → optional Faster-Whisper Tiny (protect agents)
-    if whisper_on:
-        try:
-            from app.ai.whisper_amd import refine_with_whisper, whisper_available
-
-            if whisper_available():
-                w_status, w_conf, w_det = refine_with_whisper(
-                    audio, sr, xgb_probs=probs, max_seconds=4.0
-                )
-                details["whisper"] = w_det
-                details["whisper_used"] = True
-                if w_status:
-                    status, conf = w_status, float(w_conf)
-                    details["ml_note"] = "whisper_refine_uncertain_human"
-                else:
-                    details["ml_note"] = "human_low_conf_whisper_no_cue"
-            else:
-                details["ml_note"] = "human_low_conf_whisper_unavailable"
-                details["whisper"] = {
-                    "whisper_ok": False,
-                    "error": "faster-whisper not installed",
-                }
-        except Exception as exc:
-            details["ml_note"] = "human_low_conf_whisper_error"
-            details["whisper_error"] = str(exc)
-    else:
-        details["ml_note"] = "human_low_conf_whisper_disabled"
+    w_hit = _apply_whisper("human_to_agent")
+    if w_hit:
+        status, conf = w_hit
+        if status != "HUMAN":
+            details["ml_note"] = (details.get("ml_note") or "") + "+block_non_human"
+            return status, float(conf), details
+    elif whisper_on and not details.get("whisper_used"):
+        details["ml_note"] = "human_whisper_unavailable"
+    elif not whisper_on:
+        details["ml_note"] = "human_whisper_disabled"
 
     # Still HUMAN below threshold after Whisper (or Whisper off) → same as classic gate
     if status == "HUMAN" and conf < high_thr:
