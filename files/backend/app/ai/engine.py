@@ -3,9 +3,9 @@ OpenAMD Advanced AI Engine — Hybrid (Heuristic + Silero VAD)
 
 Combines the Phase-3 outbound heuristic AMD rules with Silero VAD speech
 features. Prefer HUMAN when uncertain so live agents get calls.
-Blank / near-silent audio is disposed as MACHINE when enabled in portal
-Settings (blank_as_machine). Only return MACHINE/IVR/SIT with strong
-evidence otherwise.
+Blank / near-silent audio is disposed as BLANK (never to agents). VICIdial
+receives MACHINE (AA). Only return MACHINE/IVR/SIT with strong evidence
+otherwise.
 """
 
 from __future__ import annotations
@@ -43,8 +43,10 @@ class AnalysisResult:
     details: Dict[str, Any]
 
 
-def _load_audio(data: bytes, target_sr: int = 8000) -> Tuple[np.ndarray, int, float]:
-    """Return (audio, sample_rate, peak_before_normalize)."""
+def _load_audio(
+    data: bytes, target_sr: int = 8000
+) -> Tuple[np.ndarray, int, float, float]:
+    """Return (audio, sample_rate, peak_before_normalize, rms_before_normalize)."""
     if sf is None:
         raise RuntimeError("soundfile is not installed")
 
@@ -61,10 +63,11 @@ def _load_audio(data: bytes, target_sr: int = 8000) -> Tuple[np.ndarray, int, fl
         sr = target_sr
 
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    raw_rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
     if peak > 1e-6:
         audio = audio / peak
 
-    return audio.astype(np.float32), sr, peak
+    return audio.astype(np.float32), sr, peak, raw_rms
 
 
 def _is_blank(
@@ -74,28 +77,41 @@ def _is_blank(
     """True when audio is empty, too short, or has no usable speech."""
     duration = float(feats.get("duration", 0.0))
     peak = float(feats.get("peak", 1.0))
-    rms = float(feats.get("rms", 0.0))
+    raw_rms = float(feats.get("raw_rms", feats.get("rms", 0.0)))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
+    activity_ratio = float(feats.get("activity_ratio", 0.0))
 
     if duration < 0.6:
         return True
-    # Peak before normalize — true silence / near-silence files
+    # Peak / RMS before normalize — true silence / line-noise-only clips
     if peak < 0.008:
         return True
-    if peak < 0.02 and speech_ratio < 0.08:
+    if peak < 0.025 and speech_ratio < 0.12 and activity_ratio < 0.15:
         return True
-    if rms < 0.02 and speech_ratio < 0.03:
+    if raw_rms < 0.003 and speech_ratio < 0.08:
+        return True
+    if raw_rms < 0.008 and speech_ratio < 0.05 and activity_ratio < 0.12:
+        return True
+    if peak < 0.04 and speech_ratio < 0.06 and activity_ratio < 0.10:
         return True
 
     if silero and silero.get("ok"):
         s_ratio = float(silero.get("speech_ratio", 0.0))
         s_mean = float(silero.get("mean_prob", 0.0))
         s_long = float(silero.get("longest_speech_ms", 0.0))
+        s_segs = int(silero.get("num_segments", 0))
         # No meaningful speech across the clip
-        if s_ratio < 0.05 and s_mean < 0.15 and s_long < 200:
+        if s_ratio < 0.06 and s_mean < 0.20 and s_long < 250 and s_segs <= 1:
+            return True
+        if peak < 0.05 and s_ratio < 0.10 and s_long < 400:
             return True
 
     return False
+
+
+def _blank_disposition() -> Tuple[str, float, str]:
+    """Internal BLANK disposition (VICIdial maps to MACHINE / AA)."""
+    return "BLANK", 0.95, "blank_silence"
 
 
 def _frame_energy(audio: np.ndarray, sr: int, frame_ms: int = 20) -> np.ndarray:
@@ -340,11 +356,9 @@ def _classify_heuristic(
     if beep:
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
 
-    # Blank / near-silent — MACHINE when setting enabled (portal Settings)
-    if _is_blank(feats):
-        if is_blank_as_machine_enabled():
-            return "MACHINE", 0.92
-        return "HUMAN", 0.55
+    # Blank / near-silent — never pass to agents when blank detection is on
+    if is_blank_as_machine_enabled() and _is_blank(feats):
+        return _blank_disposition()[:2]
 
     vm_hit, vm_conf, _vm_note = _detect_voicemail_structure(feats, pack)
     if vm_hit:
@@ -393,9 +407,10 @@ def _fuse_with_silero(
 
     Returns (status, confidence, fuse_note).
     """
-    # Blank / no speech → MACHINE when portal setting is enabled
+    # Blank / no speech → BLANK (VICIdial AA) when portal setting is enabled
     if _is_blank(feats, silero) and is_blank_as_machine_enabled():
-        return "MACHINE", max(float(confidence), 0.92), "blank_silence"
+        b_status, b_conf, b_note = _blank_disposition()
+        return b_status, max(float(confidence), b_conf), b_note
 
     if not silero.get("ok"):
         return status, confidence, "heuristic_only"
@@ -443,11 +458,12 @@ def _fuse_with_silero(
         return "MACHINE", max(confidence, 0.8), "silero_many_segments"
 
     # Silero: short sparse speech → human ("hello?", "yeah?")
-    # Do not override high-confidence MACHINE or dense USA greetings
+    # Do not override blank / high-confidence MACHINE or dense USA greetings
     if (
         s_segs <= pack["silero_human_max_segments"]
         and s_long <= pack["silero_human_max_speech_ms"]
         and s_ratio <= pack["silero_human_max_speech_ratio"]
+        and not _is_blank(feats, silero)
     ):
         if status == "MACHINE" and confidence < strong_m and not dense_speech and not vm_hit:
             return "HUMAN", max(0.75, 1.0 - confidence + 0.2), "silero_override_human"
@@ -462,13 +478,14 @@ def _fuse_with_silero(
     ):
         return "HUMAN", max(confidence, 0.78), "agree_human_quiet"
 
-    # Mild disagreement: prefer HUMAN only when not a dense/scripted clip
+    # Mild disagreement: prefer HUMAN only when not blank and not a dense/scripted clip
     if (
         status == "MACHINE"
         and confidence < pack["prefer_human_machine_conf"]
         and s_long < pack["prefer_human_speech_ms"]
         and not dense_speech
         and not vm_hit
+        and not _is_blank(feats, silero)
     ):
         return "HUMAN", 0.72, "prefer_human_uncertain"
 
@@ -499,19 +516,20 @@ def analyze_audio(
     t0 = time.perf_counter()
 
     try:
-        audio, sr, peak = _load_audio(data, target_sr=sample_hint_sr)
+        audio, sr, peak, raw_rms = _load_audio(data, target_sr=sample_hint_sr)
     except Exception as exc:
         ms = int((time.perf_counter() - t0) * 1000)
         if is_blank_as_machine_enabled():
+            b_status, b_conf, b_note = _blank_disposition()
             return AnalysisResult(
-                status="MACHINE",
-                confidence=0.9,
+                status=b_status,
+                confidence=b_conf,
                 processing_ms=ms,
                 audio_seconds=0.0,
                 details={
                     "error": str(exc),
-                    "fallback": "MACHINE",
-                    "fuse_note": "blank_or_unreadable",
+                    "fallback": b_status,
+                    "fuse_note": b_note,
                     "engine": "hybrid",
                 },
             )
@@ -541,6 +559,7 @@ def analyze_audio(
         "sample_rate": float(sr),
         "energy_threshold": thr,
         "peak": float(peak),
+        "raw_rms": float(raw_rms),
         "rms": float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0,
         "beep": float(beep),
         "beep_conf": beep_conf,
@@ -614,6 +633,17 @@ def analyze_audio(
             details["ml_pipeline_enabled"] = True
             details["ml_error"] = str(exc)
             # Keep hybrid decision on any ML failure
+
+    # Safety net: never send blank/silent clips to agents (ML can false-HUMAN)
+    if (
+        is_blank_as_machine_enabled()
+        and _is_blank(feats, silero)
+        and status == "HUMAN"
+    ):
+        b_status, b_conf, b_note = _blank_disposition()
+        status, confidence = b_status, max(float(confidence), b_conf)
+        details["blank_safety_override"] = True
+        details["fuse_note"] = b_note
 
     ms = int((time.perf_counter() - t0) * 1000)
     return AnalysisResult(

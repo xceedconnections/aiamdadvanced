@@ -25,7 +25,7 @@ from app.schemas import CallOut, CdrPageOut, ServerReport
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
-_ALLOWED_STATUS = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR", "ALL"}
+_ALLOWED_STATUS = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "BLANK", "ERROR", "ALL"}
 _EXPORT_MAX_ROWS = 20000
 
 
@@ -436,6 +436,7 @@ def server_reports(
                 ivr=cnt("IVR"),
                 fax=cnt("FAX"),
                 sit=cnt("SIT"),
+                blank=cnt("BLANK"),
                 errors=cnt("ERROR"),
                 avg_processing_ms=round(float(avg_ms), 1),
                 avg_confidence=round(float(avg_conf), 4),

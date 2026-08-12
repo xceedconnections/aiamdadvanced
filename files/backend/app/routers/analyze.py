@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.ai.engine import analyze_audio
-from app.amd_settings import apply_confidence_gate, gate_config_for_server, resolve_effective_amd_settings
+from app.amd_settings import apply_confidence_gate, gate_config_for_server, map_status_for_vicidial, resolve_effective_amd_settings
 from app.auth.security import get_server_from_api_key
 from app.config import get_settings
 from app.database import get_db
@@ -72,6 +72,7 @@ async def analyze(
     final_status = gated_status
     final_confidence = result.confidence
     raw_status = engine_status
+    vicidial_status = map_status_for_vicidial(final_status)
 
     # Browser-safe PCM16 WAV for portal play + disk archive
     playable = to_browser_wav(raw)
@@ -87,6 +88,7 @@ async def analyze(
         **result.details,
         "gate_downgraded": downgraded,
         "raw_status": raw_status,
+        "vicidial_status": vicidial_status,
         "confidence_gate": gate_cfg,
         "amd_effective": {
             "source": effective.get("source"),
@@ -150,7 +152,7 @@ async def analyze(
             db.commit()
 
     return AnalyzeResponse(
-        status=final_status,
+        status=vicidial_status,
         confidence=final_confidence,
         processing_ms=result.processing_ms,
         callid=callid,

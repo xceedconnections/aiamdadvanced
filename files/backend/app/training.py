@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.call import CallAnalysis
 from app.models.correction import TrainingCorrection, TrainingOverride
 
-ALLOWED_STATUSES = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "ERROR"}
+ALLOWED_STATUSES = {"HUMAN", "MACHINE", "IVR", "FAX", "SIT", "BLANK", "ERROR"}
 
 
 def normalize_phone(raw: str | None) -> str:

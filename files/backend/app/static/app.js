@@ -186,6 +186,7 @@ function statusBadge(status) {
     MACHINE: "ANSWERING MACHINE",
     IVR: "IVR / MENU",
     SIT: "CANCELLED",
+    BLANK: "BLANK / SILENT",
     FAX: "FAX",
     ERROR: "ERROR",
   };
@@ -239,6 +240,7 @@ function teachButtons(r) {
     ["MACHINE", "VM"],
     ["IVR", "IVR"],
     ["SIT", "SIT"],
+    ["BLANK", "Blank"],
     ["FAX", "Fax"],
   ];
   const options = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
@@ -733,6 +735,7 @@ function renderDonutChart(s) {
     { label: "Human", value: s.human || 0, color: "#22c55e" },
     { label: "Machine", value: s.machine || 0, color: "#f43f5e" },
     { label: "IVR", value: s.ivr || 0, color: "#a855f7" },
+    { label: "Blank", value: s.blank || 0, color: "#94a3b8" },
     { label: "Cancelled", value: s.sit || 0, color: "#f59e0b" },
     { label: "Fax", value: s.fax || 0, color: "#38bdf8" },
     { label: "Errors", value: s.errors || 0, color: "#94a3b8" },
@@ -1296,7 +1299,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
-      ? " Blank/silent → MACHINE (global)."
+      ? " Blank/silent → BLANK (VICIdial AA)."
       : " Blank/silent may pass as HUMAN (global).";
     if (data.ml_pipeline_enabled) {
       const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);
@@ -1362,6 +1365,7 @@ async function loadMlSamples() {
               <option value="HUMAN">HUMAN</option>
               <option value="MACHINE">Voicemail/MACHINE</option>
               <option value="IVR">IVR</option>
+              <option value="BLANK">BLANK</option>
             </select>`;
         return `<tr>
           <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
@@ -1512,6 +1516,7 @@ async function loadMlLogs() {
               <option value="HUMAN">HUMAN</option>
               <option value="MACHINE">MACHINE</option>
               <option value="IVR">IVR</option>
+              <option value="BLANK">BLANK</option>
             </select>`;
         const playBtn = s.has_audio
           ? `<button type="button" class="ghost btn-icon ml-log-play" data-id="${escapeHtml(s.id)}" title="Play WAV">▶</button>`
@@ -2153,6 +2158,7 @@ async function loadReports() {
       <td>${r.human} <span class="hint">${pct(r.human, r.total)}</span></td>
       <td>${r.machine} <span class="hint">${pct(r.machine, r.total)}</span></td>
       <td>${r.ivr}</td>
+      <td>${r.blank || 0}</td>
       <td>${r.sit}</td>
       <td>${r.fax}</td>
       <td>${r.errors}</td>
@@ -2194,6 +2200,7 @@ async function loadTraining() {
           <option value="MACHINE">MACHINE</option>
           <option value="IVR">IVR</option>
           <option value="SIT">CANCELLED</option>
+          <option value="BLANK">BLANK</option>
           <option value="FAX">FAX</option>
         </select>
       </td>
@@ -2223,6 +2230,7 @@ async function loadTraining() {
           <option value="MACHINE">MACHINE</option>
           <option value="IVR">IVR</option>
           <option value="SIT">CANCELLED</option>
+          <option value="BLANK">BLANK</option>
           <option value="FAX">FAX</option>
         </select>
         <button class="ghost" type="button" onclick="saveCorrectionMobile(${r.id})">Save correction</button>

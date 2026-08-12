@@ -145,8 +145,19 @@ def save_amd_settings(
 
 
 def is_blank_as_machine_enabled() -> bool:
-    """Whether blank/near-silent audio should be classified as MACHINE."""
+    """Whether blank/near-silent audio should be classified as BLANK (not HUMAN)."""
     return bool(load_amd_settings().get("blank_as_machine", True))
+
+
+def map_status_for_vicidial(status: str) -> str:
+    """Map internal disposition to what the VICIdial AGI dialplan expects.
+
+    BLANK is stored in the portal but sent to VICIdial as MACHINE (AA / hangup).
+    """
+    s = (status or "").strip().upper()
+    if s == "BLANK":
+        return "MACHINE"
+    return s
 
 
 def is_ml_pipeline_enabled() -> bool:

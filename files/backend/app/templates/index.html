@@ -217,6 +217,7 @@
                 <option value="MACHINE">Machine</option>
                 <option value="IVR">IVR</option>
                 <option value="SIT">Cancelled</option>
+                <option value="BLANK">Blank / Silent</option>
                 <option value="FAX">Fax</option>
                 <option value="ERROR">Error</option>
               </select>
@@ -308,6 +309,7 @@
                 <option value="MACHINE">Machine</option>
                 <option value="IVR">IVR</option>
                 <option value="SIT">Cancelled</option>
+                <option value="BLANK">Blank / Silent</option>
                 <option value="FAX">Fax</option>
                 <option value="ERROR">Error</option>
               </select>
@@ -528,6 +530,7 @@
                   <th>Human</th>
                   <th>Machine</th>
                   <th>IVR</th>
+                  <th>Blank</th>
                   <th>Cancelled</th>
                   <th>Fax</th>
                   <th>Errors</th>
@@ -571,6 +574,7 @@
                 <option value="MACHINE">Machine</option>
                 <option value="IVR">IVR</option>
                 <option value="SIT">Cancelled</option>
+                <option value="BLANK">Blank / Silent</option>
                 <option value="FAX">Fax</option>
                 <option value="ERROR">Error</option>
               </select>
@@ -870,10 +874,10 @@
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
             <label class="inline">
               <input type="checkbox" id="amd-blank-as-machine" checked />
-              Dispose blank / silent calls as MACHINE
+              Classify blank / silent calls as BLANK (VICIdial AA)
             </label>
             <p class="hint" style="margin-top:0">
-              Always applies globally (Classic and Advanced ML). Empty / silent audio is not sent to agents.
+              Always applies globally (Classic and Advanced ML). Blank audio is never sent to agents; VICIdial receives MACHINE (AA).
             </p>
 
             <button type="submit">Save settings</button>

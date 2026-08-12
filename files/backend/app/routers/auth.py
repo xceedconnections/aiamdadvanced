@@ -141,6 +141,7 @@ def dashboard_stats(
         ivr=count_status("IVR"),
         fax=count_status("FAX"),
         sit=count_status("SIT"),
+        blank=count_status("BLANK"),
         errors=count_status("ERROR"),
         avg_processing_ms=round(float(avg_ms), 1),
         avg_confidence=round(float(avg_conf), 4),

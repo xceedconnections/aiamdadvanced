@@ -678,6 +678,7 @@ tr:hover td { background: rgba(59, 130, 246, 0.04); }
 .badge.MACHINE { background: rgba(244,63,94,.14); color: #fb7185; border: 1px solid rgba(244,63,94,.25); }
 .badge.IVR { background: rgba(168,85,247,.14); color: #c084fc; border: 1px solid rgba(168,85,247,.25); }
 .badge.SIT { background: rgba(245,158,11,.14); color: #fbbf24; border: 1px solid rgba(245,158,11,.25); }
+.badge.BLANK { background: rgba(148,163,184,.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,.25); }
 .badge.FAX { background: rgba(56,189,248,.14); color: #38bdf8; border: 1px solid rgba(56,189,248,.25); }
 .badge.ERROR { background: rgba(239,68,68,.14); color: #f87171; border: 1px solid rgba(239,68,68,.25); }
 
@@ -710,6 +711,7 @@ tr:hover td { background: rgba(59, 130, 246, 0.04); }
 .wave.MACHINE { color: #f43f5e; }
 .wave.IVR { color: #a855f7; }
 .wave.SIT { color: #f59e0b; }
+.wave.BLANK { color: #94a3b8; }
 .wave.FAX { color: #38bdf8; }
 .wave.ERROR { color: #ef4444; }
 @keyframes wave-bounce {

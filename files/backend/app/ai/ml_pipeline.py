@@ -38,7 +38,7 @@ def run_ml_pipeline(
     confidence is the winning class probability from XGBoost (or Whisper refine).
 
     Policy (agent-protect):
-      - MACHINE / IVR / SIT → accept immediately (no Whisper)
+      - BLANK / MACHINE / IVR / SIT → accept immediately (no Whisper)
       - HUMAN + conf >= threshold → pass to agent
       - HUMAN + conf < threshold → Faster-Whisper Tiny refine
     """
@@ -48,6 +48,20 @@ def run_ml_pipeline(
     save_low = bool(cfg.get("ml_save_low_confidence", True))
     low_thr = float(cfg.get("ml_low_confidence_threshold", 0.85))
     call_meta = call_meta or {}
+
+    from app.ai.engine import _blank_disposition, _is_blank
+    from app.amd_settings import is_blank_as_machine_enabled
+
+    if is_blank_as_machine_enabled() and _is_blank(feats, silero):
+        b_status, b_conf, _ = _blank_disposition()
+        details: Dict[str, Any] = {
+            "ml_pipeline": True,
+            "hybrid_status": hybrid_status,
+            "hybrid_confidence": round(float(hybrid_confidence), 4),
+            "whisper_policy": "human_low_confidence_only",
+            "ml_note": "blank_audio",
+        }
+        return b_status, b_conf, details
 
     details: Dict[str, Any] = {
         "ml_pipeline": True,
@@ -83,13 +97,17 @@ def run_ml_pipeline(
         details["ml_note"] = "keep_hybrid_sit"
         return status, float(conf), details
 
-    # Answering machine / IVR / SIT → accept as-is (no Whisper)
+    # Answering machine / IVR / SIT / BLANK → accept as-is (no Whisper)
     if status != "HUMAN":
         details["ml_note"] = "non_human_accept"
         return status, float(conf), details
 
-    # HUMAN + high confidence → pass to agent (no Whisper)
+    # HUMAN + high confidence → pass to agent (no Whisper) unless blank
     if conf >= high_thr:
+        if is_blank_as_machine_enabled() and _is_blank(feats, silero):
+            b_status, b_conf, _ = _blank_disposition()
+            details["ml_note"] = "blank_override_high_human"
+            return b_status, b_conf, details
         details["ml_note"] = "human_high_confidence"
         return status, float(conf), details
 
@@ -144,6 +162,11 @@ def run_ml_pipeline(
         return action, float(conf), details
 
     # Whisper raised confidence enough, or flipped to non-HUMAN
+    if is_blank_as_machine_enabled() and _is_blank(feats, silero) and status == "HUMAN":
+        b_status, b_conf, _ = _blank_disposition()
+        details["ml_note"] = (details.get("ml_note") or "") + "+blank_safety"
+        return b_status, b_conf, details
+
     _maybe_save_sample(
         save_low and conf < low_thr,
         audio=audio,

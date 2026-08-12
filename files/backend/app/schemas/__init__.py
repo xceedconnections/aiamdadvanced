@@ -183,6 +183,7 @@ class DashboardStats(BaseModel):
     ivr: int
     fax: int
     sit: int
+    blank: int = 0
     errors: int
     avg_processing_ms: float
     avg_confidence: float
@@ -199,6 +200,7 @@ class ServerReport(BaseModel):
     ivr: int
     fax: int
     sit: int
+    blank: int = 0
     errors: int
     avg_processing_ms: float
     avg_confidence: float
