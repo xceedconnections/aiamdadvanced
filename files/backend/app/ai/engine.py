@@ -119,9 +119,9 @@ def _looks_like_spoken_digit(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """Isolated spoken digit / prompt syllable ('zero', 'oh', 'one') in AMD window.
+    """Isolated spoken digit / prompt syllable ('zero', 'one') in a longer AMD window.
 
-    Not a live 'hello' — compact single burst with most of the clip silent.
+    Not a live 'hello'. Short clips (~1s) are usually hello, not keypad digits.
     """
     if float(feats.get("beep", 0.0)) >= 0.5:
         return False
@@ -131,7 +131,8 @@ def _looks_like_spoken_digit(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
-    if duration < 0.8 or duration > 3.8:
+    # Digit prompts usually sit in a ~2–3s AMD record with silence around them
+    if duration < 1.25 or duration > 3.8:
         return False
     # One compact syllable; speech fills little of a ~3s AMD clip
     if not (num_bursts <= 2 and 100.0 <= longest_burst <= 750.0):

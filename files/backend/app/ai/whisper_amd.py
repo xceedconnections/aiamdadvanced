@@ -79,8 +79,6 @@ _HALLUCINATION_RE = re.compile(
 
 _DIGIT_WORDS = {
     "zero",
-    "oh",
-    "o",
     "nought",
     "naught",
     "one",
@@ -115,14 +113,16 @@ _DIGIT_WORDS = {
     "thousand",
     "double",
     "triple",
-    "and",
 }
+
+# Tiny often writes elderly / muffled "hello" as "Oh." — never treat alone as digit 0
+_OH_AMBIGUOUS = {"oh", "o"}
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias Tiny toward short phone greetings + digits + classic VM (helps stop YouTube outros)
+# Bias Tiny toward short phone greetings + digits + classic VM
 _AMD_INITIAL_PROMPT = (
-    "Hello. Hi. Yeah. Yes. Zero. Oh. One. Two. Three. Four. Five. "
+    "Hello. Hello. Hi. Yeah. Yes. Zero. One. Two. Three. Four. Five. "
     "The person you are calling is not available. "
     "Voicemail. Please leave a message after the beep. Press one for English."
 )
@@ -144,23 +144,38 @@ def is_number_readout(text: str) -> bool:
     """True when Whisper heard an IVR / CLI / account number being spoken.
 
     Examples: '0'  'zero'  'Four, four, seven.'  '4, 4, 7, 4.'  'zero one two'
+
+    Bare 'Oh.' / 'O' is NOT a digit — Tiny often mishears elderly 'hello' that way.
     """
     raw = (text or "").strip()
     if not raw:
         return False
-    # Bare digit(s): "0", "00", "447"
     compact = re.sub(r"[^0-9]", "", raw)
     toks = [t for t in _tokens(raw) if t not in ("and",)]
+    # Lone "oh" / "o" → not a number (hello mishear)
+    if len(toks) == 1 and toks[0] in _OH_AMBIGUOUS and not compact:
+        return False
+    # Bare digit(s): "0", "00", "447"
     if compact and len(toks) <= 1 and len(compact) >= 1:
         return True
     if len(toks) == 1 and _is_digit_token(toks[0]):
         return True
     if len(toks) < 2:
         return len(compact) >= 3
-    digit_n = sum(1 for t in toks if _is_digit_token(t))
+    # Count "oh" as digit only inside a multi-digit readout ("oh four seven")
+    digit_n = 0
+    for tok in toks:
+        if tok in _OH_AMBIGUOUS or _is_digit_token(tok):
+            digit_n += 1
     if digit_n >= 2 and digit_n >= max(2, int(round(len(toks) * 0.6))):
         return True
     return len(compact) >= 3 and digit_n >= 2
+
+
+def is_hello_mishear(text: str) -> bool:
+    """Tiny often reduces muffled/elderly 'hello' to 'Oh.' / 'O' / 'Ah'."""
+    t = (text or "").strip().lower().rstrip(".")
+    return t in ("oh", "o", "ah", "uh", "mm", "hmm", "huh", "ay", "ey")
 
 
 def is_whisper_hallucination(text: str) -> bool:
@@ -207,6 +222,7 @@ def classify_transcript(
     """Return (status_or_None, confidence, cue). None = no strong cue.
 
     Spoken digits / IVR prompts / voicemail phrases → MACHINE (VICIdial AA).
+    Bare 'Oh.' (elderly hello mishear) → HUMAN.
     """
     probs = xgb_probs or {}
     t, hall = clean_transcript(text)
@@ -214,6 +230,10 @@ def classify_transcript(
         return None, 0.0, "hallucination"
     if not t:
         return None, 0.0, "none"
+
+    # Elderly / muffled hello often becomes "Oh." — send to agent
+    if is_hello_mishear(t):
+        return "HUMAN", max(0.88, float(probs.get("HUMAN", 0.5))), "human_short"
 
     # Voicemail phrases first (incl. Tiny mishears like "passion you're calling")
     if _MACHINE_RE.search(t):
