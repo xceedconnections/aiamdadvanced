@@ -31,7 +31,12 @@ _IVR_RE = re.compile(
     re.I,
 )
 _HUMAN_RE = re.compile(
-    r"\b(hello|hi|hey|yeah|yes|speaking|this\s+is|who(?:'s|\s+is)\s+this)\b",
+    r"\b("
+    r"hello|hi|hey|yeah|yes|yep|yo|speaking|this\s+is|"
+    r"who(?:'s|\s+is)\s+this|good\s+(morning|afternoon|evening)|"
+    r"how\s+are\s+you|can\s+i\s+help|what'?s\s+up|go\s+ahead|"
+    r"i'?m\s+here|who(?:'s|\s+is)\s+calling"
+    r")\b",
     re.I,
 )
 
@@ -118,8 +123,8 @@ def refine_with_whisper(
         return "IVR", max(0.9, float(xgb_probs.get("IVR", 0.5))), {**details, "cue": "ivr"}
     if _MACHINE_RE.search(text):
         return "MACHINE", max(0.92, float(xgb_probs.get("MACHINE", 0.5))), {**details, "cue": "voicemail"}
-    if _HUMAN_RE.search(text) and len(text.split()) <= 6:
-        return "HUMAN", max(0.88, float(xgb_probs.get("HUMAN", 0.5))), {**details, "cue": "human_short"}
+    if _HUMAN_RE.search(text) and len(text.split()) <= 10:
+        return "HUMAN", max(0.90, float(xgb_probs.get("HUMAN", 0.5))), {**details, "cue": "human_short"}
 
     # No strong cue — leave XGB decision
     return None, 0.0, {**details, "cue": "none"}
@@ -177,7 +182,7 @@ def transcribe_audio(
             cue = "ivr"
         elif _MACHINE_RE.search(text):
             cue = "voicemail"
-        elif _HUMAN_RE.search(text) and len(text.split()) <= 6:
+        elif _HUMAN_RE.search(text) and len(text.split()) <= 10:
             cue = "human_short"
         else:
             cue = "none"

@@ -1,8 +1,9 @@
-"""Optional ML AMD pipeline (Silero features → XGBoost → Whisper on uncertain HUMAN).
+"""Optional ML AMD pipeline (Silero features → XGBoost → Whisper).
 
-Whisper runs only when the model would send a call to an agent (HUMAN) but
-confidence is below the Settings threshold. MACHINE / IVR / SIT are accepted
-immediately — no Whisper load on those calls.
+Whisper runs when:
+  - XGBoost would send HUMAN to an agent below the Settings threshold, or
+  - XGBoost says MACHINE/IVR on a short live pickup ("hello") so we do not
+    hang up a person. Beep / long greetings still skip Whisper.
 
 Only imported when Settings → ML pipeline is enabled. Disabled = zero overhead
 beyond the existing hybrid engine.
@@ -38,7 +39,9 @@ def run_ml_pipeline(
     confidence is the winning class probability from XGBoost (or Whisper refine).
 
     Policy (agent-protect):
-      - BLANK / MACHINE / IVR / SIT → accept immediately (no Whisper)
+      - BLANK → accept immediately
+      - MACHINE / IVR with beep or long greeting → accept
+      - MACHINE / IVR that looks like a short "hello" → Whisper (or keep HUMAN)
       - HUMAN + conf >= threshold → pass to agent
       - HUMAN + conf < threshold → Faster-Whisper Tiny refine
     """
@@ -49,7 +52,7 @@ def run_ml_pipeline(
     low_thr = float(cfg.get("ml_low_confidence_threshold", 0.85))
     call_meta = call_meta or {}
 
-    from app.ai.engine import _blank_disposition, _is_blank
+    from app.ai.engine import _blank_disposition, _is_blank, _looks_like_short_human
     from app.amd_settings import is_blank_as_machine_enabled
 
     if is_blank_as_machine_enabled() and _is_blank(feats, silero):
@@ -90,6 +93,8 @@ def run_ml_pipeline(
     details["xgb_status"] = status
     details["xgb_confidence"] = round(float(conf), 4)
     details["whisper_used"] = False
+    looks_human = _looks_like_short_human(feats, silero)
+    no_beep = float(feats.get("beep", 0.0) or 0.0) < 0.5
 
     # Keep clear SIT from hybrid when XGB is unsure HUMAN
     if status == "HUMAN" and hybrid_status == "SIT" and hybrid_confidence >= 0.8:
@@ -97,7 +102,41 @@ def run_ml_pipeline(
         details["ml_note"] = "keep_hybrid_sit"
         return status, float(conf), details
 
-    # Answering machine / IVR / SIT / BLANK → accept as-is (no Whisper)
+    # XGB MACHINE/IVR on a short live pickup — do not hang up without Whisper
+    if (
+        status in ("MACHINE", "IVR")
+        and no_beep
+        and (looks_human or hybrid_status == "HUMAN")
+    ):
+        details["ml_note"] = "xgb_machine_possible_human"
+        if whisper_on:
+            try:
+                from app.ai.whisper_amd import refine_with_whisper, whisper_available
+
+                if whisper_available():
+                    w_status, w_conf, w_det = refine_with_whisper(
+                        audio, sr, xgb_probs=probs, max_seconds=4.0
+                    )
+                    details["whisper"] = w_det
+                    details["whisper_used"] = True
+                    if w_status == "HUMAN":
+                        details["ml_note"] = "whisper_rescue_human"
+                        return w_status, float(w_conf), details
+                    if w_status in ("MACHINE", "IVR", "SIT"):
+                        details["ml_note"] = "whisper_confirm_non_human"
+                        return w_status, float(w_conf), details
+                    # Transcript empty / no cue — prefer live pickup
+                    if looks_human or hybrid_status == "HUMAN":
+                        details["ml_note"] = "whisper_no_cue_keep_human"
+                        return "HUMAN", max(float(hybrid_confidence), 0.84), details
+            except Exception as exc:
+                details["whisper_error"] = str(exc)
+                details["ml_note"] = "whisper_rescue_error"
+        if looks_human or hybrid_status == "HUMAN":
+            details["ml_note"] = (details.get("ml_note") or "") + "+keep_short_human"
+            return "HUMAN", max(float(hybrid_confidence), 0.84), details
+
+    # Answering machine / IVR / SIT / BLANK with strong evidence → accept
     if status != "HUMAN":
         details["ml_note"] = "non_human_accept"
         return status, float(conf), details

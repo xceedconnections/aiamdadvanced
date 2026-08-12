@@ -3,6 +3,7 @@ OpenAMD Advanced AI Engine — Hybrid (Heuristic + Silero VAD)
 
 Combines the Phase-3 outbound heuristic AMD rules with Silero VAD speech
 features. Prefer HUMAN when uncertain so live agents get calls.
+Short live greetings ("hello") must not be treated as voicemail.
 Blank / near-silent audio is disposed as BLANK (never to agents). VICIdial
 receives MACHINE (AA). Only return MACHINE/IVR/SIT with strong evidence
 otherwise.
@@ -29,7 +30,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "5.0.0",
+    "version": "5.1.0",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
 }
 
@@ -83,9 +84,25 @@ def _is_blank(
 
     if duration < 0.6:
         return True
-    # Peak / RMS before normalize — true silence / line-noise-only clips
+    # Digital silence only — a quiet "hello" can have a small peak
     if peak < 0.008:
         return True
+
+    if silero and silero.get("ok"):
+        s_ratio = float(silero.get("speech_ratio", 0.0))
+        s_mean = float(silero.get("mean_prob", 0.0))
+        s_long = float(silero.get("longest_speech_ms", 0.0))
+        s_segs = int(silero.get("num_segments", 0))
+        # Any real speech island (quiet hello) is not blank
+        if s_long >= 180 and s_mean >= 0.22:
+            return False
+        if s_segs >= 1 and s_long >= 200:
+            return False
+        if s_ratio < 0.06 and s_mean < 0.20 and s_long < 250 and s_segs <= 1:
+            return True
+        if peak < 0.05 and s_ratio < 0.10 and s_long < 400:
+            return True
+
     if peak < 0.025 and speech_ratio < 0.12 and activity_ratio < 0.15:
         return True
     if raw_rms < 0.003 and speech_ratio < 0.08:
@@ -95,17 +112,52 @@ def _is_blank(
     if peak < 0.04 and speech_ratio < 0.06 and activity_ratio < 0.10:
         return True
 
+    return False
+
+
+def _looks_like_short_human(
+    feats: Dict[str, float],
+    silero: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Live pickup: short 'hello' / 'yeah?' — not a voicemail greeting.
+
+    AMD windows are ~2s and often include leading/trailing silence, so a
+    human answer looks sparse. Scripted AM is longer / denser.
+    """
+    if float(feats.get("beep", 0.0)) >= 0.5:
+        return False
+    if float(feats.get("sit", 0.0)) >= 0.5:
+        return False
+    duration = float(feats.get("duration", 0.0))
+    if duration < 0.7 or duration > 3.4:
+        return False
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+
+    # Long continuous talk in the AMD window → greeting / IVR, not hello
+    if longest_burst >= 1400 and speech_ratio >= 0.42:
+        return False
+    if speech_ratio >= 0.62 and duration >= 2.2:
+        return False
+
     if silero and silero.get("ok"):
-        s_ratio = float(silero.get("speech_ratio", 0.0))
-        s_mean = float(silero.get("mean_prob", 0.0))
         s_long = float(silero.get("longest_speech_ms", 0.0))
         s_segs = int(silero.get("num_segments", 0))
-        # No meaningful speech across the clip
-        if s_ratio < 0.06 and s_mean < 0.20 and s_long < 250 and s_segs <= 1:
+        s_ratio = float(silero.get("speech_ratio", 0.0))
+        if s_long >= 1500 and s_ratio >= 0.38:
+            return False
+        if s_segs >= 4 and duration >= 2.0 and s_ratio >= 0.32:
+            return False
+        if s_segs <= 2 and s_long <= 1200 and s_long >= 120:
             return True
-        if peak < 0.05 and s_ratio < 0.10 and s_long < 400:
+        if s_segs <= 3 and s_long <= 900 and duration <= 2.8:
             return True
 
+    if num_bursts <= 5 and longest_burst <= 1200 and speech_ratio <= 0.55:
+        return True
+    if num_bursts <= 8 and longest_burst <= 450 and speech_ratio <= 0.38 and duration <= 2.6:
+        return True
     return False
 
 
@@ -360,6 +412,10 @@ def _classify_heuristic(
     if is_blank_as_machine_enabled() and _is_blank(feats):
         return _blank_disposition()[:2]
 
+    # Short live "hello" before aggressive NA voicemail rules
+    if _looks_like_short_human(feats):
+        return "HUMAN", 0.86
+
     vm_hit, vm_conf, _vm_note = _detect_voicemail_structure(feats, pack)
     if vm_hit:
         return "MACHINE", float(vm_conf)
@@ -411,6 +467,10 @@ def _fuse_with_silero(
     if _is_blank(feats, silero) and is_blank_as_machine_enabled():
         b_status, b_conf, b_note = _blank_disposition()
         return b_status, max(float(confidence), b_conf), b_note
+
+    # Live pickup ("hello") wins over choppy-VM / XGB-style machine guesses
+    if _looks_like_short_human(feats, silero) and status != "SIT":
+        return "HUMAN", max(float(confidence), 0.86), "short_human_greeting"
 
     if not silero.get("ok"):
         return status, confidence, "heuristic_only"
@@ -633,6 +693,16 @@ def analyze_audio(
             details["ml_pipeline_enabled"] = True
             details["ml_error"] = str(exc)
             # Keep hybrid decision on any ML failure
+
+    # Safety net: XGBoost often scores a short "hello" as MACHINE at 98%+
+    if (
+        status in ("MACHINE", "IVR")
+        and float(feats.get("beep", 0.0)) < 0.5
+        and _looks_like_short_human(feats, silero)
+    ):
+        status, confidence = "HUMAN", max(float(confidence), 0.86)
+        details["short_human_safety_override"] = True
+        details["fuse_note"] = "short_human_greeting"
 
     # Safety net: never send blank/silent clips to agents (ML can false-HUMAN)
     if (

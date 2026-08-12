@@ -52,43 +52,43 @@ def _make_bootstrap_dataset(n_per_class: int = 400) -> Tuple[np.ndarray, np.ndar
         })
 
     for _ in range(n_per_class):
-        # HUMAN — short sparse "hello?"
+        # HUMAN — short sparse "hello?" in a ~2s AMD window
         xs.append(row(
-            duration=float(rng.uniform(0.8, 2.0)),
-            speech_ratio=float(rng.uniform(0.05, 0.35)),
-            num_bursts=float(rng.integers(1, 3)),
-            longest_burst_ms=float(rng.uniform(80, 900)),
-            longest_silence_ms=float(rng.uniform(200, 1200)),
-            avg_burst_ms=float(rng.uniform(80, 600)),
-            activity_ratio=float(rng.uniform(0.1, 0.4)),
-            rms=float(rng.uniform(0.05, 0.25)),
-            peak=float(rng.uniform(0.3, 1.0)),
-            silero_speech_ratio=float(rng.uniform(0.05, 0.35)),
+            duration=float(rng.uniform(0.9, 3.0)),
+            speech_ratio=float(rng.uniform(0.04, 0.40)),
+            num_bursts=float(rng.integers(1, 4)),
+            longest_burst_ms=float(rng.uniform(120, 1100)),
+            longest_silence_ms=float(rng.uniform(200, 1600)),
+            avg_burst_ms=float(rng.uniform(80, 700)),
+            activity_ratio=float(rng.uniform(0.08, 0.42)),
+            rms=float(rng.uniform(0.04, 0.28)),
+            peak=float(rng.uniform(0.2, 1.0)),
+            silero_speech_ratio=float(rng.uniform(0.04, 0.38)),
             silero_num_segments=float(rng.integers(1, 3)),
-            silero_longest_speech_ms=float(rng.uniform(100, 900)),
-            silero_mean_prob=float(rng.uniform(0.2, 0.55)),
+            silero_longest_speech_ms=float(rng.uniform(150, 1100)),
+            silero_mean_prob=float(rng.uniform(0.22, 0.60)),
         ))
         ys.append(LABEL_TO_ID["HUMAN"])
 
-        # MACHINE — AM greeting / choppy / beep
+        # MACHINE — AM greeting / choppy / beep (longer, denser than hello)
         beep = float(rng.random() < 0.25)
         xs.append(row(
-            duration=float(rng.uniform(1.5, 3.5)),
-            speech_ratio=float(rng.uniform(0.35, 0.75)),
-            num_bursts=float(rng.integers(3, 10)),
-            longest_burst_ms=float(rng.uniform(200, 2200)),
+            duration=float(rng.uniform(2.0, 3.6)),
+            speech_ratio=float(rng.uniform(0.42, 0.82)),
+            num_bursts=float(rng.integers(4, 11)),
+            longest_burst_ms=float(rng.uniform(500, 2400)),
             longest_silence_ms=float(rng.uniform(200, 900)),
-            avg_burst_ms=float(rng.uniform(150, 800)),
+            avg_burst_ms=float(rng.uniform(180, 900)),
             internal_silence_ms=float(rng.uniform(300, 1200)),
-            activity_ratio=float(rng.uniform(0.4, 0.9)),
+            activity_ratio=float(rng.uniform(0.45, 0.92)),
             rms=float(rng.uniform(0.08, 0.35)),
             peak=float(rng.uniform(0.4, 1.0)),
             beep=beep,
             beep_conf=float(rng.uniform(0.7, 0.99)) if beep else 0.0,
-            silero_speech_ratio=float(rng.uniform(0.35, 0.8)),
-            silero_num_segments=float(rng.integers(2, 8)),
-            silero_longest_speech_ms=float(rng.uniform(800, 2500)),
-            silero_mean_prob=float(rng.uniform(0.4, 0.9)),
+            silero_speech_ratio=float(rng.uniform(0.40, 0.85)),
+            silero_num_segments=float(rng.integers(3, 9)),
+            silero_longest_speech_ms=float(rng.uniform(1200, 2600)),
+            silero_mean_prob=float(rng.uniform(0.45, 0.92)),
         ))
         ys.append(LABEL_TO_ID["MACHINE"])
 
