@@ -240,7 +240,7 @@ function teachButtons(r) {
     ["MACHINE", "VM"],
     ["IVR", "IVR"],
     ["SIT", "SIT"],
-    ["BLANK", "Blank"],
+    ["BLANK", "Blank / Silent"],
     ["FAX", "Fax"],
   ];
   const options = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
@@ -1365,7 +1365,8 @@ async function loadMlSamples() {
               <option value="HUMAN">HUMAN</option>
               <option value="MACHINE">Voicemail/MACHINE</option>
               <option value="IVR">IVR</option>
-              <option value="BLANK">BLANK</option>
+              <option value="SIT">SIT</option>
+              <option value="BLANK">BLANK / Silent</option>
             </select>`;
         return `<tr>
           <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
@@ -1516,7 +1517,8 @@ async function loadMlLogs() {
               <option value="HUMAN">HUMAN</option>
               <option value="MACHINE">MACHINE</option>
               <option value="IVR">IVR</option>
-              <option value="BLANK">BLANK</option>
+              <option value="SIT">SIT</option>
+              <option value="BLANK">BLANK / Silent</option>
             </select>`;
         const playBtn = s.has_audio
           ? `<button type="button" class="ghost btn-icon ml-log-play" data-id="${escapeHtml(s.id)}" title="Play WAV">▶</button>`
@@ -2196,12 +2198,12 @@ async function loadTraining() {
       <td>${statusBadge(r.status)}</td>
       <td>
         <select id="corr-${r.id}">
-          <option value="HUMAN">HUMAN</option>
-          <option value="MACHINE">MACHINE</option>
-          <option value="IVR">IVR</option>
-          <option value="SIT">CANCELLED</option>
-          <option value="BLANK">BLANK</option>
-          <option value="FAX">FAX</option>
+          <option value="HUMAN"${r.status === "HUMAN" ? " selected" : ""}>HUMAN</option>
+          <option value="MACHINE"${r.status === "MACHINE" ? " selected" : ""}>MACHINE</option>
+          <option value="IVR"${r.status === "IVR" ? " selected" : ""}>IVR</option>
+          <option value="SIT"${r.status === "SIT" ? " selected" : ""}>CANCELLED</option>
+          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>BLANK / Silent</option>
+          <option value="FAX"${r.status === "FAX" ? " selected" : ""}>FAX</option>
         </select>
       </td>
       <td><button class="ghost" type="button" onclick="saveCorrection(${r.id})">Save</button></td>
@@ -2226,12 +2228,12 @@ async function loadTraining() {
         ${audioButtons(r)}
         <label class="hint" style="margin:0">Correct to</label>
         <select id="corr-m-${r.id}">
-          <option value="HUMAN">HUMAN</option>
-          <option value="MACHINE">MACHINE</option>
-          <option value="IVR">IVR</option>
-          <option value="SIT">CANCELLED</option>
-          <option value="BLANK">BLANK</option>
-          <option value="FAX">FAX</option>
+          <option value="HUMAN"${r.status === "HUMAN" ? " selected" : ""}>HUMAN</option>
+          <option value="MACHINE"${r.status === "MACHINE" ? " selected" : ""}>MACHINE</option>
+          <option value="IVR"${r.status === "IVR" ? " selected" : ""}>IVR</option>
+          <option value="SIT"${r.status === "SIT" ? " selected" : ""}>CANCELLED</option>
+          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>BLANK / Silent</option>
+          <option value="FAX"${r.status === "FAX" ? " selected" : ""}>FAX</option>
         </select>
         <button class="ghost" type="button" onclick="saveCorrectionMobile(${r.id})">Save correction</button>
       </div>

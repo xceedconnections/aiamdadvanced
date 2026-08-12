@@ -294,11 +294,16 @@ def wipe_ml_training(*, reset_model: bool = True) -> Dict[str, Any]:
 
 def _map_train_label(label: str) -> str:
     label_u = str(label).strip().upper()
+    if label_u == "BLANK":
+        return "MACHINE"
     if label_u in ("VOICEMAIL", "AM", "FAX", "SIT", "ERROR", "CANCELLED"):
         return "MACHINE"
     if label_u not in ("HUMAN", "MACHINE", "IVR"):
         return "MACHINE"
     return label_u
+
+
+_ML_TEACH_LABELS = {"HUMAN", "MACHINE", "IVR", "BLANK", "SIT", "FAX"}
 
 
 def _feats_silero_from_details(details: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -362,6 +367,7 @@ def ingest_call_correction_as_ml_sample(
             return None
 
     label = _map_train_label(taught_status)
+    taught_raw = str(taught_status).strip().upper()
     predicted = str(
         getattr(call, "raw_status", None) or details.get("heuristic_status") or getattr(call, "status", "") or ""
     ).strip().upper() or "UNKNOWN"
@@ -449,6 +455,7 @@ def ingest_call_correction_as_ml_sample(
         "confidence": round(float(conf), 4),
         "class_probs": {k: round(float(v), 4) for k, v in class_probs.items()},
         "label": label,
+        "taught_status": taught_raw or label,
         "labeled_by": username or "admin",
         "labeled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "feature_vector": feat_vec,
@@ -679,13 +686,17 @@ def enrich_sample_phones_from_db(db: Any, *, limit: int = 200) -> Dict[str, Any]
 
 
 def label_sample(sample_id: str, label: str, *, username: str = "") -> Dict[str, Any]:
-    label_u = _map_train_label(label)
+    label_raw = str(label).strip().upper()
+    if label_raw not in _ML_TEACH_LABELS:
+        raise ValueError(f"label must be one of: {', '.join(sorted(_ML_TEACH_LABELS))}")
+    label_u = _map_train_label(label_raw)
 
     path = samples_dir() / f"{sample_id}.json"
     if not path.exists():
         raise FileNotFoundError(f"sample not found: {sample_id}")
     meta = json.loads(path.read_text(encoding="utf-8"))
     meta["label"] = label_u
+    meta["taught_status"] = label_raw
     meta["labeled_by"] = username or "admin"
     meta["labeled_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
