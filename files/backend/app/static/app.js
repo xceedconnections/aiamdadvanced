@@ -63,6 +63,7 @@ function showApp(show) {
     // Relink any on-disk WAVs to call rows (by call id)
     api("/api/recordings/repair", { method: "POST" }).catch(() => {});
     loadHealth();
+    refreshSidebarStatus();
     loadDisplayTimezone().finally(() => {
       openPage(routePages[window.location.pathname] || "dashboard");
       startLiveTimer();
@@ -674,6 +675,7 @@ async function loadDashboard() {
 }
 
 function updateSidebarStatus(system) {
+  if (!system) return;
   const status = (system.status || "ok").toLowerCase();
   const label = status === "ok" ? "Healthy" : status.toUpperCase();
   const el = $("#ss-status-label");
@@ -681,13 +683,31 @@ function updateSidebarStatus(system) {
   const cpu = Number(system.cpu_percent || 0);
   const ram = Number(system.ram_percent || 0);
   const disk = Number(system.disk_percent || 0);
-  $("#ss-cpu").textContent = `${cpu}%`;
-  $("#ss-ram").textContent = `${ram}%`;
-  $("#ss-disk").textContent = `${disk}%`;
-  $("#ss-cpu-fill").style.width = `${Math.min(100, cpu)}%`;
-  $("#ss-ram-fill").style.width = `${Math.min(100, ram)}%`;
-  $("#ss-disk-fill").style.width = `${Math.min(100, disk)}%`;
-  $("#ss-uptime").textContent = formatUptime(system.uptime_seconds || 0);
+  const setText = (sel, val) => {
+    const n = $(sel);
+    if (n) n.textContent = val;
+  };
+  const setWidth = (sel, pct) => {
+    const n = $(sel);
+    if (n) n.style.width = `${Math.min(100, pct)}%`;
+  };
+  setText("#ss-cpu", `${cpu}%`);
+  setText("#ss-ram", `${ram}%`);
+  setText("#ss-disk", `${disk}%`);
+  setWidth("#ss-cpu-fill", cpu);
+  setWidth("#ss-ram-fill", ram);
+  setWidth("#ss-disk-fill", disk);
+  setText("#ss-uptime", formatUptime(system.uptime_seconds || 0));
+}
+
+async function refreshSidebarStatus() {
+  try {
+    const system = await api("/api/system/stats");
+    updateSidebarStatus(system);
+    updateHealthPill(system);
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 function updateHealthPill(system) {
@@ -1773,6 +1793,7 @@ async function loadServers() {
             ? `<button class="ghost" type="button" onclick="deactivateServer(${s.id})">Disable</button>`
             : `<button class="ghost" type="button" onclick="activateServer(${s.id})">Enable</button>`
         }
+        <button class="ghost" type="button" onclick="deleteServer(${s.id})">Delete</button>
       </td>
     </tr>`;
     })
@@ -1881,6 +1902,22 @@ window.editServer = (id) => {
 
 window.deactivateServer = async (id) => {
   if (!confirm("Disable this VICIdial server?")) return;
+  await api(`/api/servers/${id}`, {
+    method: "PATCH",
+    json: { is_active: false },
+  });
+  resetServerForm();
+  loadServers();
+};
+
+window.deleteServer = async (id) => {
+  if (
+    !confirm(
+      "Permanently delete this VICIdial server from the portal? Call history is kept. API keys for this server are removed."
+    )
+  ) {
+    return;
+  }
   await api(`/api/servers/${id}`, { method: "DELETE" });
   resetServerForm();
   loadServers();
@@ -2817,12 +2854,15 @@ async function refreshDashboardLive() {
 function startLiveTimer() {
   stopLiveTimer();
   tickClock();
+  refreshSidebarStatus();
   state.liveTimer = setInterval(() => {
-    if (!$("#page-live").classList.contains("hidden") && $("#live-auto").checked) {
+    if (!$("#page-live")?.classList.contains("hidden") && $("#live-auto")?.checked) {
       loadLive(true);
     }
-    if (!$("#page-dashboard").classList.contains("hidden")) {
+    if (!$("#page-dashboard")?.classList.contains("hidden")) {
       refreshDashboardLive();
+    } else {
+      refreshSidebarStatus();
     }
     tickClock();
   }, 5000);

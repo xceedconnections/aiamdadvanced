@@ -25,6 +25,11 @@ _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
 _ALLOWED_AMD_MODES = {"global", "classic", "ml"}
 
 
+def _require_admin(user: User):
+    if user.role not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
 def _apply_amd_mode_flags(fields: dict) -> dict:
     """Sync legacy flags from amd_mode so older resolve paths stay consistent."""
     out = dict(fields)
@@ -214,12 +219,18 @@ def delete_server(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    server.is_active = False
+    db.query(ApiKey).filter(ApiKey.server_id == server_id).delete(synchronize_session=False)
+    db.query(CallAnalysis).filter(CallAnalysis.server_id == server_id).update(
+        {CallAnalysis.server_id: None},
+        synchronize_session=False,
+    )
+    db.delete(server)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted": True, "id": server_id}
 
 
 def _api_key_out(record: ApiKey, *, raw_key: str | None = None, server_name: str = "") -> ApiKeyOut:
