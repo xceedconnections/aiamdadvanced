@@ -20,6 +20,8 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: str
     username: str
+    server_id: Optional[int] = None
+    server_name: str = ""
 
 
 class UserOut(BaseModel):
@@ -30,6 +32,36 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     created_at: datetime
+    server_id: Optional[int] = None
+    server_name: str = ""
+    last_login: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DialerUserCreate(BaseModel):
+    username: str = Field(..., min_length=2, max_length=64)
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field("", max_length=128)
+
+
+class DialerUserUpdate(BaseModel):
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
+    full_name: Optional[str] = Field(None, max_length=128)
+    is_active: Optional[bool] = None
+
+
+class DialerUserOut(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    role: str
+    server_id: int
+    server_name: str = ""
+    is_active: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
 
     class Config:
         from_attributes = True

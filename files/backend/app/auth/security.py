@@ -76,6 +76,47 @@ def get_current_user(
     return _user_from_token(credentials.credentials, db)
 
 
+def is_dialer_user(user: User) -> bool:
+    return (getattr(user, "role", "") or "").lower() == "dialer"
+
+
+def dialer_server_id(user: User) -> Optional[int]:
+    if not is_dialer_user(user):
+        return None
+    sid = getattr(user, "server_id", None)
+    try:
+        return int(sid) if sid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def require_admin(user: User) -> None:
+    if getattr(user, "role", "") not in ("superadmin", "admin"):
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
+def require_not_dialer(user: User) -> None:
+    if is_dialer_user(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Dialer portal users can only view Live Calls and CDR",
+        )
+
+
+def scoped_server_id(user: User, requested: Optional[int] = None) -> Optional[int]:
+    """Force dialer users onto their server; admins keep the requested filter."""
+    locked = dialer_server_id(user)
+    if locked is not None:
+        return locked
+    if requested is None:
+        return None
+    try:
+        value = int(requested)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def get_current_user_bearer_or_query(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     token: Optional[str] = Query(None, description="JWT for audio/download links"),

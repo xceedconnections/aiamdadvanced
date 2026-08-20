@@ -75,17 +75,47 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     user.last_login = datetime.utcnow()
     db.commit()
 
-    token = create_access_token({"sub": user.username, "role": user.role})
+    server_name = ""
+    sid = getattr(user, "server_id", None)
+    if sid:
+        srv = db.query(VicidialServer).filter(VicidialServer.id == sid).first()
+        server_name = srv.name if srv else ""
+
+    token = create_access_token(
+        {
+            "sub": user.username,
+            "role": user.role,
+            "server_id": sid,
+        }
+    )
     return TokenResponse(
         access_token=token,
         role=user.role,
         username=user.username,
+        server_id=sid,
+        server_name=server_name,
     )
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
-    return user
+def me(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    server_name = ""
+    sid = getattr(user, "server_id", None)
+    if sid:
+        srv = db.query(VicidialServer).filter(VicidialServer.id == sid).first()
+        server_name = srv.name if srv else ""
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name or "",
+        role=user.role,
+        is_active=bool(user.is_active),
+        created_at=user.created_at,
+        server_id=sid,
+        server_name=server_name,
+        last_login=user.last_login,
+    )
 
 
 @router.post("/change-password")
@@ -116,23 +146,47 @@ def dashboard_stats(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    from app.auth.security import dialer_server_id
+
+    # Dialer users use Live/CDR only — keep endpoint but scope if somehow called
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
     q = db.query(CallAnalysis).filter(CallAnalysis.created_at >= today)
+    locked = dialer_server_id(user)
+    if locked is not None:
+        q = q.filter(CallAnalysis.server_id == locked)
+
     total = q.count()
 
     def count_status(status: str) -> int:
         return q.filter(CallAnalysis.status == status).count()
 
-    avg_ms = db.query(func.avg(CallAnalysis.processing_ms)).filter(
-        CallAnalysis.created_at >= today
-    ).scalar() or 0.0
-    avg_conf = db.query(func.avg(CallAnalysis.confidence)).filter(
-        CallAnalysis.created_at >= today
-    ).scalar() or 0.0
+    avg_ms = (
+        db.query(func.avg(CallAnalysis.processing_ms))
+        .filter(CallAnalysis.created_at >= today)
+    )
+    avg_conf = (
+        db.query(func.avg(CallAnalysis.confidence))
+        .filter(CallAnalysis.created_at >= today)
+    )
+    if locked is not None:
+        avg_ms = avg_ms.filter(CallAnalysis.server_id == locked)
+        avg_conf = avg_conf.filter(CallAnalysis.server_id == locked)
+    avg_ms = avg_ms.scalar() or 0.0
+    avg_conf = avg_conf.scalar() or 0.0
 
-    total_servers = db.query(VicidialServer).count()
-    active_servers = db.query(VicidialServer).filter(VicidialServer.is_active == True).count()
+    if locked is not None:
+        total_servers = 1
+        active_servers = (
+            db.query(VicidialServer)
+            .filter(VicidialServer.id == locked, VicidialServer.is_active == True)
+            .count()
+        )
+    else:
+        total_servers = db.query(VicidialServer).count()
+        active_servers = (
+            db.query(VicidialServer).filter(VicidialServer.is_active == True).count()
+        )
 
     return DashboardStats(
         total_calls_today=total,

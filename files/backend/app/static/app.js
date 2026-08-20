@@ -1,6 +1,9 @@
 const state = {
   token: localStorage.getItem("openamd_token") || "",
   username: localStorage.getItem("openamd_user") || "",
+  role: localStorage.getItem("openamd_role") || "",
+  serverId: localStorage.getItem("openamd_server_id") || "",
+  serverName: localStorage.getItem("openamd_server_name") || "",
   displayTimezone: localStorage.getItem("openamd_tz") || "UTC",
   liveTimer: null,
   audioObjectUrl: null,
@@ -13,6 +16,12 @@ const state = {
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+const DIALER_PAGES = new Set(["live", "cdr"]);
+
+function isDialerUser() {
+  return (state.role || "").toLowerCase() === "dialer";
+}
 
 const routePages = {
   "/": "dashboard",
@@ -59,13 +68,24 @@ function showApp(show) {
   $("#app-view").classList.toggle("hidden", !show);
   closeNav();
   if (show) {
-    $("#whoami").textContent = state.username || "admin";
-    // Relink any on-disk WAVs to call rows (by call id)
-    api("/api/recordings/repair", { method: "POST" }).catch(() => {});
-    loadHealth();
+    const who = state.username || "admin";
+    const label = isDialerUser() && state.serverName
+      ? `${who} · ${state.serverName}`
+      : who;
+    $("#whoami").textContent = label;
+    applyRoleUi();
+    if (!isDialerUser()) {
+      api("/api/recordings/repair", { method: "POST" }).catch(() => {});
+      loadHealth();
+    }
     refreshSidebarStatus();
     loadDisplayTimezone().finally(() => {
-      openPage(routePages[window.location.pathname] || "dashboard");
+      let page = routePages[window.location.pathname] || "dashboard";
+      if (isDialerUser() && !DIALER_PAGES.has(page)) {
+        page = "live";
+        history.replaceState({}, "", "/livecalls.php");
+      }
+      openPage(page);
       startLiveTimer();
     });
   } else {
@@ -74,13 +94,36 @@ function showApp(show) {
   }
 }
 
+function applyRoleUi() {
+  const dialer = isDialerUser();
+  $$(".nav").forEach((link) => {
+    const page = link.dataset.page;
+    const allowed = !dialer || DIALER_PAGES.has(page);
+    link.classList.toggle("hidden", !allowed);
+  });
+  ["#live-server-filter", "#cdr-server-filter"].forEach((sel) => {
+    const el = $(sel);
+    if (!el) return;
+    el.closest("label")?.classList.toggle("hidden", dialer);
+    el.disabled = dialer;
+  });
+  const tzLabel = $("#display-timezone")?.closest("label");
+  if (tzLabel) tzLabel.classList.toggle("hidden", dialer);
+}
+
 function logout(clear = true) {
   if (clear) {
     localStorage.removeItem("openamd_token");
     localStorage.removeItem("openamd_user");
+    localStorage.removeItem("openamd_role");
+    localStorage.removeItem("openamd_server_id");
+    localStorage.removeItem("openamd_server_name");
   }
   state.token = "";
   state.username = "";
+  state.role = "";
+  state.serverId = "";
+  state.serverName = "";
   showApp(false);
 }
 
@@ -108,8 +151,14 @@ $("#login-form").addEventListener("submit", async (e) => {
     });
     state.token = data.access_token;
     state.username = data.username;
+    state.role = data.role || "";
+    state.serverId = data.server_id != null ? String(data.server_id) : "";
+    state.serverName = data.server_name || "";
     localStorage.setItem("openamd_token", state.token);
     localStorage.setItem("openamd_user", state.username);
+    localStorage.setItem("openamd_role", state.role);
+    localStorage.setItem("openamd_server_id", state.serverId);
+    localStorage.setItem("openamd_server_name", state.serverName);
     showApp(true);
   } catch (err) {
     $("#login-error").textContent = err.message || "Login failed";
@@ -119,6 +168,10 @@ $("#login-form").addEventListener("submit", async (e) => {
 $("#logout-btn").addEventListener("click", () => logout(true));
 
 function openPage(page) {
+  if (isDialerUser() && !DIALER_PAGES.has(page)) {
+    page = "live";
+    history.replaceState({}, "", "/livecalls.php");
+  }
   const link = $(`.nav[data-page="${page}"]`) || $(".nav[data-page='dashboard']");
   $$(".nav").forEach((item) => item.classList.remove("active"));
   link.classList.add("active");
@@ -907,7 +960,8 @@ $("#system-health-toggle")?.addEventListener("click", () => {
 function liveQueryParams(limit = 100) {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
-  const serverId = $("#live-server-filter")?.value || "";
+  let serverId = $("#live-server-filter")?.value || "";
+  if (isDialerUser() && state.serverId) serverId = state.serverId;
   const status = $("#live-status-filter")?.value || "";
   const within = $("#live-window")?.value || "";
   if (serverId) params.set("server_id", serverId);
@@ -920,7 +974,8 @@ function cdrQueryParams() {
   const params = new URLSearchParams();
   params.set("page", String(state.cdrPage || 1));
   params.set("page_size", String(state.cdrPageSize || 50));
-  const serverId = $("#cdr-server-filter")?.value || "";
+  let serverId = $("#cdr-server-filter")?.value || "";
+  if (isDialerUser() && state.serverId) serverId = state.serverId;
   const status = $("#cdr-status-filter")?.value || "";
   const q = ($("#cdr-search")?.value || "").trim();
   const mode = $("#cdr-mode")?.value || "recent";
@@ -950,23 +1005,25 @@ async function fillServerFilters() {
   try {
     const servers = await api("/api/servers");
     const options =
-      `<option value="">ALL</option>` +
+      (isDialerUser()
+        ? ""
+        : `<option value="">ALL</option>`) +
       servers
         .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
         .join("");
     const liveSel = $("#live-server-filter");
     const cdrSel = $("#cdr-server-filter");
     const trainSel = $("#train-server-filter");
-    const liveVal = liveSel?.value || "";
-    const cdrVal = cdrSel?.value || "";
+    const liveVal = isDialerUser() && state.serverId ? state.serverId : liveSel?.value || "";
+    const cdrVal = isDialerUser() && state.serverId ? state.serverId : cdrSel?.value || "";
     const trainVal = trainSel?.value || "";
     if (liveSel) {
       liveSel.innerHTML = options;
-      liveSel.value = liveVal;
+      if (liveVal) liveSel.value = liveVal;
     }
     if (cdrSel) {
       cdrSel.innerHTML = options;
-      cdrSel.value = cdrVal;
+      if (cdrVal) cdrSel.value = cdrVal;
     }
     if (trainSel) {
       trainSel.innerHTML = options;
@@ -1820,6 +1877,27 @@ async function loadServers() {
       $("#key-manager")?.classList.add("hidden");
     }
   }
+
+  const portalSel = $("#portal-server-select");
+  if (portalSel) {
+    portalSel.innerHTML =
+      `<option value="">— Select a server —</option>` +
+      servers
+        .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
+        .join("");
+    const prevP = window.__openamd_portal_server_id;
+    if (prevP) {
+      portalSel.value = String(prevP);
+      if (portalSel.value === String(prevP)) {
+        loadPortalUsers();
+      } else {
+        window.__openamd_portal_server_id = null;
+        $("#portal-user-manager")?.classList.add("hidden");
+      }
+    } else {
+      $("#portal-user-manager")?.classList.add("hidden");
+    }
+  }
 }
 
 function serverAmdMode() {
@@ -2183,6 +2261,128 @@ window.deleteApiKey = async (keyId) => {
       msg.className = "error";
       msg.textContent = err.message;
     }
+  }
+};
+
+async function loadPortalUsers() {
+  const select = $("#portal-server-select");
+  const serverId = Number(select?.value || 0);
+  const mgr = $("#portal-user-manager");
+  if (!serverId) {
+    mgr?.classList.add("hidden");
+    return;
+  }
+  window.__openamd_portal_server_id = serverId;
+  mgr?.classList.remove("hidden");
+  const servers = window.__openamd_servers || [];
+  const srv = servers.find((s) => s.id === serverId);
+  $("#portal-server-label").textContent = srv?.name || `#${serverId}`;
+  try {
+    const rows = await api(`/api/servers/${serverId}/portal-users`);
+    $("#portal-users-body").innerHTML =
+      rows
+        .map(
+          (u) => `<tr>
+        <td><strong>${escapeHtml(u.username)}</strong></td>
+        <td>${escapeHtml(u.full_name || "—")}</td>
+        <td>${fmtTime(u.last_login)}</td>
+        <td>${u.is_active ? "Yes" : "No"}</td>
+        <td style="white-space:nowrap">
+          <button class="ghost" type="button" onclick="resetPortalPassword(${u.id})">Reset password</button>
+          ${
+            u.is_active
+              ? `<button class="ghost" type="button" onclick="setPortalUserActive(${u.id}, false)">Disable</button>`
+              : `<button class="ghost" type="button" onclick="setPortalUserActive(${u.id}, true)">Enable</button>`
+          }
+          <button class="ghost" type="button" onclick="deletePortalUser(${u.id})">Delete</button>
+        </td>
+      </tr>`
+        )
+        .join("") || `<tr><td colspan="5" class="hint">No portal logins yet</td></tr>`;
+  } catch (err) {
+    $("#portal-users-body").innerHTML = `<tr><td colspan="5" class="error">${escapeHtml(
+      err.message
+    )}</td></tr>`;
+  }
+}
+
+$("#portal-server-select")?.addEventListener("change", () => loadPortalUsers());
+$("#portal-refresh-btn")?.addEventListener("click", () => loadPortalUsers());
+
+$("#portal-user-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#portal-msg");
+  const serverId = Number($("#portal-server-select")?.value || 0);
+  if (!serverId) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Select a VICIdial server first.";
+    }
+    return;
+  }
+  const username = ($("#portal-username")?.value || "").trim();
+  const password = ($("#portal-password")?.value || "").trim();
+  const full_name = ($("#portal-fullname")?.value || "").trim();
+  try {
+    await api(`/api/servers/${serverId}/portal-users`, {
+      method: "POST",
+      json: { username, password, full_name },
+    });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = `Created login "${username}" — they can sign in and view Live + CDR for this dialer only.`;
+    }
+    e.target.reset();
+    await loadPortalUsers();
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+});
+
+window.resetPortalPassword = async (userId) => {
+  const pwd = prompt("New password (min 8 characters):");
+  if (pwd == null) return;
+  if (String(pwd).trim().length < 8) {
+    alert("Password must be at least 8 characters.");
+    return;
+  }
+  try {
+    await api(`/api/servers/portal-users/${userId}`, {
+      method: "PATCH",
+      json: { password: String(pwd).trim() },
+    });
+    const msg = $("#portal-msg");
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "Password updated.";
+    }
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+window.setPortalUserActive = async (userId, active) => {
+  try {
+    await api(`/api/servers/portal-users/${userId}`, {
+      method: "PATCH",
+      json: { is_active: !!active },
+    });
+    await loadPortalUsers();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+window.deletePortalUser = async (userId) => {
+  if (!confirm("Permanently delete this portal login?")) return;
+  try {
+    await api(`/api/servers/portal-users/${userId}`, { method: "DELETE" });
+    await loadPortalUsers();
+  } catch (err) {
+    alert(err.message);
   }
 };
 

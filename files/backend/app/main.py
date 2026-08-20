@@ -90,6 +90,8 @@ def ensure_schema():
             "ALTER TABLE training_corrections ALTER COLUMN call_id DROP NOT NULL",
             # Never force future AMD from phone teaches — deactivate any legacy overrides
             "UPDATE training_overrides SET is_active = FALSE WHERE is_active = TRUE",
+            # Dialer portal login locked to one VICIdial server
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS server_id INTEGER",
         ):
             try:
                 conn.execute(text(stmt))

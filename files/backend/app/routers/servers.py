@@ -1,11 +1,18 @@
 from datetime import datetime
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.amd_settings import server_amd_mode
-from app.auth.security import generate_api_key, get_current_user, hash_api_key
+from app.auth.security import (
+    dialer_server_id,
+    generate_api_key,
+    get_current_user,
+    hash_api_key,
+    hash_password,
+)
 from app.database import get_db
 from app.models.api_key import ApiKey
 from app.models.call import CallAnalysis
@@ -14,6 +21,9 @@ from app.models.user import User
 from app.schemas import (
     ApiKeyCreate,
     ApiKeyOut,
+    DialerUserCreate,
+    DialerUserOut,
+    DialerUserUpdate,
     ServerCreate,
     ServerOut,
     ServerUpdate,
@@ -23,6 +33,7 @@ router = APIRouter(prefix="/api/servers", tags=["servers"])
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
 _ALLOWED_AMD_MODES = {"global", "classic", "ml"}
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{2,64}$")
 
 
 def _require_admin(user: User):
@@ -131,7 +142,11 @@ def list_servers(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    servers = db.query(VicidialServer).order_by(VicidialServer.name).all()
+    q = db.query(VicidialServer).order_by(VicidialServer.name)
+    locked = dialer_server_id(user)
+    if locked is not None:
+        q = q.filter(VicidialServer.id == locked)
+    servers = q.all()
     return [_server_out(db, s) for s in servers]
 
 
@@ -141,6 +156,7 @@ def create_server(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     exists = db.query(VicidialServer).filter(VicidialServer.name == payload.name).first()
     if exists:
         raise HTTPException(status_code=400, detail="Server name already exists")
@@ -178,6 +194,9 @@ def get_server(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    locked = dialer_server_id(user)
+    if locked is not None and locked != server_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -191,6 +210,7 @@ def update_server(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -223,6 +243,7 @@ def delete_server(
     server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    db.query(User).filter(User.server_id == server_id).delete(synchronize_session=False)
     db.query(ApiKey).filter(ApiKey.server_id == server_id).delete(synchronize_session=False)
     db.query(CallAnalysis).filter(CallAnalysis.server_id == server_id).update(
         {CallAnalysis.server_id: None},
@@ -257,6 +278,7 @@ def create_api_key(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     server = db.query(VicidialServer).filter(VicidialServer.id == payload.server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -284,6 +306,7 @@ def list_api_keys(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     q = db.query(ApiKey)
     if server_id:
         q = q.filter(ApiKey.server_id == server_id)
@@ -305,9 +328,130 @@ def revoke_api_key(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _require_admin(user)
     key = db.query(ApiKey).filter(ApiKey.id == key_id).first()
     if not key:
         raise HTTPException(status_code=404, detail="API key not found")
     key.is_active = False
     db.commit()
     return {"ok": True, "id": key_id, "deleted": True}
+
+
+def _dialer_user_out(u: User, server_name: str = "") -> DialerUserOut:
+    return DialerUserOut(
+        id=u.id,
+        username=u.username,
+        full_name=u.full_name or "",
+        role=u.role,
+        server_id=int(u.server_id),
+        server_name=server_name,
+        is_active=bool(u.is_active),
+        created_at=u.created_at,
+        last_login=u.last_login,
+    )
+
+
+@router.get("/{server_id}/portal-users", response_model=list[DialerUserOut])
+def list_portal_users(
+    server_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    rows = (
+        db.query(User)
+        .filter(User.server_id == server_id, User.role == "dialer")
+        .order_by(User.username)
+        .all()
+    )
+    return [_dialer_user_out(u, server.name) for u in rows]
+
+
+@router.post("/{server_id}/portal-users", response_model=DialerUserOut)
+def create_portal_user(
+    server_id: int,
+    payload: DialerUserCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    server = db.query(VicidialServer).filter(VicidialServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    username = (payload.username or "").strip()
+    if not _USERNAME_RE.match(username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 2–64 chars: letters, numbers, . _ @ -",
+        )
+    if len((payload.password or "").strip()) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    exists = db.query(User).filter(User.username == username).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    email = f"{username}@dialer{server_id}.openamd.local"
+    if db.query(User).filter(User.email == email).first():
+        email = f"{username}.{server_id}.{int(datetime.utcnow().timestamp())}@dialer.openamd.local"
+
+    row = User(
+        username=username,
+        email=email,
+        hashed_password=hash_password(payload.password.strip()),
+        full_name=(payload.full_name or "").strip() or username,
+        role="dialer",
+        server_id=server_id,
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _dialer_user_out(row, server.name)
+
+
+@router.patch("/portal-users/{user_id}", response_model=DialerUserOut)
+def update_portal_user(
+    user_id: int,
+    payload: DialerUserUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    row = db.query(User).filter(User.id == user_id, User.role == "dialer").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Portal user not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "password" in data and data["password"]:
+        pwd = str(data["password"]).strip()
+        if len(pwd) < 8:
+            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+        row.hashed_password = hash_password(pwd)
+    if "full_name" in data and data["full_name"] is not None:
+        row.full_name = str(data["full_name"]).strip()
+    if "is_active" in data and data["is_active"] is not None:
+        row.is_active = bool(data["is_active"])
+    db.commit()
+    db.refresh(row)
+    srv = db.query(VicidialServer).filter(VicidialServer.id == row.server_id).first()
+    return _dialer_user_out(row, srv.name if srv else "")
+
+
+@router.delete("/portal-users/{user_id}")
+def delete_portal_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    row = db.query(User).filter(User.id == user_id, User.role == "dialer").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Portal user not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "deleted": True, "id": user_id}
+

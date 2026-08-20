@@ -509,6 +509,57 @@
             </form>
           </div>
         </div>
+
+        <div class="panel" style="margin-top:1rem">
+          <div class="panel-head"><h3>Dialer portal logins</h3></div>
+          <p class="hint">
+            Create a username and password for a VICIdial server. That user can sign in and only view
+            <strong>Live Calls</strong> and <strong>CDR</strong> for that dialer.
+          </p>
+          <div class="form-stack" style="max-width:520px;margin-top:.5rem">
+            <label for="portal-server-select">VICIdial server</label>
+            <select id="portal-server-select">
+              <option value="">— Select a server —</option>
+            </select>
+          </div>
+          <div id="portal-user-manager" class="hidden" style="margin-top:1rem">
+            <div class="panel-head" style="padding:0;margin:0 0 .5rem">
+              <h3 style="font-size:1rem;margin:0">Logins for <span id="portal-server-label">—</span></h3>
+              <button type="button" class="ghost" id="portal-refresh-btn">Refresh</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Name</th>
+                    <th>Last login</th>
+                    <th>Active</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="portal-users-body">
+                  <tr><td colspan="5" class="hint">Select a server…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <form id="portal-user-form" class="form-stack" style="max-width:520px;margin-top:1.25rem">
+              <div class="panel-head" style="padding:0;margin:0 0 .35rem">
+                <h3 style="font-size:1rem;margin:0">Create portal login</h3>
+              </div>
+              <label for="portal-username">Username</label>
+              <input id="portal-username" name="username" required maxlength="64" placeholder="dialer1" autocomplete="off" />
+              <label for="portal-fullname">Display name (optional)</label>
+              <input id="portal-fullname" name="full_name" maxlength="128" placeholder="USA Dialer Ops" />
+              <label for="portal-password">Password (min 8)</label>
+              <input id="portal-password" name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password" />
+              <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap">
+                <button type="submit" id="portal-create-btn">Create login</button>
+              </div>
+              <p id="portal-msg" class="hint"></p>
+            </form>
+          </div>
+        </div>
       </section>
 
       <section id="page-reports" class="page hidden">

@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, undefer
 
-from app.auth.security import get_current_user, get_current_user_bearer_or_query
+from app.auth.security import (
+    dialer_server_id,
+    get_current_user,
+    get_current_user_bearer_or_query,
+)
 from app.database import get_db
 from app.models.call import CallAnalysis
 from app.models.user import User
@@ -20,13 +24,22 @@ from app.recordings import (
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 
 
-def _get_call(analysis_id: int, db: Session, *, load_blob: bool = False) -> CallAnalysis:
+def _get_call(
+    analysis_id: int,
+    db: Session,
+    user: User,
+    *,
+    load_blob: bool = False,
+) -> CallAnalysis:
     q = db.query(CallAnalysis)
     if load_blob:
         q = q.options(undefer(CallAnalysis.audio_blob))
     call = q.filter(CallAnalysis.id == analysis_id).first()
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    locked = dialer_server_id(user)
+    if locked is not None and int(call.server_id or 0) != locked:
+        raise HTTPException(status_code=403, detail="Access denied")
     return call
 
 
@@ -69,6 +82,9 @@ def recordings_status(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    from app.auth.security import require_not_dialer
+
+    require_not_dialer(user)
     root = ensure_recordings_dir()
     files = list_recording_index()
     sample = [str(p) for p in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[:8]]
@@ -93,6 +109,9 @@ def repair_recordings(
     user: User = Depends(get_current_user),
     limit: int = 500,
 ):
+    from app.auth.security import require_not_dialer
+
+    require_not_dialer(user)
     ensure_recordings_dir()
     index = list_recording_index()
     rows = db.query(CallAnalysis).order_by(CallAnalysis.id.desc()).limit(limit).all()
@@ -115,7 +134,7 @@ def recording_info(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    call = _get_call(analysis_id, db)
+    call = _get_call(analysis_id, db, user)
     meta = recording_meta(call)
     return {
         "analysis_id": call.id,
@@ -131,7 +150,7 @@ def play_recording(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_bearer_or_query),
 ):
-    call = _get_call(analysis_id, db, load_blob=True)
+    call = _get_call(analysis_id, db, user, load_blob=True)
     return _audio_response(call, db, as_attachment=False)
 
 
@@ -141,5 +160,5 @@ def download_recording(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_bearer_or_query),
 ):
-    call = _get_call(analysis_id, db, load_blob=True)
+    call = _get_call(analysis_id, db, user, load_blob=True)
     return _audio_response(call, db, as_attachment=True)

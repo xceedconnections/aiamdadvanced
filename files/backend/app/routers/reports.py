@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, require_not_dialer, scoped_server_id
 from app.database import get_db
 from app.models.call import CallAnalysis
 from app.models.correction import TrainingCorrection
@@ -274,6 +274,7 @@ def live_calls(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    server_id = scoped_server_id(user, server_id)
     rows = _filtered_query(
         db,
         server_id=server_id,
@@ -299,6 +300,7 @@ def cdr_calls(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    server_id = scoped_server_id(user, server_id)
     base = _filtered_query(
         db,
         server_id=server_id,
@@ -332,6 +334,7 @@ def cdr_export(
     user: User = Depends(get_current_user),
 ):
     """Export filtered CDR as CSV or Excel (.xls SpreadsheetML)."""
+    server_id = scoped_server_id(user, server_id)
     base = _filtered_query(
         db,
         server_id=server_id,
@@ -375,6 +378,7 @@ def training_calls(
     user: User = Depends(get_current_user),
 ):
     """Calls for Training page — search by called number / caller ID, then correct."""
+    require_not_dialer(user)
     rows = _filtered_query(db, server_id=server_id, status=status, q=q).limit(limit).all()
     return _call_out_list(db, rows, repair=False)
 
@@ -385,6 +389,7 @@ def server_reports(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    require_not_dialer(user)
     since = datetime.utcnow() - timedelta(days=days)
     servers = db.query(VicidialServer).order_by(VicidialServer.name).all()
     reports = []
@@ -452,6 +457,7 @@ def hourly_report(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    require_not_dialer(user)
     since = datetime.utcnow() - timedelta(hours=24)
     q = db.query(
         func.date_trunc("hour", CallAnalysis.created_at).label("hour"),
