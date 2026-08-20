@@ -35,6 +35,10 @@ class VicidialServer(Base):
     locale_pack_enabled = Column(Boolean, default=False)
     locale_pack = Column(String(32), default="usa")
 
+    # Max calls/sec this dialer may send to AI AMD (0 = unlimited).
+    # Over limit → HTTP 429 → AGI UNAVAILABLE → stock VICIdial AMD 8369.
+    max_cps = Column(Integer, default=0)
+
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

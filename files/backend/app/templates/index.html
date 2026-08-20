@@ -365,6 +365,7 @@
                   <tr>
                     <th>Name</th>
                     <th>IP whitelist</th>
+                    <th>CPS</th>
                     <th>Today</th>
                     <th>Total</th>
                     <th>Last seen</th>
@@ -389,6 +390,10 @@
               <label>Allowed dialer IPs (IP whitelist) — required to restrict access</label>
               <input name="ip_whitelist" id="server-ip-whitelist" placeholder="62.238.46.191" />
               <p class="hint">Comma-separated public IPs of VICIdial dialers allowed to call the API (example: <code>62.238.46.191</code>). Blank = any IP with a valid API key. Server name alone does not restrict access.</p>
+
+              <label for="server-max-cps">Max CPS (calls per second to AI AMD)</label>
+              <input name="max_cps" id="server-max-cps" type="number" min="0" max="10000" step="1" value="0" />
+              <p class="hint">Example: <strong>50</strong> = AI AMD accepts at most 50 calls/sec from this dialer. Overflow is rejected and VICIdial uses stock AMD <strong>8369</strong> (same as when AI AMD is offline). <strong>0</strong> = unlimited.</p>
 
               <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
               <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">AMD settings for this server</h3></div>

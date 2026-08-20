@@ -83,6 +83,10 @@ def _normalize_server_amd_fields(data: dict) -> dict:
     for key in ("ml_min_human_confidence_percent", "ml_save_threshold_percent"):
         if key in out and out[key] is not None:
             out[key] = max(50, min(99, int(out[key])))
+    if "max_cps" in out and out["max_cps"] is not None:
+        from app.cps_limit import normalize_max_cps
+
+        out["max_cps"] = normalize_max_cps(out["max_cps"])
     return out
 
 
@@ -130,6 +134,7 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         ),
         locale_pack_enabled=False,
         locale_pack="usa",
+        max_cps=int(getattr(server, "max_cps", 0) or 0),
         last_seen=server.last_seen,
         created_at=server.created_at,
         total_calls=total,
@@ -181,6 +186,7 @@ def create_server(
         ml_save_threshold_percent=int(fields.get("ml_save_threshold_percent", 85)),
         locale_pack_enabled=False,
         locale_pack="usa",
+        max_cps=int(fields.get("max_cps", 0) or 0),
     )
     db.add(server)
     db.commit()

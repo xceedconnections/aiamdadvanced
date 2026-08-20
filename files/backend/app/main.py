@@ -92,6 +92,7 @@ def ensure_schema():
             "UPDATE training_overrides SET is_active = FALSE WHERE is_active = TRUE",
             # Dialer portal login locked to one VICIdial server
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS server_id INTEGER",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS max_cps INTEGER DEFAULT 0",
         ):
             try:
                 conn.execute(text(stmt))

@@ -1839,6 +1839,7 @@ async function loadServers() {
         <div class="hint">${escapeHtml(s.timezone || "")}</div>
         <div class="hint">${escapeHtml(amd)}</div></td>
       <td><span class="hint">${escapeHtml(s.ip_whitelist || "(any)")}</span></td>
+      <td>${Number(s.max_cps) > 0 ? Number(s.max_cps) : "∞"}</td>
       <td>${s.calls_today}</td>
       <td>${s.total_calls}</td>
       <td>${fmtTime(s.last_seen)}</td>
@@ -1927,6 +1928,8 @@ function resetServerForm() {
   form.reset();
   $("#server-edit-id").value = "";
   $("#server-timezone").value = "America/New_York";
+  $("#server-ip-whitelist").value = "";
+  $("#server-max-cps").value = "0";
   if ($("#server-amd-global")) $("#server-amd-global").checked = true;
   $("#server-gate-min").value = "70";
   $("#server-gate-action").value = "MACHINE";
@@ -1951,6 +1954,7 @@ window.editServer = (id) => {
   $("#server-description").value = s.description || "";
   $("#server-timezone").value = s.timezone || "UTC";
   $("#server-ip-whitelist").value = s.ip_whitelist || "";
+  $("#server-max-cps").value = String(s.max_cps ?? 0);
   const mode = s.amd_mode || "global";
   if ($("#server-amd-global")) $("#server-amd-global").checked = mode === "global";
   if ($("#server-amd-classic")) $("#server-amd-classic").checked = mode === "classic";
@@ -2028,6 +2032,7 @@ $("#server-form").addEventListener("submit", async (e) => {
     description: (fd.get("description") || "").toString(),
     timezone: (fd.get("timezone") || "UTC").toString(),
     ip_whitelist: (fd.get("ip_whitelist") || "").toString().trim(),
+    max_cps: Number($("#server-max-cps")?.value || 0),
     amd_mode: mode,
     min_human_confidence_percent: Number($("#server-gate-min")?.value || 70),
     below_threshold_action: action,

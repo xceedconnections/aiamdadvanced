@@ -84,6 +84,7 @@ class ServerCreate(BaseModel):
     ml_save_threshold_percent: int = Field(85, ge=50, le=99)
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
+    max_cps: int = Field(0, ge=0, le=10000)
 
 
 class ServerUpdate(BaseModel):
@@ -104,6 +105,7 @@ class ServerUpdate(BaseModel):
     ml_save_threshold_percent: Optional[int] = Field(None, ge=50, le=99)
     locale_pack_enabled: Optional[bool] = None
     locale_pack: Optional[str] = None
+    max_cps: Optional[int] = Field(None, ge=0, le=10000)
 
 
 class ServerOut(BaseModel):
@@ -125,6 +127,7 @@ class ServerOut(BaseModel):
     ml_save_threshold_percent: int = 85
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
+    max_cps: int = 0
     last_seen: Optional[datetime]
     created_at: datetime
     total_calls: int = 0

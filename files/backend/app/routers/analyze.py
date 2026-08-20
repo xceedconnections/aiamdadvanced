@@ -1,13 +1,19 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.ai.engine import analyze_audio
-from app.amd_settings import apply_confidence_gate, gate_config_for_server, map_status_for_vicidial, resolve_effective_amd_settings
+from app.amd_settings import (
+    apply_confidence_gate,
+    gate_config_for_server,
+    map_status_for_vicidial,
+    resolve_effective_amd_settings,
+)
 from app.auth.security import get_server_from_api_key
 from app.config import get_settings
+from app.cps_limit import try_admit
 from app.database import get_db
 from app.models.call import CallAnalysis
 from app.models.server import VicidialServer
@@ -18,6 +24,53 @@ router = APIRouter(prefix="/api/v1", tags=["analyze"])
 settings = get_settings()
 
 
+def _enforce_cps(server: VicidialServer, *, already_admitted: bool = False) -> None:
+    """Reject over-limit calls with 429 so AGI falls back to stock AMD 8369."""
+    if already_admitted:
+        return
+    max_cps = int(getattr(server, "max_cps", 0) or 0)
+    allowed, limit, count = try_admit(server.id, max_cps)
+    if allowed:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail=(
+            f"CPS limit exceeded for this VICIdial server "
+            f"({count}/{limit} calls this second). "
+            "Use stock VICIdial AMD extension 8369 for overflow."
+        ),
+        headers={"Retry-After": "1", "X-OpenAMD-CPS-Limit": str(limit)},
+    )
+
+
+@router.get("/admit")
+@router.post("/admit")
+def admit_call(server: VicidialServer = Depends(get_server_from_api_key)):
+    """Fast CPS + online check before Record (AGI ping).
+
+    200 = AIAMD will accept this call.
+    429 = over CPS — dialplan must fall back to 8369 (same as offline).
+    """
+    max_cps = int(getattr(server, "max_cps", 0) or 0)
+    allowed, limit, count = try_admit(server.id, max_cps)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"CPS limit exceeded ({count}/{limit} per second). "
+                "Fall back to VICIdial AMD 8369."
+            ),
+            headers={"Retry-After": "1", "X-OpenAMD-CPS-Limit": str(limit)},
+        )
+    return {
+        "status": "ok",
+        "admitted": True,
+        "server_id": server.id,
+        "max_cps": limit,
+        "cps_count": count,
+    }
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(
     callid: str = Form(...),
@@ -26,9 +79,14 @@ async def analyze(
     called: str = Form(""),
     ani: str = Form(""),
     audio: UploadFile = File(...),
+    x_openamd_admitted: str | None = Header(None, alias="X-OpenAMD-Admitted"),
     db: Session = Depends(get_db),
     server: VicidialServer = Depends(get_server_from_api_key),
 ):
+    # If AGI already passed /admit (ping), do not consume a second CPS slot.
+    already = str(x_openamd_admitted or "").strip().lower() in {"1", "true", "yes", "ok"}
+    _enforce_cps(server, already_admitted=already)
+
     raw = await audio.read()
     max_bytes = settings.MAX_AUDIO_MB * 1024 * 1024
     if len(raw) > max_bytes:
@@ -58,7 +116,6 @@ async def analyze(
         call_meta=call_meta,
     )
 
-    # Classic gate only when ML is off for this effective config
     engine_status = result.status
     gate_cfg = gate_config_for_server(server)
     gated_status, downgraded = apply_confidence_gate(
@@ -67,14 +124,11 @@ async def analyze(
         effective=effective,
     )
 
-    # Always judge from this recording (engine + confidence gate).
-    # Training corrections are audit/history only — they never force future AMD.
     final_status = gated_status
     final_confidence = result.confidence
     raw_status = engine_status
     vicidial_status = map_status_for_vicidial(final_status)
 
-    # Browser-safe PCM16 WAV for portal play + disk archive
     playable = to_browser_wav(raw)
 
     path = ""
@@ -101,6 +155,8 @@ async def analyze(
         "called_number": called_number,
         "caller_id": caller_id,
         "ani": ani_value,
+        "cps_admitted_prior": already,
+        "max_cps": int(getattr(server, "max_cps", 0) or 0),
     }
 
     row = CallAnalysis(
@@ -126,7 +182,6 @@ async def analyze(
     db.commit()
     db.refresh(row)
 
-    # Attach DB id + phones onto the ML sample log (if one was saved this call)
     ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
     sample_id = ml_block.get("ml_sample_id")
     if sample_id:
