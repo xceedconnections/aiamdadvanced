@@ -2800,24 +2800,40 @@ function portalBaseUrl() {
   return (window.location.origin || "").replace(/\/$/, "");
 }
 
+function amdApiBaseUrl() {
+  // Portal is :80; VICIdial AMD API listens on :2130
+  try {
+    const u = new URL(window.location.origin);
+    u.port = "2130";
+    return u.origin.replace(/\/$/, "");
+  } catch (e) {
+    return (portalBaseUrl() || "http://aiamd.example.com") + ":2130";
+  }
+}
+
 function viciboxInstallDocs(apiKey = "oam_YOUR_API_KEY") {
-  const base = portalBaseUrl() || "https://aiamd.example.com";
-  const httpBase = base.replace(/^https:/i, "http:");
-  const hostOnly = base.replace(/^https?:\/\//i, "");
-  return `POST ${base}/api/v1/analyze
-Header: X-API-Key: ${apiKey}
-Form fields: callid, campaign, caller, called, ani, audio (wav)
+  const portal = portalBaseUrl() || "http://aiamd.example.com";
+  const amd = amdApiBaseUrl();
+  return `Portal (public port 80):
+  ${portal}/
 
-Health:
-  curl -sS ${base}/api/health
+VICIdial AMD API (port 2130 — firewall dialer IPs only):
+  POST ${amd}/api/v1/analyze
+  GET  ${amd}/api/v1/admit
+  Header: X-API-Key: ${apiKey}
+  Form fields: callid, campaign, caller, called, ani, audio (wav)
 
-ViciBox install (use http://, https://, domain, or IP):
+Health (AMD port):
+  curl -sS ${amd}/api/health
+
+ViciBox install (base URL MUST include :2130):
   curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\
-    | bash -s -- ${base} ${apiKey}
+    | bash -s -- ${amd} ${apiKey}
 
-  bash /root/vicidialaiamd/vicibox_install.sh ${base} ${apiKey}
-  bash /root/vicidialaiamd/vicibox_install.sh ${httpBase} ${apiKey}
-  bash /root/vicidialaiamd/vicibox_install.sh ${hostOnly} ${apiKey}
+  bash /root/vicidialaiamd/vicibox_install.sh ${amd} ${apiKey}
+
+Existing dialers — update /etc/asterisk/openamd.conf:
+  OPENAMD_URL=${amd}/api/v1/analyze
 
 Then set campaign AMD / routing extension to: 8399`;
 }

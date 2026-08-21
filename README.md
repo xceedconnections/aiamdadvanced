@@ -100,9 +100,29 @@ curl http://127.0.0.1:8000/api/health
 rm -rf /root/aiamdadvanced
 git clone https://github.com/xceedconnections/aiamdadvanced.git /root/aiamdadvanced
 find /root/aiamdadvanced -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
-bash /root/aiamdadvanced/install3.sh
 bash /root/aiamdadvanced/install4.sh
-systemctl restart openamd
+bash /root/aiamdadvanced/install6.sh
+systemctl restart openamd nginx
+```
+
+Ports after upgrade:
+
+| Use | Port | Firewall |
+|-----|------|----------|
+| Web portal | **80** | Public |
+| VICIdial AMD (`/api/v1/analyze`, `/admit`) | **2130** | Dialer IPs only |
+
+Existing VICIdial dialers must point at port **2130**:
+
+```bash
+# /etc/asterisk/openamd.conf
+OPENAMD_URL=http://YOUR_AIAMD_HOST:2130/api/v1/analyze
+```
+
+Or re-run:
+
+```bash
+bash /root/vicidialaiamd/vicibox_install.sh http://YOUR_AIAMD_HOST:2130 oam_YOUR_API_KEY
 ```
 
 Or run full `install.sh` again (safe on an existing server).

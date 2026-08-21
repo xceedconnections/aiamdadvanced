@@ -20,6 +20,9 @@ ADMIN_EMAIL="admin@openamd.local"
 
 API_PORT="8000"
 NGINX_PORT="80"
+# VICIdial AMD API port (admit/analyze). Portal stays on NGINX_PORT.
+# Firewall: allow AMD_PORT only from dialer public IPs.
+AMD_PORT="2130"
 
 export DEBIAN_FRONTEND=noninteractive
 

@@ -19,8 +19,14 @@ systemctl status openamd --no-pager -l | head -20 || true
 
 IP="$(server_ip)"
 
-log "Firewall reminder (if ufw enabled):"
+log "Firewall reminder:"
+echo "  # Portal (public)"
 echo "  ufw allow ${NGINX_PORT}/tcp"
-echo "  ufw allow from VICIBOX_IP to any port ${NGINX_PORT}"
+echo "  # AMD API — dialer IPs only (example)"
+echo "  ufw allow from VICIBOX_IP to any port ${AMD_PORT} proto tcp"
+echo "  ufw reload"
+echo ""
+echo "  Portal:  http://${IP}/"
+echo "  AMD:     http://${IP}:${AMD_PORT}/api/v1/analyze"
 
-log "Phase 7 complete — OpenAMD is ready at http://${IP}/"
+log "Phase 7 complete — OpenAMD portal at http://${IP}/  |  AMD API on :${AMD_PORT}"
