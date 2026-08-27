@@ -769,6 +769,13 @@ tr:hover td { background: rgba(59, 130, 246, 0.04); }
 a.btn-icon { text-decoration: none; display: inline-flex; }
 .btn-icon:disabled { opacity: .35; cursor: not-allowed; }
 .audio-missing { color: var(--muted); font-size: .68rem; }
+.audio-blank {
+  color: #94a3b8;
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
 
 .player-bar {
   position: sticky;

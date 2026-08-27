@@ -472,8 +472,14 @@ function recordingUrl(analysisId, kind) {
 function audioButtons(r) {
   const tip = escapeHtml(r.recording_filename || r.call_id || `id-${r.id}`);
   const callAttr = encodeURIComponent(r.call_id || "");
-  // Always offer play/download — backend resolves by id / callid / path
   const missing = !r.has_recording;
+  const status = String(r.status || r.raw_status || "").toUpperCase();
+  // Empty/tiny WAV disposed as BLANK — nothing to play or relink
+  if (missing && status === "BLANK") {
+    return `<div class="audio-actions">
+      <span class="audio-blank" title="Empty or silent capture — hung up as MACHINE (AA)">no audio (blank)</span>
+    </div>`;
+  }
   return `<div class="audio-actions">
     <button type="button" class="btn-icon play" title="${missing ? "Recording may be missing — try play" : "Play " + tip}" data-play-id="${r.id}" data-call-id="${callAttr}">▶ Play</button>
     <a class="btn-icon download" title="Download ${tip}" href="${recordingUrl(r.id, "download")}">⬇</a>
