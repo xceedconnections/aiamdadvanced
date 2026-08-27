@@ -91,12 +91,57 @@ async def analyze(
     max_bytes = settings.MAX_AUDIO_MB * 1024 * 1024
     if len(raw) > max_bytes:
         raise HTTPException(status_code=413, detail="Audio file too large")
-    if len(raw) < 100:
-        raise HTTPException(status_code=400, detail="Audio file too small / empty")
 
     called_number = (called or "").strip()
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
+
+    # Empty / near-empty WAV = blank silence. Never HTTP 400 → stock AMD 8369
+    # (8369 can classify silence as HUMAN and send to agents). Dispose as
+    # BLANK internally; VICIdial AGI receives MACHINE and hangs up.
+    if len(raw) < 100:
+        details = {
+            "blank_empty_upload": True,
+            "audio_bytes": len(raw),
+            "raw_status": "BLANK",
+            "vicidial_status": "MACHINE",
+            "ml_note": "blank_silence_empty_file",
+            "called_number": called_number,
+            "caller_id": caller_id,
+            "ani": ani_value,
+            "cps_admitted_prior": already,
+            "max_cps": int(getattr(server, "max_cps", 0) or 0),
+        }
+        row = CallAnalysis(
+            server_id=server.id,
+            call_id=callid,
+            campaign=campaign or "",
+            caller_id=caller_id,
+            called_number=called_number,
+            ani=ani_value,
+            status="BLANK",
+            raw_status="BLANK",
+            confidence=0.99,
+            processing_ms=0,
+            audio_seconds=0.0,
+            audio_path="",
+            audio_saved=False,
+            audio_blob=raw if raw else None,
+            features_json=json.dumps(details),
+            error_message="",
+        )
+        db.add(row)
+        server.last_seen = datetime.utcnow()
+        db.commit()
+        db.refresh(row)
+        return AnalyzeResponse(
+            status="MACHINE",
+            confidence=0.99,
+            processing_ms=0,
+            callid=callid,
+            analysis_id=row.id,
+            details=details,
+        )
 
     call_meta = {
         "callid": callid,
