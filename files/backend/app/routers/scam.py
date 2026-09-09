@@ -102,7 +102,8 @@ def scam_config(server: VicidialServer = Depends(get_server_from_api_key)):
         "scam_protection_enabled": enabled,
         "server_id": server.id,
         "server_name": server.name,
-        "min_seconds_for_scan": 120,
+        "min_seconds_for_scan": 30,
+        "record_max_seconds": 120,
         "upload_url": "/api/v1/scam/recording",
     }
 
@@ -141,7 +142,7 @@ async def scam_recording_upload(
     except OSError as exc:
         print(f"OpenAMD SCAM WARNING: save failed for {callid}: {exc}")
 
-    scanned = transcribe_and_scan(playable, min_seconds_for_scan=120.0)
+    scanned = transcribe_and_scan(playable, min_seconds_for_scan=30.0)
     status = str(scanned.get("status") or "PENDING").upper()
     if status not in ("SCAM", "SPAM", "CLEAN", "PENDING", "ERROR"):
         status = "PENDING"
