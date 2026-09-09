@@ -3254,7 +3254,7 @@ document.addEventListener("click", async (e) => {
     const existing = (row?.querySelector(".scam-transcript")?.getAttribute("title") || "").trim();
     const matches = row?.querySelector("td:nth-child(8)")?.textContent?.trim() || "";
     const status = row?.querySelector(".badge")?.textContent?.trim() || "";
-    if (existing || "").trim().length >= 40) {
+    if ((existing || "").trim().length >= 40) {
       openScamTranscriptModal(
         `Call #${id} — speech → text`,
         `Status: ${status}${matches ? ` · Matches: ${matches}` : ""}`,
