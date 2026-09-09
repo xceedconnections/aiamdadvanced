@@ -81,17 +81,22 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float = 120.0
     whisper_ok = False
     whisper_err = ""
 
-    # Only run Whisper when the call is long enough (portal policy: >= 2 min)
+    # Only run Whisper when the call is long enough
     if duration >= float(min_seconds_for_scan):
         try:
-            from app.ai.whisper_amd import transcribe_for_display
+            from app.ai import whisper_amd as wa
 
-            # Cap to keep CPU bounded (first ~8 minutes is usually enough for pitch)
             max_sec = min(duration, 480.0)
-            w = transcribe_for_display(audio, int(sr), max_seconds=max_sec)
-            whisper_ok = bool(w.get("whisper_ok"))
-            transcript = str(w.get("transcript") or "")
-            whisper_err = str(w.get("error") or "")
+            if hasattr(wa, "transcribe_for_display"):
+                w = wa.transcribe_for_display(audio, int(sr), max_seconds=max_sec)
+                whisper_ok = bool(w.get("whisper_ok"))
+                transcript = str(w.get("transcript") or "")
+                whisper_err = str(w.get("error") or "")
+            else:
+                text, info, base = wa._transcribe_clip(audio, int(sr), max_sec)
+                whisper_ok = bool(base.get("whisper_ok"))
+                transcript = str(text or "")[:8000]
+                whisper_err = str(base.get("error") or "")
         except Exception as exc:
             whisper_err = str(exc)
 
