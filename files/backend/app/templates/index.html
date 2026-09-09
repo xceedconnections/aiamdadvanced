@@ -364,20 +364,21 @@
               <label class="inline">
                 Status
                 <select id="scammers-status-filter">
-                  <option value="SCAM" selected>SCAM</option>
-                  <option value="SPAM">SPAM</option>
+                  <option value="ALL" selected>ALL</option>
                   <option value="PENDING">PENDING</option>
                   <option value="CLEAN">CLEAN</option>
-                  <option value="ALL">ALL</option>
+                  <option value="SCAM">SCAM</option>
+                  <option value="SPAM">SPAM</option>
                 </select>
               </label>
               <button class="ghost" type="button" id="scammers-refresh-btn">Refresh</button>
             </div>
           </div>
           <p class="hint">
-            Full agent-leg recordings from dialers with <strong>SCAM protection ON</strong>
-            (package <code>vicidialaiamdscammerchecker</code>). AMD 8399 is separate and unchanged.
-            Dialer records up to the <strong>SCAM record length</strong> set on that VICIdial server (default 2 minutes), then uploads to AIAMD for bank/card phrase review.
+            Monitored HUMAN→agent calls from dialers with <strong>SCAM protection ON</strong>
+            (<code>vicidialaiamdscammerchecker</code>). Default view is <strong>ALL</strong> (PENDING while recording,
+            then CLEAN / SCAM after upload). Filter <strong>SCAM</strong> only shows keyword hits.
+            AMD 8399 is unchanged. Record length is set per VICIdial server (default 2 minutes).
           </p>
           <div class="table-wrap">
             <table>

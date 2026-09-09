@@ -114,6 +114,66 @@ def scam_config(server: VicidialServer = Depends(get_server_from_api_key)):
     }
 
 
+@router.post("/api/v1/scam/arm")
+def scam_arm(
+    callid: str = Form(...),
+    campaign: str = Form(""),
+    caller: str = Form(""),
+    called: str = Form(""),
+    agent: str = Form(""),
+    db: Session = Depends(get_db),
+    server: VicidialServer = Depends(get_server_from_api_key),
+):
+    """Dialer notifies portal when MixMonitor starts (HUMAN → agent) so SCAMMERS shows PENDING immediately."""
+    if not bool(getattr(server, "scam_protection_enabled", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="SCAM protection is OFF for this VICIdial server in the portal",
+        )
+    cid = (callid or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="callid required")
+
+    row = (
+        db.query(ScamCall)
+        .filter(ScamCall.server_id == server.id, ScamCall.call_id == cid)
+        .order_by(ScamCall.id.desc())
+        .first()
+    )
+    if row and (row.status or "").upper() == "PENDING" and not row.audio_saved:
+        if campaign:
+            row.campaign = campaign
+        if agent:
+            row.agent_user = (agent or "").strip()
+        if caller:
+            row.caller_id = (caller or "").strip()
+        if called:
+            row.called_number = (called or "").strip()
+    else:
+        row = ScamCall(
+            server_id=server.id,
+            call_id=cid,
+            campaign=campaign or "",
+            agent_user=(agent or "").strip(),
+            caller_id=(caller or "").strip(),
+            called_number=(called or "").strip(),
+            status="PENDING",
+            confidence=0.0,
+            audio_seconds=0.0,
+            audio_path="",
+            audio_saved=False,
+            transcript="",
+            match_terms="",
+            details_json=json.dumps({"note": "recording_armed"}),
+            error_message="",
+        )
+        db.add(row)
+    server.last_seen = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"status": "PENDING", "scam_id": row.id, "callid": cid}
+
+
 @router.post("/api/v1/scam/recording")
 async def scam_recording_upload(
     callid: str = Form(...),
@@ -159,26 +219,51 @@ async def scam_recording_upload(
         "whisper_error": scanned.get("whisper_error"),
         "match_terms": scanned.get("match_terms") or [],
     }
-    row = ScamCall(
-        server_id=server.id,
-        call_id=callid,
-        campaign=campaign or "",
-        agent_user=(agent or "").strip(),
-        caller_id=(caller or "").strip(),
-        called_number=(called or "").strip(),
-        status=status,
-        confidence=float(scanned.get("confidence") or 0),
-        audio_seconds=float(scanned.get("audio_seconds") or 0),
-        audio_path=path,
-        audio_saved=bool(path),
-        audio_blob=playable,
-        transcript=str(scanned.get("transcript") or ""),
-        match_terms=",".join(scanned.get("match_terms") or []),
-        details_json=json.dumps(details),
-        error_message=str(scanned.get("whisper_error") or "") if status == "ERROR" else "",
-        reviewed_at=datetime.utcnow() if status in ("SCAM", "SPAM", "CLEAN") else None,
+
+    cid = (callid or "").strip()
+    row = (
+        db.query(ScamCall)
+        .filter(ScamCall.server_id == server.id, ScamCall.call_id == cid)
+        .order_by(ScamCall.id.desc())
+        .first()
     )
-    db.add(row)
+    if row and not row.audio_saved:
+        row.campaign = campaign or row.campaign or ""
+        row.agent_user = (agent or "").strip() or row.agent_user or ""
+        row.caller_id = (caller or "").strip() or row.caller_id or ""
+        row.called_number = (called or "").strip() or row.called_number or ""
+        row.status = status
+        row.confidence = float(scanned.get("confidence") or 0)
+        row.audio_seconds = float(scanned.get("audio_seconds") or 0)
+        row.audio_path = path
+        row.audio_saved = bool(path)
+        row.audio_blob = playable
+        row.transcript = str(scanned.get("transcript") or "")
+        row.match_terms = ",".join(scanned.get("match_terms") or [])
+        row.details_json = json.dumps(details)
+        row.error_message = str(scanned.get("whisper_error") or "") if status == "ERROR" else ""
+        row.reviewed_at = datetime.utcnow() if status in ("SCAM", "SPAM", "CLEAN") else None
+    else:
+        row = ScamCall(
+            server_id=server.id,
+            call_id=cid,
+            campaign=campaign or "",
+            agent_user=(agent or "").strip(),
+            caller_id=(caller or "").strip(),
+            called_number=(called or "").strip(),
+            status=status,
+            confidence=float(scanned.get("confidence") or 0),
+            audio_seconds=float(scanned.get("audio_seconds") or 0),
+            audio_path=path,
+            audio_saved=bool(path),
+            audio_blob=playable,
+            transcript=str(scanned.get("transcript") or ""),
+            match_terms=",".join(scanned.get("match_terms") or []),
+            details_json=json.dumps(details),
+            error_message=str(scanned.get("whisper_error") or "") if status == "ERROR" else "",
+            reviewed_at=datetime.utcnow() if status in ("SCAM", "SPAM", "CLEAN") else None,
+        )
+        db.add(row)
     server.last_seen = datetime.utcnow()
     db.commit()
     db.refresh(row)
@@ -204,7 +289,7 @@ def _require_staff(user: User):
 
 @router.get("/api/scammers", response_model=list[ScamCallOut])
 def list_scammers(
-    status: str = "SCAM",
+    status: str = "ALL",
     limit: int = 100,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),

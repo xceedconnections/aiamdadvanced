@@ -3111,7 +3111,7 @@ function startLiveTimer() {
 async function loadScammers() {
   const body = $("#scammers-body");
   if (!body) return;
-  const status = ($("#scammers-status-filter")?.value || "SCAM").trim();
+  const status = ($("#scammers-status-filter")?.value || "ALL").trim();
   body.innerHTML = `<tr><td colspan="10" class="hint">Loading…</td></tr>`;
   try {
     const rows = await api(`/api/scammers?status=${encodeURIComponent(status)}&limit=200`);
