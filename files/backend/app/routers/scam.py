@@ -174,6 +174,78 @@ def scam_arm(
     return {"status": "PENDING", "scam_id": row.id, "callid": cid}
 
 
+@router.post("/api/v1/scam/finalize")
+def scam_finalize(
+    callid: str = Form(...),
+    status: str = Form("ERROR"),
+    note: str = Form(""),
+    campaign: str = Form(""),
+    caller: str = Form(""),
+    called: str = Form(""),
+    agent: str = Form(""),
+    db: Session = Depends(get_db),
+    server: VicidialServer = Depends(get_server_from_api_key),
+):
+    """Dialer marks a PENDING scam row finished when WAV upload cannot run."""
+    if not bool(getattr(server, "scam_protection_enabled", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="SCAM protection is OFF for this VICIdial server in the portal",
+        )
+    cid = (callid or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="callid required")
+    st = (status or "ERROR").strip().upper()
+    if st not in ("ERROR", "CLEAN", "PENDING", "SCAM", "SPAM"):
+        st = "ERROR"
+
+    row = (
+        db.query(ScamCall)
+        .filter(ScamCall.server_id == server.id, ScamCall.call_id == cid)
+        .order_by(ScamCall.id.desc())
+        .first()
+    )
+    details = {"note": note or "finalize"}
+    if row and not row.audio_saved:
+        row.status = st
+        row.error_message = (note or "")[:500]
+        row.details_json = json.dumps(details)
+        if campaign:
+            row.campaign = campaign
+        if agent:
+            row.agent_user = (agent or "").strip()
+        if caller:
+            row.caller_id = (caller or "").strip()
+        if called:
+            row.called_number = (called or "").strip()
+        if st in ("SCAM", "SPAM", "CLEAN", "ERROR"):
+            row.reviewed_at = datetime.utcnow()
+    elif not row:
+        row = ScamCall(
+            server_id=server.id,
+            call_id=cid,
+            campaign=campaign or "",
+            agent_user=(agent or "").strip(),
+            caller_id=(caller or "").strip(),
+            called_number=(called or "").strip(),
+            status=st,
+            confidence=0.0,
+            audio_seconds=0.0,
+            audio_path="",
+            audio_saved=False,
+            transcript="",
+            match_terms="",
+            details_json=json.dumps(details),
+            error_message=(note or "")[:500],
+            reviewed_at=datetime.utcnow() if st != "PENDING" else None,
+        )
+        db.add(row)
+    server.last_seen = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return {"status": row.status, "scam_id": row.id, "callid": cid}
+
+
 @router.post("/api/v1/scam/recording")
 async def scam_recording_upload(
     callid: str = Form(...),
