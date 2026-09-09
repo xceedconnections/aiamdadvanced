@@ -41,6 +41,8 @@ class VicidialServer(Base):
 
     # Full agent-leg SCAM recording/upload (vicidialaiamdscammerchecker). AMD 8399 unchanged.
     scam_protection_enabled = Column(Boolean, default=False)
+    # Max seconds of agent-leg MixMonitor (portal-controlled). Dialer reads via /api/v1/scam/config.
+    scam_record_seconds = Column(Integer, default=120)
 
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

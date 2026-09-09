@@ -97,13 +97,19 @@ def _to_out(row: ScamCall) -> ScamCallOut:
 def scam_config(server: VicidialServer = Depends(get_server_from_api_key)):
     """Dialer asks whether full-call SCAM recording is enabled for this server."""
     enabled = bool(getattr(server, "scam_protection_enabled", False))
+    try:
+        record_secs = int(getattr(server, "scam_record_seconds", 120) or 120)
+    except (TypeError, ValueError):
+        record_secs = 120
+    record_secs = max(30, min(600, record_secs))
     return {
         "status": "ok",
         "scam_protection_enabled": enabled,
         "server_id": server.id,
         "server_name": server.name,
         "min_seconds_for_scan": 30,
-        "record_max_seconds": 120,
+        "record_max_seconds": record_secs,
+        "scam_record_seconds": record_secs,
         "upload_url": "/api/v1/scam/recording",
     }
 

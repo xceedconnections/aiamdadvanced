@@ -377,7 +377,7 @@
           <p class="hint">
             Full agent-leg recordings from dialers with <strong>SCAM protection ON</strong>
             (package <code>vicidialaiamdscammerchecker</code>). AMD 8399 is separate and unchanged.
-            Dialer records up to <strong>2 minutes</strong> of the agent call, then uploads to AIAMD for bank/card phrase review.
+            Dialer records up to the <strong>SCAM record length</strong> set on that VICIdial server (default 2 minutes), then uploads to AIAMD for bank/card phrase review.
           </p>
           <div class="table-wrap">
             <table>
@@ -446,7 +446,10 @@
                 <input type="checkbox" id="server-scam-protection" />
                 <strong>SCAM protection</strong> — full agent-call recording upload (vicidialaiamdscammerchecker)
               </label>
-              <p class="hint">When ON, dialers installed with the <strong>scammerchecker</strong> package upload the full agent leg to AIAMD for bank/card phrase review. AMD extension <strong>8399</strong> is unchanged. Use normal <code>vicidialaiamd</code> on dialers that should not record full calls.</p>
+              <p class="hint">When ON, dialers installed with the <strong>scammerchecker</strong> package upload the agent leg to AIAMD for bank/card phrase review. AMD extension <strong>8399</strong> is unchanged. Use normal <code>vicidialaiamd</code> on dialers that should not record full calls.</p>
+              <label for="server-scam-record-seconds" style="margin-top:.5rem">SCAM record length (seconds)</label>
+              <input name="scam_record_seconds" id="server-scam-record-seconds" type="number" min="30" max="600" step="10" value="120" />
+              <p class="hint">How long to MixMonitor the agent call before stop+upload (example: <strong>120</strong> = 2 min, <strong>180</strong> = 3 min). Range 30–600. Controlled here — dialer reads it from AIAMD on each call.</p>
 
               <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
               <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">AMD settings for this server</h3></div>

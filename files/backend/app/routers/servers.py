@@ -87,6 +87,12 @@ def _normalize_server_amd_fields(data: dict) -> dict:
         from app.cps_limit import normalize_max_cps
 
         out["max_cps"] = normalize_max_cps(out["max_cps"])
+    if "scam_record_seconds" in out and out["scam_record_seconds"] is not None:
+        try:
+            secs = int(out["scam_record_seconds"])
+        except (TypeError, ValueError):
+            secs = 120
+        out["scam_record_seconds"] = max(30, min(600, secs))
     return out
 
 
@@ -136,6 +142,7 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         locale_pack="usa",
         max_cps=int(getattr(server, "max_cps", 0) or 0),
         scam_protection_enabled=bool(getattr(server, "scam_protection_enabled", False)),
+        scam_record_seconds=int(getattr(server, "scam_record_seconds", 120) or 120),
         last_seen=server.last_seen,
         created_at=server.created_at,
         total_calls=total,

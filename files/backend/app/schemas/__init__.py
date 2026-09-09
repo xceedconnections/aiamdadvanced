@@ -86,6 +86,7 @@ class ServerCreate(BaseModel):
     locale_pack: str = "usa"
     max_cps: int = Field(0, ge=0, le=10000)
     scam_protection_enabled: bool = False
+    scam_record_seconds: int = Field(120, ge=30, le=600)
 
 
 class ServerUpdate(BaseModel):
@@ -108,6 +109,7 @@ class ServerUpdate(BaseModel):
     locale_pack: Optional[str] = None
     max_cps: Optional[int] = Field(None, ge=0, le=10000)
     scam_protection_enabled: Optional[bool] = None
+    scam_record_seconds: Optional[int] = Field(None, ge=30, le=600)
 
 
 class ServerOut(BaseModel):
@@ -131,6 +133,7 @@ class ServerOut(BaseModel):
     locale_pack: str = "usa"
     max_cps: int = 0
     scam_protection_enabled: bool = False
+    scam_record_seconds: int = 120
     last_seen: Optional[datetime]
     created_at: datetime
     total_calls: int = 0

@@ -1940,6 +1940,7 @@ function resetServerForm() {
   $("#server-ip-whitelist").value = "";
   $("#server-max-cps").value = "0";
   if ($("#server-scam-protection")) $("#server-scam-protection").checked = false;
+  if ($("#server-scam-record-seconds")) $("#server-scam-record-seconds").value = "120";
   if ($("#server-amd-global")) $("#server-amd-global").checked = true;
   $("#server-gate-min").value = "70";
   $("#server-gate-action").value = "MACHINE";
@@ -1967,6 +1968,9 @@ window.editServer = (id) => {
   $("#server-max-cps").value = String(s.max_cps ?? 0);
   if ($("#server-scam-protection")) {
     $("#server-scam-protection").checked = !!s.scam_protection_enabled;
+  }
+  if ($("#server-scam-record-seconds")) {
+    $("#server-scam-record-seconds").value = String(s.scam_record_seconds ?? 120);
   }
   const mode = s.amd_mode || "global";
   if ($("#server-amd-global")) $("#server-amd-global").checked = mode === "global";
@@ -2047,6 +2051,7 @@ $("#server-form").addEventListener("submit", async (e) => {
     ip_whitelist: (fd.get("ip_whitelist") || "").toString().trim(),
     max_cps: Number($("#server-max-cps")?.value || 0),
     scam_protection_enabled: !!$("#server-scam-protection")?.checked,
+    scam_record_seconds: Number($("#server-scam-record-seconds")?.value || 120),
     amd_mode: mode,
     min_human_confidence_percent: Number($("#server-gate-min")?.value || 70),
     below_threshold_action: action,

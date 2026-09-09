@@ -96,6 +96,7 @@ def ensure_schema():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS server_id INTEGER",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS max_cps INTEGER DEFAULT 0",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS scam_protection_enabled BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS scam_record_seconds INTEGER DEFAULT 120",
         ):
             try:
                 conn.execute(text(stmt))
