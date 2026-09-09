@@ -188,6 +188,11 @@ def run_ml_pipeline(
         details["ml_note"] = "blank_override_high_human"
         return b_status, b_conf, details
 
+    # Fast path: clear short live "hello" — do not stall agent connect for Whisper
+    if looks_human and str(hybrid_status).upper() == "HUMAN" and float(hybrid_confidence) >= 0.80:
+        details["ml_note"] = "short_human_skip_whisper_fast_agent"
+        return "HUMAN", max(float(hybrid_confidence), float(conf), 0.86), details
+
     w_hit = _apply_whisper("human_to_agent")
     if w_hit:
         status, conf = w_hit
