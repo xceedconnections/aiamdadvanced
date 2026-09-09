@@ -433,19 +433,20 @@ def put_scam_blacklist(
             _apply_scan_to_row(row, scanned)
             rescanned += 1
 
-        # 2) Slow path: speech→text for recent rows that have audio but no transcript yet
+        # 2) Full speech→text for recent rows with audio that lack a real transcript
+        #    (empty, or the old AMD-style \"Hello.\" only — under 40 chars).
         need_tx = (
             db.query(ScamCall)
             .options(undefer(ScamCall.audio_blob))
-            .filter(
-                (ScamCall.transcript.is_(None)) | (ScamCall.transcript == ""),
-                ScamCall.audio_saved == True,  # noqa: E712
-            )
+            .filter(ScamCall.audio_saved == True)  # noqa: E712
             .order_by(ScamCall.id.desc())
             .limit(40)
             .all()
         )
         for row in need_tx:
+            tx = (row.transcript or "").strip()
+            if len(tx) >= 40:
+                continue
             raw = bytes(row.audio_blob) if row.audio_blob else b""
             if not raw and row.audio_path:
                 p = Path(row.audio_path)

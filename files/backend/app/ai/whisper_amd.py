@@ -438,3 +438,118 @@ def transcribe_audio(
         "language": getattr(info, "language", "") or "",
         "hallucination_cleared": bool(base.get("hallucination_cleared")),
     }
+
+
+_SCAM_INITIAL_PROMPT = (
+    "Phone conversation between a call center agent and a customer. "
+    "Bank, credit card, chase, spectrum, account number, verify, yes, yeah, hello."
+)
+
+
+def _to_16k_mono(audio, sr: int):
+    import numpy as np
+
+    clip = np.asarray(audio, dtype=np.float32)
+    if getattr(clip, "ndim", 1) > 1:
+        clip = np.mean(clip, axis=1)
+    if sr != 16000 and len(clip) > 1:
+        duration = len(clip) / float(sr or 1)
+        new_len = max(1, int(duration * 16000))
+        x_old = np.linspace(0, 1, num=len(clip), endpoint=False)
+        x_new = np.linspace(0, 1, num=new_len, endpoint=False)
+        clip = np.interp(x_new, x_old, clip).astype(np.float32)
+    return clip.astype(np.float32)
+
+
+def transcribe_full_call(
+    audio,
+    sr: int,
+    *,
+    max_seconds: float = 480.0,
+) -> Dict[str, Any]:
+    """Full agent-leg speech→text for SCAMMERS (NOT the short AMD 2.2s greeting trim).
+
+    Walks the whole recording in overlapping chunks so blacklist matching sees
+    the complete call, not only the opening \"Hello\".
+    """
+    model = _get_model()
+    if model is None:
+        return {
+            "whisper_ok": False,
+            "transcript": "",
+            "error": _model_error or "not_installed",
+        }
+
+    import numpy as np
+
+    if audio is None or len(audio) == 0:
+        return {"whisper_ok": False, "transcript": "", "error": "empty_audio"}
+
+    max_seconds = max(5.0, min(600.0, float(max_seconds or 480.0)))
+    clip = _to_16k_mono(audio, int(sr or 16000))
+    n_max = int(min(len(clip), max(1, int(16000 * max_seconds))))
+    clip = clip[:n_max]
+    if len(clip) < 400:
+        return {"whisper_ok": True, "transcript": "", "error": "", "cue": "too_short"}
+
+    peak = float(np.max(np.abs(clip))) if len(clip) else 0.0
+    if peak > 1e-4:
+        clip = (clip / peak) * 0.9
+
+    # Chunk ~30s with 1s overlap so Tiny stays accurate on longer calls
+    chunk = int(16000 * 30)
+    hop = int(16000 * 29)
+    parts: list[str] = []
+    try:
+        start = 0
+        while start < len(clip):
+            end = min(len(clip), start + chunk)
+            piece = clip[start:end]
+            if len(piece) < 400:
+                break
+            segments, _info = model.transcribe(
+                piece,
+                language="en",
+                beam_size=1,
+                best_of=1,
+                vad_filter=True,
+                vad_parameters=dict(
+                    min_silence_duration_ms=400,
+                    speech_pad_ms=200,
+                ),
+                without_timestamps=True,
+                condition_on_previous_text=False,
+                compression_ratio_threshold=2.4,
+                no_speech_threshold=0.6,
+                temperature=0.0,
+                initial_prompt=_SCAM_INITIAL_PROMPT,
+            )
+            for seg in segments:
+                t = (seg.text or "").strip()
+                if not t:
+                    continue
+                no_speech = getattr(seg, "no_speech_prob", None)
+                if no_speech is not None and float(no_speech) > 0.85:
+                    continue
+                parts.append(t)
+            if end >= len(clip):
+                break
+            start += hop
+    except Exception as exc:
+        return {"whisper_ok": False, "transcript": "", "error": str(exc)}
+
+    text = " ".join(parts).strip()
+    text, hall = clean_transcript(text)
+    # Keep more text for blacklist matching (full call)
+    return {
+        "whisper_ok": True,
+        "transcript": text[:12000],
+        "error": "",
+        "hallucination_cleared": bool(hall),
+        "audio_seconds_used": float(len(clip) / 16000.0),
+    }
+
+
+# Alias used by older scam_detect imports
+def transcribe_for_display(audio, sr: int, *, max_seconds: float = 480.0) -> Dict[str, Any]:
+    return transcribe_full_call(audio, sr, max_seconds=max_seconds)

@@ -61,7 +61,7 @@ def scan_transcript(text: str, *, words: list[str] | None = None) -> dict[str, A
 
 
 def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None = None) -> dict[str, Any]:
-    """Whisper speech-to-text then blacklist scan."""
+    """Full-recording Whisper speech→text then blacklist scan (not AMD short clip)."""
     import io
 
     import numpy as np
@@ -93,22 +93,22 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None 
     transcript = ""
     whisper_ok = False
     whisper_err = ""
+    used_sec = 0.0
 
     if duration >= float(min_seconds_for_scan):
         try:
-            from app.ai import whisper_amd as wa
+            from app.ai.whisper_amd import transcribe_full_call
 
-            max_sec = min(duration, 480.0)
-            if hasattr(wa, "transcribe_for_display"):
-                w = wa.transcribe_for_display(audio, int(sr), max_seconds=max_sec)
-                whisper_ok = bool(w.get("whisper_ok"))
-                transcript = str(w.get("transcript") or "")
-                whisper_err = str(w.get("error") or "")
-            else:
-                text, info, base = wa._transcribe_clip(audio, int(sr), max_sec)
-                whisper_ok = bool(base.get("whisper_ok"))
-                transcript = str(text or "")[:8000]
-                whisper_err = str(base.get("error") or "")
+            # Transcribe the entire recording (cap 10 min), not the AMD 2.2s greeting window
+            max_sec = min(max(duration, 1.0), 600.0)
+            w = transcribe_full_call(audio, int(sr), max_seconds=max_sec)
+            whisper_ok = bool(w.get("whisper_ok"))
+            transcript = str(w.get("transcript") or "")
+            whisper_err = str(w.get("error") or "")
+            try:
+                used_sec = float(w.get("audio_seconds_used") or 0)
+            except (TypeError, ValueError):
+                used_sec = 0.0
         except Exception as exc:
             whisper_err = str(exc)
 
@@ -122,6 +122,7 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None 
             "note": "below_min_duration",
             "whisper_ok": whisper_ok,
             "whisper_error": whisper_err,
+            "audio_seconds_used": used_sec,
         }
 
     if not transcript:
@@ -134,6 +135,7 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None 
             "note": "no_transcript",
             "whisper_ok": whisper_ok,
             "whisper_error": whisper_err,
+            "audio_seconds_used": used_sec,
         }
 
     scanned = scan_transcript(transcript)
@@ -141,4 +143,5 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None 
     scanned["audio_seconds"] = duration
     scanned["whisper_ok"] = whisper_ok
     scanned["whisper_error"] = whisper_err
+    scanned["audio_seconds_used"] = used_sec
     return scanned

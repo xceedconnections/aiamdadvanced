@@ -393,10 +393,10 @@
               <button class="ghost" type="button" id="scammers-blacklist-save">Save + rescan</button>
             </div>
             <p class="hint" style="margin-top:0">
-              One word/phrase per line. <strong>Save + rescan</strong> saves the list, then:
-              (1) re-checks existing call transcripts for those words (fast), and
-              (2) for recent calls that still have audio but no text yet, runs speech→text then matches (slower).
-              New uploads always: record → speech→text → blacklist → CLEAN or red SPAM.
+              One word/phrase per line. <strong>Save + rescan</strong>:
+              re-matches existing text, and re-runs <strong>full-length</strong> speech→text
+              for recent calls that only have a short greeting (e.g. Hello) or no text yet.
+              New uploads always transcribe the <strong>complete</strong> recording, then blacklist → CLEAN or red SPAM.
             </p>
             <textarea id="scammers-blacklist-words" rows="6" placeholder="bank&#10;chase&#10;credit card&#10;spectrum"></textarea>
           </div>

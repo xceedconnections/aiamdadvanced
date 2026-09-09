@@ -3254,7 +3254,7 @@ document.addEventListener("click", async (e) => {
     const existing = (row?.querySelector(".scam-transcript")?.getAttribute("title") || "").trim();
     const matches = row?.querySelector("td:nth-child(8)")?.textContent?.trim() || "";
     const status = row?.querySelector(".badge")?.textContent?.trim() || "";
-    if (existing) {
+    if (existing || "").trim().length >= 40) {
       openScamTranscriptModal(
         `Call #${id} — speech → text`,
         `Status: ${status}${matches ? ` · Matches: ${matches}` : ""}`,
@@ -3262,7 +3262,7 @@ document.addEventListener("click", async (e) => {
       );
       return;
     }
-    if (!confirm(`No text yet for #${id}. Run speech→text on the recording now?`)) return;
+    if (!confirm(`Re-run full speech→text on recording #${id}? (scans the whole call for blacklist words)`)) return;
     try {
       tt.disabled = true;
       tt.textContent = "…";
