@@ -135,6 +135,7 @@ def _server_out(db: Session, server: VicidialServer) -> ServerOut:
         locale_pack_enabled=False,
         locale_pack="usa",
         max_cps=int(getattr(server, "max_cps", 0) or 0),
+        scam_protection_enabled=bool(getattr(server, "scam_protection_enabled", False)),
         last_seen=server.last_seen,
         created_at=server.created_at,
         total_calls=total,

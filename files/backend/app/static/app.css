@@ -679,6 +679,10 @@ tr:hover td { background: rgba(59, 130, 246, 0.04); }
 .badge.IVR { background: rgba(168,85,247,.14); color: #c084fc; border: 1px solid rgba(168,85,247,.25); }
 .badge.SIT { background: rgba(245,158,11,.14); color: #fbbf24; border: 1px solid rgba(245,158,11,.25); }
 .badge.BLANK { background: rgba(148,163,184,.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,.25); }
+.badge.SCAM { background: rgba(239,68,68,.16); color: #fca5a5; border: 1px solid rgba(239,68,68,.35); }
+.badge.SPAM { background: rgba(245,158,11,.14); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+.badge.PENDING { background: rgba(148,163,184,.12); color: #94a3b8; border: 1px solid rgba(148,163,184,.25); }
+.badge.CLEAN { background: rgba(34,197,94,.12); color: #86efac; border: 1px solid rgba(34,197,94,.28); }
 .badge.FAX { background: rgba(56,189,248,.14); color: #38bdf8; border: 1px solid rgba(56,189,248,.25); }
 .badge.ERROR { background: rgba(239,68,68,.14); color: #f87171; border: 1px solid rgba(239,68,68,.25); }
 

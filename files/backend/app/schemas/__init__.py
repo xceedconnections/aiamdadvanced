@@ -85,6 +85,7 @@ class ServerCreate(BaseModel):
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
     max_cps: int = Field(0, ge=0, le=10000)
+    scam_protection_enabled: bool = False
 
 
 class ServerUpdate(BaseModel):
@@ -106,6 +107,7 @@ class ServerUpdate(BaseModel):
     locale_pack_enabled: Optional[bool] = None
     locale_pack: Optional[str] = None
     max_cps: Optional[int] = Field(None, ge=0, le=10000)
+    scam_protection_enabled: Optional[bool] = None
 
 
 class ServerOut(BaseModel):
@@ -128,6 +130,7 @@ class ServerOut(BaseModel):
     locale_pack_enabled: bool = False
     locale_pack: str = "usa"
     max_cps: int = 0
+    scam_protection_enabled: bool = False
     last_seen: Optional[datetime]
     created_at: datetime
     total_calls: int = 0

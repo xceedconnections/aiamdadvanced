@@ -39,6 +39,9 @@ class VicidialServer(Base):
     # Over limit → HTTP 429 → AGI UNAVAILABLE → stock VICIdial AMD 8369.
     max_cps = Column(Integer, default=0)
 
+    # Full agent-leg SCAM recording/upload (vicidialaiamdscammerchecker). AMD 8399 unchanged.
+    scam_protection_enabled = Column(Boolean, default=False)
+
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

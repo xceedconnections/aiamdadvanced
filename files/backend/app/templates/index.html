@@ -47,6 +47,7 @@
         <a href="/dashboard.php" data-page="dashboard" class="nav active"><span class="nav-ico">▣</span>Dashboard</a>
         <a href="/livecalls.php" data-page="live" class="nav"><span class="nav-ico">☎</span>Live Calls</a>
         <a href="/cdr.php" data-page="cdr" class="nav"><span class="nav-ico">☰</span>CDR</a>
+        <a href="/scammers.php" data-page="scammers" class="nav"><span class="nav-ico">⚠</span>SCAMMERS</a>
         <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
         <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
         <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
@@ -355,6 +356,51 @@
         </div>
       </section>
 
+      <section id="page-scammers" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>SCAMMERS</h3>
+            <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+              <label class="inline">
+                Status
+                <select id="scammers-status-filter">
+                  <option value="SCAM" selected>SCAM</option>
+                  <option value="SPAM">SPAM</option>
+                  <option value="PENDING">PENDING</option>
+                  <option value="CLEAN">CLEAN</option>
+                  <option value="ALL">ALL</option>
+                </select>
+              </label>
+              <button class="ghost" type="button" id="scammers-refresh-btn">Refresh</button>
+            </div>
+          </div>
+          <p class="hint">
+            Full agent-leg recordings from dialers with <strong>SCAM protection ON</strong>
+            (package <code>vicidialaiamdscammerchecker</code>). AMD 8399 is separate and unchanged.
+            Auto-flag uses transcript keywords (bank / card / OTP). Calls under ~2 minutes are stored but not forced to SCAM.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Audio</th>
+                  <th>Time</th>
+                  <th>Server</th>
+                  <th>Agent</th>
+                  <th>Caller ID</th>
+                  <th>Called Number</th>
+                  <th>Status</th>
+                  <th>Matches</th>
+                  <th>Sec</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="scammers-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section id="page-servers" class="page hidden">
         <div class="two-col">
           <div class="panel">
@@ -366,6 +412,7 @@
                     <th>Name</th>
                     <th>IP whitelist</th>
                     <th>CPS</th>
+                    <th>SCAM</th>
                     <th>Today</th>
                     <th>Total</th>
                     <th>Last seen</th>
@@ -394,6 +441,12 @@
               <label for="server-max-cps">Max CPS (calls per second to AI AMD)</label>
               <input name="max_cps" id="server-max-cps" type="number" min="0" max="10000" step="1" value="0" />
               <p class="hint">Example: <strong>50</strong> = AI AMD accepts at most 50 calls/sec from this dialer. Overflow is rejected and VICIdial uses stock AMD <strong>8369</strong> (same as when AI AMD is offline). <strong>0</strong> = unlimited.</p>
+
+              <label class="inline" style="margin-top:.75rem">
+                <input type="checkbox" id="server-scam-protection" />
+                <strong>SCAM protection</strong> — full agent-call recording upload (vicidialaiamdscammerchecker)
+              </label>
+              <p class="hint">When ON, dialers installed with the <strong>scammerchecker</strong> package upload the full agent leg to AIAMD for bank/card phrase review. AMD extension <strong>8399</strong> is unchanged. Use normal <code>vicidialaiamd</code> on dialers that should not record full calls.</p>
 
               <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
               <div class="panel-head" style="padding:0;margin:0 0 .35rem"><h3 style="font-size:1rem">AMD settings for this server</h3></div>

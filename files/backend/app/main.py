@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.correction import TrainingCorrection, TrainingOverride  # noqa: F401 — register tables
 from app.models.call import CallAnalysis  # noqa: F401
 from app.models.server import VicidialServer  # noqa: F401
+from app.models.scam import ScamCall  # noqa: F401
 from app.routers import (
     analyze,
     auth,
@@ -21,6 +22,7 @@ from app.routers import (
     maintenance,
     recordings,
     reports,
+    scam,
     servers,
     settings as settings_router,
     system,
@@ -93,6 +95,7 @@ def ensure_schema():
             # Dialer portal login locked to one VICIdial server
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS server_id INTEGER",
             "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS max_cps INTEGER DEFAULT 0",
+            "ALTER TABLE vicidial_servers ADD COLUMN IF NOT EXISTS scam_protection_enabled BOOLEAN DEFAULT FALSE",
         ):
             try:
                 conn.execute(text(stmt))
@@ -157,6 +160,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(analyze.router)
+app.include_router(scam.router)
 app.include_router(reports.router)
 app.include_router(training.router)
 app.include_router(recordings.router)
@@ -220,6 +224,7 @@ def health():
 @app.get("/wipe.php", response_class=HTMLResponse)
 @app.get("/audio.php", response_class=HTMLResponse)
 @app.get("/cronjob.php", response_class=HTMLResponse)
+@app.get("/scammers.php", response_class=HTMLResponse)
 def portal_index():
     index = TEMPLATES_DIR / "index.html"
     if index.exists():

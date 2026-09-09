@@ -93,6 +93,20 @@ server {
     limit_conn openamd_conn 200;
 
     # Dialer AMD + admit + public health for AGI failover checks
+    # Full-call SCAM uploads (larger body) — same auth as analyze
+    location /api/v1/scam/ {
+        limit_req zone=openamd_api burst=40 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        client_max_body_size 200M;
+    }
+
     location /api/v1/ {
         limit_req zone=openamd_api burst=120 nodelay;
         limit_req_status 429;
