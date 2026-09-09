@@ -418,7 +418,9 @@ def put_scam_blacklist(
         mark_status=payload.mark_status,
     )
     rescanned = 0
+    retranscribed = 0
     if payload.rescan:
+        # 1) Fast path: re-match existing transcripts against new blacklist
         rows = (
             db.query(ScamCall)
             .filter(ScamCall.transcript.isnot(None), ScamCall.transcript != "")
@@ -430,8 +432,62 @@ def put_scam_blacklist(
             scanned = scan_transcript(row.transcript or "")
             _apply_scan_to_row(row, scanned)
             rescanned += 1
+
+        # 2) Slow path: speech→text for recent rows that have audio but no transcript yet
+        need_tx = (
+            db.query(ScamCall)
+            .options(undefer(ScamCall.audio_blob))
+            .filter(
+                (ScamCall.transcript.is_(None)) | (ScamCall.transcript == ""),
+                ScamCall.audio_saved == True,  # noqa: E712
+            )
+            .order_by(ScamCall.id.desc())
+            .limit(40)
+            .all()
+        )
+        for row in need_tx:
+            raw = bytes(row.audio_blob) if row.audio_blob else b""
+            if not raw and row.audio_path:
+                p = Path(row.audio_path)
+                if p.is_file():
+                    raw = p.read_bytes()
+            if len(raw) < 1000:
+                continue
+            scanned = transcribe_and_scan(raw)
+            _apply_scan_to_row(row, scanned)
+            retranscribed += 1
         db.commit()
-    return {**saved, "rescanned": rescanned}
+    return {**saved, "rescanned": rescanned, "retranscribed": retranscribed}
+
+
+@router.post("/api/scammers/{scam_id}/transcribe", response_model=ScamCallOut)
+def transcribe_scammer(
+    scam_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Run speech→text + blacklist on one stored SCAMMERS recording."""
+    _require_staff(user)
+    row = (
+        db.query(ScamCall)
+        .options(undefer(ScamCall.audio_blob))
+        .filter(ScamCall.id == scam_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    raw = bytes(row.audio_blob) if row.audio_blob else b""
+    if not raw and row.audio_path:
+        p = Path(row.audio_path)
+        if p.is_file():
+            raw = p.read_bytes()
+    if len(raw) < 1000:
+        raise HTTPException(status_code=400, detail="No recording audio available to transcribe")
+    scanned = transcribe_and_scan(raw)
+    _apply_scan_to_row(row, scanned)
+    db.commit()
+    db.refresh(row)
+    return _to_out(row)
 
 
 @router.get("/api/scammers", response_model=list[ScamCallOut])

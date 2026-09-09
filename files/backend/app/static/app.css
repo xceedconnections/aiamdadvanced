@@ -80,18 +80,36 @@ body {
 
 label { display: block; font-size: .72rem; color: var(--muted); margin: .7rem 0 .25rem; font-weight: 500; }
 input, select, button, textarea { font: inherit; color: var(--text); }
-input, select {
+input, select, textarea {
   width: 100%;
   background: #0c1422;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: .55rem .7rem;
   font-size: .84rem;
-  color: var(--text);
+  color: #e8eef8;
+  caret-color: #e8eef8;
+  box-sizing: border-box;
 }
-input:focus, select:focus {
+input:focus, select:focus, textarea:focus {
   outline: 2px solid rgba(59, 130, 246, 0.35);
   border-color: var(--accent);
+}
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+  line-height: 1.45;
+  font-family: var(--mono);
+}
+textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+#scammers-blacklist-words {
+  background: #0c1422 !important;
+  color: #f1f5f9 !important;
+  -webkit-text-fill-color: #f1f5f9;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
 }
 button {
   margin-top: .85rem;
@@ -689,6 +707,39 @@ tr.scam-spam-row { background: rgba(220,38,38,.12) !important; }
 tr.scam-spam-row td { color: #fecaca; }
 .scam-transcript { max-width: 280px; font-size: .78rem; color: #94a3b8; white-space: normal; line-height: 1.35; }
 .scam-transcript.hit { color: #fecaca; }
+.scam-audio-actions { display: flex; gap: .25rem; align-items: center; }
+.btn-icon.scam-tt { color: #93c5fd; border-color: rgba(59,130,246,.35); }
+.btn-icon.scam-tt:hover { color: #fff; }
+.scam-tt-modal {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(2, 6, 14, 0.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.scam-tt-modal.hidden { display: none; }
+.scam-tt-card {
+  width: min(640px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  background: #121b2d;
+  border: 1px solid rgba(148,163,184,.28);
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow);
+}
+.scam-tt-card h4 { margin: 0 0 .5rem; color: #f1f5f9; }
+.scam-tt-card pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: .82rem;
+  color: #e2e8f0;
+  background: #0c1422;
+  border: 1px solid rgba(148,163,184,.2);
+  border-radius: 10px;
+  padding: .75rem;
+  margin: .5rem 0 0;
+}
 
 .action-chip {
   font-size: .68rem;

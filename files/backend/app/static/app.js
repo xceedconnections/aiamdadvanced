@@ -3143,11 +3143,31 @@ async function saveScamBlacklist() {
       method: "PUT",
       json: { blacklist_words: words, rescan: true, mark_status: "SPAM" },
     });
-    alert(`Blacklist saved (${(res.blacklist_words || words).length} words). Rescanned ${res.rescanned || 0} calls.`);
+    alert(
+      `Blacklist saved (${(res.blacklist_words || words).length} words).\n` +
+        `Re-matched existing text: ${res.rescanned || 0}\n` +
+        `New speech→text runs: ${res.retranscribed || 0}`
+    );
     loadScammers();
   } catch (e) {
     alert(e.message || e);
   }
+}
+
+function openScamTranscriptModal(title, meta, text) {
+  const modal = $("#scam-tt-modal");
+  if (!modal) {
+    alert(text || "No transcript");
+    return;
+  }
+  $("#scam-tt-title").textContent = title || "Speech → text";
+  $("#scam-tt-meta").textContent = meta || "";
+  $("#scam-tt-body").textContent = text || "(empty)";
+  modal.classList.remove("hidden");
+}
+
+function closeScamTranscriptModal() {
+  $("#scam-tt-modal")?.classList.add("hidden");
 }
 
 async function loadScammers() {
@@ -3168,13 +3188,16 @@ async function loadScammers() {
       .map((r) => {
         const stU = String(r.status || "").toUpperCase();
         const isSpam = stU === "SPAM" || stU === "SCAM";
-        const play = r.has_recording
-          ? `<button type="button" class="btn-icon play" data-scam-play="${r.id}" title="Play">▶</button>`
-          : `<span class="hint">—</span>`;
         const tx = (r.transcript || "").trim();
+        const play = r.has_recording
+          ? `<button type="button" class="btn-icon play" data-scam-play="${r.id}" title="Play audio">▶</button>`
+          : `<span class="hint">—</span>`;
+        const ttBtn = r.has_recording || tx
+          ? `<button type="button" class="btn-icon scam-tt" data-scam-tt="${r.id}" title="Speech → text (transcript)">${tx ? "Aa" : "STT"}</button>`
+          : "";
         const txShort = tx.length > 160 ? `${escapeHtml(tx.slice(0, 160))}…` : escapeHtml(tx || "—");
-        return `<tr class="${isSpam ? "scam-spam-row" : ""}">
-          <td>${play}</td>
+        return `<tr class="${isSpam ? "scam-spam-row" : ""}" data-scam-row="${r.id}" data-scam-has-audio="${r.has_recording ? "1" : "0"}">
+          <td><div class="scam-audio-actions">${play}${ttBtn}</div></td>
           <td>${fmtTime(r.created_at)}</td>
           <td>${escapeHtml(r.server_name || "")}</td>
           <td>${escapeHtml(r.agent_user || "—")}</td>
@@ -3213,10 +3236,49 @@ async function playScamRecording(id) {
 }
 
 document.addEventListener("click", async (e) => {
+  if (e.target.closest("#scam-tt-close") || e.target === $("#scam-tt-modal")) {
+    closeScamTranscriptModal();
+    return;
+  }
   const play = e.target.closest("[data-scam-play]");
   if (play) {
     e.preventDefault();
     playScamRecording(Number(play.getAttribute("data-scam-play")));
+    return;
+  }
+  const tt = e.target.closest("[data-scam-tt]");
+  if (tt) {
+    e.preventDefault();
+    const id = Number(tt.getAttribute("data-scam-tt"));
+    const row = tt.closest("tr");
+    const existing = (row?.querySelector(".scam-transcript")?.getAttribute("title") || "").trim();
+    const matches = row?.querySelector("td:nth-child(8)")?.textContent?.trim() || "";
+    const status = row?.querySelector(".badge")?.textContent?.trim() || "";
+    if (existing) {
+      openScamTranscriptModal(
+        `Call #${id} — speech → text`,
+        `Status: ${status}${matches ? ` · Matches: ${matches}` : ""}`,
+        existing
+      );
+      return;
+    }
+    if (!confirm(`No text yet for #${id}. Run speech→text on the recording now?`)) return;
+    try {
+      tt.disabled = true;
+      tt.textContent = "…";
+      const updated = await api(`/api/scammers/${id}/transcribe`, { method: "POST" });
+      openScamTranscriptModal(
+        `Call #${id} — speech → text`,
+        `Status: ${updated.status}${updated.match_terms ? ` · Matches: ${updated.match_terms}` : ""}`,
+        updated.transcript || "(empty transcript)"
+      );
+      loadScammers();
+    } catch (err) {
+      alert(err.message || err);
+    } finally {
+      tt.disabled = false;
+      tt.textContent = "STT";
+    }
     return;
   }
   const del = e.target.closest("[data-scam-del]");
@@ -3250,6 +3312,7 @@ $("#scammers-refresh-btn")?.addEventListener("click", () => loadScammers());
 $("#scammers-status-filter")?.addEventListener("change", () => loadScammers());
 $("#scammers-server-filter")?.addEventListener("change", () => loadScammers());
 $("#scammers-blacklist-save")?.addEventListener("click", () => saveScamBlacklist());
+$("#scam-tt-close")?.addEventListener("click", () => closeScamTranscriptModal());
 $("#scammers-delete-all-btn")?.addEventListener("click", async () => {
   const serverId = ($("#scammers-server-filter")?.value || "").trim();
   const scope = serverId ? "for this VICIdial server" : "for ALL servers";
