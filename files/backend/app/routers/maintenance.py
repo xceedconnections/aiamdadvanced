@@ -5,12 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.audio_cleanup import delete_old_recordings, delete_recordings_for_calls
+from app.audio_cleanup import delete_old_recordings, delete_recordings_for_calls, delete_paths, prune_empty_dirs
 from app.auth.security import get_current_user
 from app.database import get_db
 from app.models.call import CallAnalysis
 from app.models.correction import TrainingCorrection, TrainingOverride
+from app.models.scam import ScamCall
 from app.models.user import User
+from app.config import get_settings
+from pathlib import Path
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
@@ -126,17 +129,38 @@ def wipe_logs(
 
     audio_result = delete_recordings_for_calls(rows)
     # Also remove orphaned/dated files matching the same age window (or everything)
+    # Includes AMD WAVs and SCAMMERS 2‑min recordings under recordings/scam/
     orphan = delete_old_recordings(payload.older_than_days)
+
+    # Wipe matching SCAMMERS DB rows (+ their files already covered by orphan sweep)
+    scam_q = db.query(ScamCall)
+    if payload.older_than_days is not None:
+        from datetime import timedelta
+
+        scam_cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
+        scam_rows = scam_q.filter(ScamCall.created_at < scam_cutoff).all()
+    else:
+        scam_rows = scam_q.all()
+    scam_file_bytes = 0
+    for srow in scam_rows:
+        if srow.audio_path:
+            r = delete_paths([srow.audio_path])
+            scam_file_bytes += int(r.get("freed_bytes") or 0)
+            orphan["deleted_files"] = int(orphan.get("deleted_files") or 0) + int(r.get("deleted_files") or 0)
+        db.delete(srow)
+    deleted_scam = len(scam_rows)
+    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR) / "scam")
+
     audio_result = {
         "deleted_files": audio_result.get("deleted_files", 0) + orphan.get("deleted_files", 0),
         "failed_files": audio_result.get("failed_files", 0) + orphan.get("failed_files", 0),
-        "freed_bytes": audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0),
+        "freed_bytes": audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0) + scam_file_bytes,
         "freed_mb": round(
-            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0)) / (1024 * 1024),
+            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0) + scam_file_bytes) / (1024 * 1024),
             2,
         ),
         "freed_gb": round(
-            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0)) / (1024**3),
+            (audio_result.get("freed_bytes", 0) + orphan.get("freed_bytes", 0) + scam_file_bytes) / (1024**3),
             3,
         ),
         "recordings_dir": orphan.get("recordings_dir") or audio_result.get("recordings_dir"),
@@ -178,6 +202,7 @@ def wipe_logs(
         "deleted_call_analyses": deleted_calls,
         "deleted_training_corrections": deleted_corr,
         "deleted_training_overrides": deleted_overrides,
+        "deleted_scam_calls": deleted_scam,
         "deleted_audio_files": audio_result.get("deleted_files", 0),
         "failed_audio_files": audio_result.get("failed_files", 0),
         "freed_mb": audio_result.get("freed_mb", 0),
@@ -190,6 +215,7 @@ def wipe_logs(
 @router.post("/delete-audio")
 def delete_audio(
     payload: AudioCleanupRequest,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     _require_admin(user)
@@ -197,11 +223,33 @@ def delete_audio(
         raise HTTPException(status_code=400, detail="Type DELETE in confirm field")
 
     try:
+        # Deletes AMD WAVs and SCAMMERS recordings under recordings/ (incl. scam/)
         result = delete_old_recordings(payload.older_than_days)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Clear SCAMMERS DB audio blobs/paths for matching age (keep row metadata optional:
+    # null blobs so Play disappears; keep CLEAN/SPAM history unless full wipe)
+    scam_q = db.query(ScamCall)
+    if payload.older_than_days is not None:
+        from datetime import timedelta
+
+        cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
+        scam_rows = scam_q.filter(ScamCall.created_at < cutoff).all()
+    else:
+        scam_rows = scam_q.all()
+    cleared = 0
+    for srow in scam_rows:
+        srow.audio_blob = None
+        srow.audio_path = ""
+        srow.audio_saved = False
+        cleared += 1
+    db.commit()
+    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR) / "scam")
+
     result["deleted_by"] = user.username
+    result["scam_audio_cleared"] = cleared
+    result["includes_scam_recordings"] = True
     if result.get("failed_files"):
         raise HTTPException(
             status_code=500,

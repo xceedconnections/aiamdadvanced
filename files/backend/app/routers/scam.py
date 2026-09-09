@@ -18,7 +18,9 @@ from app.models.scam import ScamCall
 from app.models.server import VicidialServer
 from app.models.user import User
 from app.recordings import to_browser_wav
-from app.scam_detect import transcribe_and_scan
+from app.scam_detect import scan_transcript, transcribe_and_scan
+from app.scam_settings import load_scam_settings, save_scam_settings
+from app.audio_cleanup import delete_paths, prune_empty_dirs
 
 router = APIRouter(tags=["scam"])
 settings = get_settings()
@@ -48,6 +50,43 @@ class ScamCallOut(BaseModel):
 
 class ScamStatusUpdate(BaseModel):
     status: str = Field(..., min_length=2, max_length=32)
+
+
+class ScamBlacklistUpdate(BaseModel):
+    blacklist_words: list[str] | str = Field(default_factory=list)
+    min_seconds_for_scan: int | None = Field(None, ge=1, le=120)
+    mark_status: str | None = Field(None, max_length=16)
+    rescan: bool = False
+
+
+def _delete_scam_row_files(row: ScamCall) -> dict:
+    paths: list[str] = []
+    if row.audio_path:
+        paths.append(row.audio_path)
+    return delete_paths(paths)
+
+
+def _apply_scan_to_row(row: ScamCall, scanned: dict) -> None:
+    status = str(scanned.get("status") or "PENDING").upper()
+    if status not in ("SCAM", "SPAM", "CLEAN", "PENDING", "ERROR"):
+        status = "PENDING"
+    row.status = status
+    row.confidence = float(scanned.get("confidence") or 0)
+    if scanned.get("audio_seconds") is not None:
+        row.audio_seconds = float(scanned.get("audio_seconds") or row.audio_seconds or 0)
+    row.transcript = str(scanned.get("transcript") or row.transcript or "")
+    row.match_terms = ",".join(scanned.get("match_terms") or [])
+    row.details_json = json.dumps(
+        {
+            "note": scanned.get("note"),
+            "whisper_ok": scanned.get("whisper_ok"),
+            "whisper_error": scanned.get("whisper_error"),
+            "match_terms": scanned.get("match_terms") or [],
+        }
+    )
+    row.error_message = str(scanned.get("whisper_error") or "") if status == "ERROR" else ""
+    row.reviewed_at = datetime.utcnow() if status in ("SCAM", "SPAM", "CLEAN") else None
+
 
 
 def _scam_dir(server_id: int | None) -> Path:
@@ -102,12 +141,13 @@ def scam_config(server: VicidialServer = Depends(get_server_from_api_key)):
     except (TypeError, ValueError):
         record_secs = 120
     record_secs = max(30, min(600, record_secs))
+    cfg = load_scam_settings()
     return {
         "status": "ok",
         "scam_protection_enabled": enabled,
         "server_id": server.id,
         "server_name": server.name,
-        "min_seconds_for_scan": 30,
+        "min_seconds_for_scan": int(cfg.get("min_seconds_for_scan") or 5),
         "record_max_seconds": record_secs,
         "scam_record_seconds": record_secs,
         "upload_url": "/api/v1/scam/recording",
@@ -280,7 +320,7 @@ async def scam_recording_upload(
     except OSError as exc:
         print(f"OpenAMD SCAM WARNING: save failed for {callid}: {exc}")
 
-    scanned = transcribe_and_scan(playable, min_seconds_for_scan=30.0)
+    scanned = transcribe_and_scan(playable)
     status = str(scanned.get("status") or "PENDING").upper()
     if status not in ("SCAM", "SPAM", "CLEAN", "PENDING", "ERROR"):
         status = "PENDING"
@@ -359,9 +399,45 @@ def _require_staff(user: User):
         raise HTTPException(status_code=403, detail="Admin role required")
 
 
+@router.get("/api/scam/blacklist")
+def get_scam_blacklist(user: User = Depends(get_current_user)):
+    _require_staff(user)
+    return load_scam_settings()
+
+
+@router.put("/api/scam/blacklist")
+def put_scam_blacklist(
+    payload: ScamBlacklistUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_staff(user)
+    saved = save_scam_settings(
+        blacklist_words=payload.blacklist_words,
+        min_seconds_for_scan=payload.min_seconds_for_scan,
+        mark_status=payload.mark_status,
+    )
+    rescanned = 0
+    if payload.rescan:
+        rows = (
+            db.query(ScamCall)
+            .filter(ScamCall.transcript.isnot(None), ScamCall.transcript != "")
+            .order_by(ScamCall.id.desc())
+            .limit(2000)
+            .all()
+        )
+        for row in rows:
+            scanned = scan_transcript(row.transcript or "")
+            _apply_scan_to_row(row, scanned)
+            rescanned += 1
+        db.commit()
+    return {**saved, "rescanned": rescanned}
+
+
 @router.get("/api/scammers", response_model=list[ScamCallOut])
 def list_scammers(
     status: str = "ALL",
+    server_id: int | None = None,
     limit: int = 100,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -372,6 +448,8 @@ def list_scammers(
     st = (status or "").strip().upper()
     if st and st != "ALL":
         q = q.filter(ScamCall.status == st)
+    if server_id is not None:
+        q = q.filter(ScamCall.server_id == int(server_id))
     rows = q.limit(limit).all()
     return [_to_out(r) for r in rows]
 
@@ -395,6 +473,63 @@ def patch_scammer(
     db.commit()
     db.refresh(row)
     return _to_out(row)
+
+
+@router.delete("/api/scammers/{scam_id}")
+def delete_scammer(
+    scam_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_staff(user)
+    row = (
+        db.query(ScamCall)
+        .options(undefer(ScamCall.audio_blob))
+        .filter(ScamCall.id == scam_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    files = _delete_scam_row_files(row)
+    db.delete(row)
+    db.commit()
+    root = Path(settings.RECORDINGS_DIR) / "scam"
+    prune_empty_dirs(root)
+    return {"ok": True, "deleted_id": scam_id, **files}
+
+
+@router.delete("/api/scammers")
+def delete_all_scammers(
+    server_id: int | None = None,
+    confirm: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Delete all SCAMMERS rows (+ WAV files). confirm=DELETE required."""
+    _require_staff(user)
+    if (confirm or "").strip().upper() != "DELETE":
+        raise HTTPException(status_code=400, detail="Pass confirm=DELETE")
+    q = db.query(ScamCall)
+    if server_id is not None:
+        q = q.filter(ScamCall.server_id == int(server_id))
+    rows = q.all()
+    deleted_files = 0
+    freed = 0
+    for row in rows:
+        r = _delete_scam_row_files(row)
+        deleted_files += int(r.get("deleted_files") or 0)
+        freed += int(r.get("freed_bytes") or 0)
+        db.delete(row)
+    db.commit()
+    root = Path(settings.RECORDINGS_DIR) / "scam"
+    prune_empty_dirs(root)
+    return {
+        "ok": True,
+        "deleted_rows": len(rows),
+        "deleted_files": deleted_files,
+        "freed_mb": round(freed / (1024 * 1024), 2),
+        "server_id": server_id,
+    }
 
 
 @router.get("/api/scammers/{scam_id}/play")

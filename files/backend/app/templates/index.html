@@ -362,24 +362,39 @@
             <h3>SCAMMERS</h3>
             <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
               <label class="inline">
+                Server
+                <select id="scammers-server-filter">
+                  <option value="">ALL</option>
+                </select>
+              </label>
+              <label class="inline">
                 Status
                 <select id="scammers-status-filter">
                   <option value="ALL" selected>ALL</option>
                   <option value="PENDING">PENDING</option>
                   <option value="CLEAN">CLEAN</option>
-                  <option value="SCAM">SCAM</option>
                   <option value="SPAM">SPAM</option>
+                  <option value="SCAM">SCAM</option>
                 </select>
               </label>
               <button class="ghost" type="button" id="scammers-refresh-btn">Refresh</button>
+              <button class="ghost" type="button" id="scammers-delete-all-btn" style="color:#fca5a5">Delete all</button>
             </div>
           </div>
           <p class="hint">
-            Monitored HUMAN→agent calls from dialers with <strong>SCAM protection ON</strong>
-            (<code>vicidialaiamdscammerchecker</code>). Default view is <strong>ALL</strong> (PENDING while recording,
-            then CLEAN / SCAM after upload). Filter <strong>SCAM</strong> only shows keyword hits.
-            AMD 8399 is unchanged. Record length is set per VICIdial server (default 2 minutes).
+            HUMAN→agent calls recorded when <strong>SCAM protection ON</strong>
+            (<code>vicidialaiamdscammerchecker</code>). Speech is converted to text and matched against your
+            <strong>blacklist words</strong> — hits show as red <strong>SPAM</strong>.
+            Audio cleanup / wipe also removes these SCAMMER recordings with AMD WAVs.
           </p>
+          <div class="panel" style="margin:0 0 1rem;padding:.75rem 1rem;border:1px solid rgba(148,163,184,.2);border-radius:8px">
+            <div class="panel-head" style="margin:0 0 .5rem">
+              <h4 style="margin:0;font-size:0.95rem">Blacklist words (speech → text match)</h4>
+              <button class="ghost" type="button" id="scammers-blacklist-save">Save + rescan</button>
+            </div>
+            <p class="hint" style="margin-top:0">One word or phrase per line (e.g. bank, chase, credit card, spectrum). If spoken on the call, status becomes red SPAM.</p>
+            <textarea id="scammers-blacklist-words" rows="6" style="width:100%;font-family:ui-monospace,monospace;font-size:.85rem" placeholder="bank&#10;chase&#10;credit card"></textarea>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -392,6 +407,7 @@
                   <th>Called Number</th>
                   <th>Status</th>
                   <th>Matches</th>
+                  <th>Transcript</th>
                   <th>Sec</th>
                   <th>Actions</th>
                 </tr>
@@ -869,7 +885,7 @@
       <section id="page-wipe" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Wipe detection logs</h3></div>
-          <p class="hint">Clears OpenAMD database call logs (PostgreSQL) <strong>and</strong> matching WAV files under <code>/opt/openamd/recordings</code> so recordings are not left orphaned on disk. VICIdial itself is not modified.</p>
+          <p class="hint">Clears OpenAMD database call logs (PostgreSQL) <strong>and</strong> matching WAV files under <code>/opt/openamd/recordings</code> (AMD analyze clips <strong>and</strong> SCAMMERS full-call recordings under <code>recordings/scam/</code>). Also removes SCAMMERS database rows. VICIdial itself is not modified.</p>
           <div class="stat-grid" id="wipe-stats"></div>
           <form id="wipe-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete records older than (days) — leave blank for ALL</label>
@@ -885,7 +901,7 @@
       <section id="page-audio" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Audio cleanup</h3></div>
-          <p class="hint">Deletes WAV files stored under <code>/opt/openamd/recordings</code> to free disk space on the AI AMD server.</p>
+          <p class="hint">Deletes WAV files under <code>/opt/openamd/recordings</code> — including AMD analyze audio <strong>and</strong> SCAMMERS 2‑minute agent recordings in <code>recordings/scam/</code> — to free disk space.</p>
           <div class="stat-grid" id="audio-stats"></div>
           <form id="audio-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete audio older than (days) — leave blank for ALL</label>

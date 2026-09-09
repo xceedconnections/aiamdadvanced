@@ -181,7 +181,12 @@ function openPage(page) {
   const title = link.dataset.title || link.textContent.replace(/^[^\w]+/, "").trim();
   $("#page-title").textContent = title;
   closeNav();
-  if (page === "scammers") loadScammers();
+  if (page === "scammers") {
+    fillServerFilters().finally(() => {
+      loadScamBlacklist();
+      loadScammers();
+    });
+  }
   if (page === "servers") loadServers();
   if (page === "reports") loadReports();
   if (page === "live") {
@@ -1022,9 +1027,11 @@ async function fillServerFilters() {
     const liveSel = $("#live-server-filter");
     const cdrSel = $("#cdr-server-filter");
     const trainSel = $("#train-server-filter");
+    const scamSel = $("#scammers-server-filter");
     const liveVal = isDialerUser() && state.serverId ? state.serverId : liveSel?.value || "";
     const cdrVal = isDialerUser() && state.serverId ? state.serverId : cdrSel?.value || "";
     const trainVal = trainSel?.value || "";
+    const scamVal = scamSel?.value || "";
     if (liveSel) {
       liveSel.innerHTML = options;
       if (liveVal) liveSel.value = liveVal;
@@ -1036,6 +1043,10 @@ async function fillServerFilters() {
     if (trainSel) {
       trainSel.innerHTML = options;
       trainSel.value = trainVal;
+    }
+    if (scamSel) {
+      scamSel.innerHTML = options;
+      if (scamVal) scamSel.value = scamVal;
     }
   } catch (e) {
     /* ignore */
@@ -3108,23 +3119,61 @@ function startLiveTimer() {
   }, 5000);
 }
 
+async function loadScamBlacklist() {
+  const ta = $("#scammers-blacklist-words");
+  if (!ta) return;
+  try {
+    const cfg = await api("/api/scam/blacklist");
+    const words = cfg.blacklist_words || [];
+    ta.value = words.join("\n");
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+async function saveScamBlacklist() {
+  const ta = $("#scammers-blacklist-words");
+  if (!ta) return;
+  const words = ta.value
+    .split(/[\n,;]+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+  try {
+    const res = await api("/api/scam/blacklist", {
+      method: "PUT",
+      json: { blacklist_words: words, rescan: true, mark_status: "SPAM" },
+    });
+    alert(`Blacklist saved (${(res.blacklist_words || words).length} words). Rescanned ${res.rescanned || 0} calls.`);
+    loadScammers();
+  } catch (e) {
+    alert(e.message || e);
+  }
+}
+
 async function loadScammers() {
   const body = $("#scammers-body");
   if (!body) return;
   const status = ($("#scammers-status-filter")?.value || "ALL").trim();
-  body.innerHTML = `<tr><td colspan="10" class="hint">Loading…</td></tr>`;
+  const serverId = ($("#scammers-server-filter")?.value || "").trim();
+  body.innerHTML = `<tr><td colspan="11" class="hint">Loading…</td></tr>`;
   try {
-    const rows = await api(`/api/scammers?status=${encodeURIComponent(status)}&limit=200`);
+    const qs = new URLSearchParams({ status, limit: "200" });
+    if (serverId) qs.set("server_id", serverId);
+    const rows = await api(`/api/scammers?${qs.toString()}`);
     if (!rows.length) {
-      body.innerHTML = `<tr><td colspan="10" class="hint">No rows for this filter.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="11" class="hint">No rows for this filter.</td></tr>`;
       return;
     }
     body.innerHTML = rows
       .map((r) => {
+        const stU = String(r.status || "").toUpperCase();
+        const isSpam = stU === "SPAM" || stU === "SCAM";
         const play = r.has_recording
           ? `<button type="button" class="btn-icon play" data-scam-play="${r.id}" title="Play">▶</button>`
           : `<span class="hint">—</span>`;
-        return `<tr>
+        const tx = (r.transcript || "").trim();
+        const txShort = tx.length > 160 ? `${escapeHtml(tx.slice(0, 160))}…` : escapeHtml(tx || "—");
+        return `<tr class="${isSpam ? "scam-spam-row" : ""}">
           <td>${play}</td>
           <td>${fmtTime(r.created_at)}</td>
           <td>${escapeHtml(r.server_name || "")}</td>
@@ -3133,17 +3182,18 @@ async function loadScammers() {
           <td>${escapeHtml(r.called_number || "")}</td>
           <td><span class="badge ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
           <td><span class="hint">${escapeHtml(r.match_terms || "")}</span></td>
+          <td><div class="scam-transcript ${isSpam && tx ? "hit" : ""}" title="${escapeHtml(tx)}">${txShort}</div></td>
           <td>${Number(r.audio_seconds || 0).toFixed(0)}</td>
           <td style="white-space:nowrap">
-            <button class="ghost" type="button" data-scam-status="${r.id}" data-to="SCAM">SCAM</button>
             <button class="ghost" type="button" data-scam-status="${r.id}" data-to="SPAM">SPAM</button>
             <button class="ghost" type="button" data-scam-status="${r.id}" data-to="CLEAN">CLEAN</button>
+            <button class="ghost" type="button" data-scam-del="${r.id}" style="color:#fca5a5">Delete</button>
           </td>
         </tr>`;
       })
       .join("");
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="10" class="hint">Failed: ${escapeHtml(e.message || e)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11" class="hint">Failed: ${escapeHtml(e.message || e)}</td></tr>`;
   }
 }
 
@@ -3169,11 +3219,24 @@ document.addEventListener("click", async (e) => {
     playScamRecording(Number(play.getAttribute("data-scam-play")));
     return;
   }
+  const del = e.target.closest("[data-scam-del]");
+  if (del) {
+    e.preventDefault();
+    const id = Number(del.getAttribute("data-scam-del"));
+    if (!confirm(`Delete SCAMMERS call #${id} and its recording?`)) return;
+    try {
+      await api(`/api/scammers/${id}`, { method: "DELETE" });
+      loadScammers();
+    } catch (err) {
+      alert(err.message || err);
+    }
+    return;
+  }
   const st = e.target.closest("[data-scam-status]");
   if (st) {
     e.preventDefault();
     const id = Number(st.getAttribute("data-scam-status"));
-    const to = st.getAttribute("data-to") || "SCAM";
+    const to = st.getAttribute("data-to") || "SPAM";
     try {
       await api(`/api/scammers/${id}`, { method: "PATCH", json: { status: to } });
       loadScammers();
@@ -3185,6 +3248,24 @@ document.addEventListener("click", async (e) => {
 
 $("#scammers-refresh-btn")?.addEventListener("click", () => loadScammers());
 $("#scammers-status-filter")?.addEventListener("change", () => loadScammers());
+$("#scammers-server-filter")?.addEventListener("change", () => loadScammers());
+$("#scammers-blacklist-save")?.addEventListener("click", () => saveScamBlacklist());
+$("#scammers-delete-all-btn")?.addEventListener("click", async () => {
+  const serverId = ($("#scammers-server-filter")?.value || "").trim();
+  const scope = serverId ? "for this VICIdial server" : "for ALL servers";
+  if (!confirm(`Delete ALL SCAMMERS calls ${scope}?`)) return;
+  const typed = prompt("Type DELETE to confirm");
+  if ((typed || "").trim().toUpperCase() !== "DELETE") return;
+  try {
+    const qs = new URLSearchParams({ confirm: "DELETE" });
+    if (serverId) qs.set("server_id", serverId);
+    const res = await api(`/api/scammers?${qs.toString()}`, { method: "DELETE" });
+    alert(`Deleted ${res.deleted_rows || 0} row(s), ${res.deleted_files || 0} file(s).`);
+    loadScammers();
+  } catch (err) {
+    alert(err.message || err);
+  }
+});
 
 function stopLiveTimer() {
   if (state.liveTimer) clearInterval(state.liveTimer);

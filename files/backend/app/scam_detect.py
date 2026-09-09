@@ -1,30 +1,38 @@
-"""Heuristic SCAM / card / bank phrase detection on full-call transcripts."""
+"""Speech-to-text + blacklist phrase detection for SCAMMER full-call recordings."""
 from __future__ import annotations
 
 import re
 from typing import Any
 
-# Phrases that often indicate social-engineering / card / bank harvesting on calls.
-_TERM_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("credit_card", re.compile(r"\b(credit\s*card|debit\s*card|card\s*number|cvv|cvc|expiry|expiration)\b", re.I)),
-    ("card_digits", re.compile(r"\b(sixteen|sixteen digit|16\s*digit|last\s*four|security\s*code)\b", re.I)),
-    ("bank_name", re.compile(
-        r"\b(bank\s+of\s+america|wells\s*fargo|chase|citibank|citi\s*bank|capital\s*one|"
-        r"td\s*bank|pnc|us\s*bank|bank\s*of\s*montreal|rbc|scotiabank|hsbc|"
-        r"your\s+bank|banking\s+details|account\s+number|routing\s+number|sort\s+code)\b",
-        re.I,
-    )),
-    ("otp_ssn", re.compile(r"\b(one[\s-]*time\s*pass|otp|social\s*security|ssn|mother'?s?\s*maiden)\b", re.I)),
-    ("verify_account", re.compile(
-        r"\b(verify\s+(your\s+)?(account|identity|card)|confirm\s+(your\s+)?(card|account|ssn)|"
-        r"update\s+(your\s+)?(billing|payment|card))\b",
-        re.I,
-    )),
-    ("gift_wire", re.compile(r"\b(gift\s*card|itunes\s*card|wire\s*transfer|western\s*union|bitcoin|crypto\s*wallet)\b", re.I)),
-]
+from app.scam_settings import load_scam_settings
 
 
-def scan_transcript(text: str) -> dict[str, Any]:
+def _word_to_pattern(word: str) -> re.Pattern[str] | None:
+    w = (word or "").strip().lower()
+    if len(w) < 2:
+        return None
+    parts = [re.escape(p) for p in re.split(r"\s+", w) if p]
+    if not parts:
+        return None
+    return re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.I)
+
+
+def build_blacklist_patterns(words: list[str] | None = None) -> list[tuple[str, re.Pattern[str]]]:
+    cfg_words = words if words is not None else load_scam_settings().get("blacklist_words") or []
+    out: list[tuple[str, re.Pattern[str]]] = []
+    for w in cfg_words:
+        pat = _word_to_pattern(str(w))
+        if pat is not None:
+            out.append((str(w).strip().lower(), pat))
+    return out
+
+
+def scan_transcript(text: str, *, words: list[str] | None = None) -> dict[str, Any]:
+    """Match blacklist words in transcript. Hits → SPAM (red) by default."""
+    cfg = load_scam_settings()
+    mark = str(cfg.get("mark_status") or "SPAM").upper()
+    if mark not in ("SPAM", "SCAM"):
+        mark = "SPAM"
     raw = (text or "").strip()
     if not raw:
         return {
@@ -34,33 +42,38 @@ def scan_transcript(text: str) -> dict[str, Any]:
             "note": "empty_transcript",
         }
     hits: list[str] = []
-    for label, pat in _TERM_PATTERNS:
-        if pat.search(raw):
+    for label, pat in build_blacklist_patterns(words if words is not None else cfg.get("blacklist_words")):
+        if pat.search(raw) and label not in hits:
             hits.append(label)
     if hits:
         return {
-            "status": "SCAM",
-            "confidence": min(0.99, 0.55 + 0.08 * len(hits)),
+            "status": mark,
+            "confidence": min(0.99, 0.55 + 0.06 * len(hits)),
             "match_terms": hits,
-            "note": "keyword_hit",
+            "note": "blacklist_hit",
         }
     return {
         "status": "CLEAN",
         "confidence": 0.6,
         "match_terms": [],
-        "note": "no_keyword_hit",
+        "note": "no_blacklist_hit",
     }
 
 
-def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float = 120.0) -> dict[str, Any]:
-    """Transcribe full-ish call audio and apply scam heuristics.
-
-    Short uploads (< min_seconds) are stored as PENDING/CLEAN without forcing SCAM.
-    """
+def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float | None = None) -> dict[str, Any]:
+    """Whisper speech-to-text then blacklist scan."""
     import io
 
     import numpy as np
     import soundfile as sf
+
+    cfg = load_scam_settings()
+    if min_seconds_for_scan is None:
+        try:
+            min_seconds_for_scan = float(cfg.get("min_seconds_for_scan") or 5)
+        except (TypeError, ValueError):
+            min_seconds_for_scan = 5.0
+    min_seconds_for_scan = max(1.0, float(min_seconds_for_scan))
 
     try:
         audio, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
@@ -81,7 +94,6 @@ def transcribe_and_scan(wav_bytes: bytes, *, min_seconds_for_scan: float = 120.0
     whisper_ok = False
     whisper_err = ""
 
-    # Only run Whisper when the call is long enough
     if duration >= float(min_seconds_for_scan):
         try:
             from app.ai import whisper_amd as wa

@@ -28,7 +28,7 @@ def _safe_unlink(path: Path) -> tuple[bool, int]:
         return False, 0
 
 
-def _prune_empty_dirs(root: Path) -> None:
+def prune_empty_dirs(root: Path) -> None:
     if not root.exists():
         return
     for dirpath, _dirnames, _filenames in os.walk(root, topdown=False):
@@ -99,7 +99,7 @@ def delete_recordings_for_calls(calls: Sequence[object]) -> dict:
             targets.append(by_analysis_path(int(analysis_id)))
 
     result = delete_paths(targets)
-    _prune_empty_dirs(root)
+    prune_empty_dirs(root)
     result["recordings_dir"] = str(root)
     return result
 
@@ -168,7 +168,7 @@ def delete_old_recordings(older_than_days: Optional[int]) -> dict:
             failed_files += 1
             logger.warning("Failed to delete recording %s: %s", path, exc)
 
-    _prune_empty_dirs(root)
+    prune_empty_dirs(root)
 
     message = "ok"
     if failed_files:
