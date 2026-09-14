@@ -43,7 +43,7 @@ class BulkDeleteHistory(BaseModel):
 
 
 class WipeTrainingRequest(BaseModel):
-    confirm: str = Field(..., max_length=32)
+    confirm: str = Field("", max_length=32)
 
 
 def _require_admin(user: User):
@@ -368,12 +368,6 @@ def wipe_training(
 ):
     """Delete all training audit history (AMD always judges from audio regardless)."""
     _require_admin(user)
-    confirm = " ".join(payload.confirm.strip().upper().split())
-    if confirm not in ("WIPE TRAINING", "WIPE", "DELETE", "YES"):
-        raise HTTPException(
-            status_code=400,
-            detail='Type WIPE TRAINING (or WIPE) to confirm',
-        )
     try:
         result = wipe_all_training(db)
     except Exception as exc:

@@ -769,8 +769,6 @@
             <div class="panel-head"><h3>Wipe training only</h3></div>
             <p class="hint">Deletes all training history. Call CDR logs are kept. AMD already judges every call fresh from audio.</p>
             <form id="train-wipe-form" class="form-stack" style="max-width:420px;margin-top:.75rem">
-              <label>Type <code>WIPE TRAINING</code> to confirm</label>
-              <input name="confirm" required placeholder="WIPE TRAINING" autocomplete="off" />
               <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Wipe all training</button>
               <p id="train-wipe-msg" class="hint"></p>
             </form>
@@ -905,8 +903,6 @@
           <form id="wipe-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete records older than (days) — leave blank for ALL</label>
             <input name="older_than_days" type="number" min="0" placeholder="e.g. 7 (blank = wipe everything)" />
-            <label>Type <code>WIPE</code> to confirm</label>
-            <input name="confirm" required placeholder="WIPE" autocomplete="off" />
             <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Wipe logs</button>
             <p id="wipe-msg" class="hint"></p>
           </form>
@@ -921,8 +917,6 @@
           <form id="audio-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete audio older than (days) — leave blank for ALL</label>
             <input name="older_than_days" type="number" min="0" placeholder="e.g. 3 (blank = delete all audio)" />
-            <label>Type <code>DELETE</code> to confirm</label>
-            <input name="confirm" required placeholder="DELETE" autocomplete="off" />
             <button type="submit" style="background:linear-gradient(135deg,#e35d6a,#b42318);color:#fff">Delete audio files</button>
             <p id="audio-msg" class="hint"></p>
           </form>

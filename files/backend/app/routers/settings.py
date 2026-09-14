@@ -246,11 +246,6 @@ def post_ml_retrain(user: User = Depends(get_current_user)):
 def post_ml_wipe(body: MlWipeBody, user: User = Depends(get_current_user)):
     """Delete all ML sample logs and optionally reset XGBoost to a fresh bootstrap model."""
     _require_admin(user)
-    if str(body.confirm or "").strip().upper() != "WIPE":
-        raise HTTPException(
-            status_code=400,
-            detail='Type confirm: "WIPE" to delete all ML training logs',
-        )
     from app.ml_data import wipe_ml_training
 
     result = wipe_ml_training(reset_model=bool(body.reset_model))

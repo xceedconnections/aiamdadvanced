@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
 class WipeRequest(BaseModel):
-    confirm: str = Field(..., description="Type WIPE to confirm", max_length=64)
+    confirm: str = Field("", max_length=64)
     older_than_days: Optional[int] = Field(
         default=None,
         ge=0,
@@ -33,7 +33,7 @@ class WipeRequest(BaseModel):
 
 
 class AudioCleanupRequest(BaseModel):
-    confirm: str = Field(..., description="Type DELETE to confirm", max_length=64)
+    confirm: str = Field("", max_length=64)
     older_than_days: Optional[int] = Field(
         default=None,
         ge=0,
@@ -49,10 +49,6 @@ def _require_admin(user: User):
             status_code=403,
             detail=f"Admin role required (your role: {role or 'none'})",
         )
-
-
-def _norm_confirm(value: str) -> str:
-    return " ".join(str(value or "").strip().upper().split())
 
 
 def _disk_recordings_stats() -> dict:
@@ -317,8 +313,6 @@ def wipe_logs(
 ):
     """Delete detection/CDR rows, training, SCAMMERS, and all audio (disk + DB blobs)."""
     _require_admin(user)
-    if _norm_confirm(payload.confirm) != "WIPE":
-        raise HTTPException(status_code=400, detail='Type "WIPE" in the confirm field')
 
     # Disk first (does not touch DB blobs)
     try:
@@ -361,8 +355,6 @@ def delete_audio(
 ):
     """Delete AMD + SCAM audio on disk AND clear playable DB blobs (CDR Play)."""
     _require_admin(user)
-    if _norm_confirm(payload.confirm) != "DELETE":
-        raise HTTPException(status_code=400, detail='Type "DELETE" in the confirm field')
 
     try:
         result = delete_old_recordings(payload.older_than_days)

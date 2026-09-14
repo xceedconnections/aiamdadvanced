@@ -562,10 +562,8 @@ def delete_all_scammers(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Delete all SCAMMERS rows (+ WAV files). confirm=DELETE required."""
+    """Delete all SCAMMERS rows (+ WAV files)."""
     _require_staff(user)
-    if (confirm or "").strip().upper() != "DELETE":
-        raise HTTPException(status_code=400, detail="Pass confirm=DELETE")
     q = db.query(ScamCall)
     if server_id is not None:
         q = q.filter(ScamCall.server_id == int(server_id))
