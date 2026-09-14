@@ -464,6 +464,65 @@ button.linkish { border: 0; background: transparent; text-decoration: underline;
   color: #f1f5f9;
 }
 
+.panel-grid.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem;
+}
+@media (max-width: 900px) {
+  .panel-grid.two { grid-template-columns: 1fr; }
+}
+
+.confusion-table th,
+.confusion-table td {
+  text-align: center;
+  min-width: 3.2rem;
+}
+.confusion-table th:first-child,
+.confusion-table td:first-child {
+  text-align: left;
+}
+.confusion-table td.cm-ok {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+  font-weight: 700;
+}
+.confusion-table td.cm-err {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+  font-weight: 700;
+}
+
+.calib-list { display: flex; flex-direction: column; gap: .55rem; }
+.calib-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 12rem;
+  gap: .5rem;
+  align-items: center;
+}
+@media (max-width: 800px) {
+  .calib-row { grid-template-columns: 1fr; }
+}
+.calib-label { font-size: .8rem; font-weight: 600; }
+.calib-bars {
+  position: relative;
+  height: 1.35rem;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.calib-bar {
+  position: absolute;
+  left: 0;
+  height: 50%;
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.calib-bar.conf { top: 0; background: rgba(96, 165, 250, 0.75); }
+.calib-bar.acc { bottom: 0; background: rgba(52, 211, 153, 0.8); }
+.calib-meta { font-size: .7rem; text-align: right; }
+
 .panel {
   background: linear-gradient(180deg, #152033 0%, #121b2d 100%);
   border: 1px solid var(--line);

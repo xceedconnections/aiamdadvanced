@@ -31,6 +31,7 @@ const routePages = {
   "/scammers.php": "scammers",
   "/vicidialservers.php": "servers",
   "/reports.php": "reports",
+  "/accuracy.php": "accuracy",
   "/training.php": "training",
   "/training-history.php": "training-history",
   "/ml-logs.php": "ml-logs",
@@ -189,6 +190,9 @@ function openPage(page) {
   }
   if (page === "servers") loadServers();
   if (page === "reports") loadReports();
+  if (page === "accuracy") {
+    fillServerFilters().finally(() => loadAccuracy());
+  }
   if (page === "live") {
     fillServerFilters().then(() => loadLive());
   }
@@ -1028,10 +1032,12 @@ async function fillServerFilters() {
     const cdrSel = $("#cdr-server-filter");
     const trainSel = $("#train-server-filter");
     const scamSel = $("#scammers-server-filter");
+    const accSel = $("#accuracy-server-filter");
     const liveVal = isDialerUser() && state.serverId ? state.serverId : liveSel?.value || "";
     const cdrVal = isDialerUser() && state.serverId ? state.serverId : cdrSel?.value || "";
     const trainVal = trainSel?.value || "";
     const scamVal = scamSel?.value || "";
+    const accVal = accSel?.value || "";
     if (liveSel) {
       liveSel.innerHTML = options;
       if (liveVal) liveSel.value = liveVal;
@@ -1047,6 +1053,10 @@ async function fillServerFilters() {
     if (scamSel) {
       scamSel.innerHTML = options;
       if (scamVal) scamSel.value = scamVal;
+    }
+    if (accSel) {
+      accSel.innerHTML = options;
+      if (accVal) accSel.value = accVal;
     }
   } catch (e) {
     /* ignore */
@@ -2437,6 +2447,122 @@ async function loadReports() {
 }
 
 $("#report-days").addEventListener("change", loadReports);
+
+async function loadAccuracy() {
+  const msg = $("#accuracy-msg");
+  const days = $("#accuracy-days")?.value || "7";
+  const serverId = ($("#accuracy-server-filter")?.value || "").trim();
+  const params = new URLSearchParams({ days });
+  if (serverId) params.set("server_id", serverId);
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Loading evaluation…";
+  }
+  try {
+    const d = await api(`/api/reports/accuracy?${params}`);
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = d.n_labeled
+        ? `${d.n_labeled} labeled call(s) · ECE ${d.ece == null ? "—" : d.ece}`
+        : "No labeled teaches in this period — correct calls on Training to populate metrics.";
+    }
+
+    const cards = [
+      ["Labeled calls", d.n_labeled || 0],
+      ["Overall accuracy", d.accuracy_pct == null ? "—" : `${d.accuracy_pct}%`],
+      ["Correct", d.n_correct || 0],
+      ["False HUMAN", d.false_human || 0],
+      ["False MACHINE", d.false_machine || 0],
+      [
+        "False HUMAN rate",
+        d.false_human_rate == null ? "—" : `${(d.false_human_rate * 100).toFixed(1)}%`,
+      ],
+      [
+        "False MACHINE rate",
+        d.false_machine_rate == null ? "—" : `${(d.false_machine_rate * 100).toFixed(1)}%`,
+      ],
+      ["ECE (calibration)", d.ece == null ? "—" : d.ece],
+    ];
+    $("#accuracy-stats").innerHTML = cards
+      .map(
+        ([label, value]) =>
+          `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`
+      )
+      .join("");
+
+    // Confusion matrix
+    const labels = d.confusion_labels || [];
+    const thead = $("#accuracy-confusion thead");
+    const tbody = $("#accuracy-confusion tbody");
+    if (thead && tbody) {
+      if (!labels.length) {
+        thead.innerHTML = "";
+        tbody.innerHTML = `<tr><td class="hint">No data</td></tr>`;
+      } else {
+        thead.innerHTML = `<tr><th>AI \\ Actual</th>${labels
+          .map((l) => `<th>${escapeHtml(l)}</th>`)
+          .join("")}</tr>`;
+        tbody.innerHTML = (d.confusion_matrix || [])
+          .map((row) => {
+            const cells = (row.counts || [])
+              .map((c, i) => {
+                const diag = labels[i] === row.predicted;
+                const cls = c > 0 ? (diag ? "cm-ok" : "cm-err") : "";
+                return `<td class="${cls}">${c}</td>`;
+              })
+              .join("");
+            return `<tr><th>${escapeHtml(row.predicted)}</th>${cells}</tr>`;
+          })
+          .join("");
+      }
+    }
+
+    // Calibration bars
+    const calib = $("#accuracy-calibration");
+    if (calib) {
+      calib.innerHTML = (d.calibration || [])
+        .map((b) => {
+          const accPct = b.accuracy == null ? 0 : b.accuracy * 100;
+          const confPct = b.avg_confidence == null ? 0 : b.avg_confidence * 100;
+          const gap =
+            b.gap == null ? "—" : `${b.gap >= 0 ? "+" : ""}${(b.gap * 100).toFixed(1)} pts`;
+          return `<div class="calib-row">
+            <div class="calib-label">${escapeHtml(b.label)} <span class="hint">n=${b.n}</span></div>
+            <div class="calib-bars">
+              <div class="calib-bar conf" style="width:${Math.min(100, confPct)}%" title="Avg confidence ${confPct.toFixed(1)}%"></div>
+              <div class="calib-bar acc" style="width:${Math.min(100, accPct)}%" title="Accuracy ${accPct.toFixed(1)}%"></div>
+            </div>
+            <div class="calib-meta hint">conf ${b.avg_confidence == null ? "—" : (b.avg_confidence * 100).toFixed(1) + "%"} · acc ${b.accuracy == null ? "—" : (b.accuracy * 100).toFixed(1) + "%"} · gap ${gap}</div>
+          </div>`;
+        })
+        .join("");
+    }
+
+    const exRow = (r) => `<tr>
+      <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id || String(r.call_analysis_id))}</td>
+      <td>${escapeHtml(r.server_name || "—")}</td>
+      <td>${statusBadge(r.predicted)}</td>
+      <td>${statusBadge(r.actual)}</td>
+      <td>${((r.confidence || 0) * 100).toFixed(0)}%</td>
+    </tr>`;
+
+    $("#accuracy-fh-body").innerHTML =
+      (d.false_human_examples || []).map(exRow).join("") ||
+      `<tr><td colspan="5" class="hint">None in this period</td></tr>`;
+    $("#accuracy-fm-body").innerHTML =
+      (d.false_machine_examples || []).map(exRow).join("") ||
+      `<tr><td colspan="5" class="hint">None in this period</td></tr>`;
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
+  }
+}
+
+$("#accuracy-days")?.addEventListener("change", () => loadAccuracy());
+$("#accuracy-server-filter")?.addEventListener("change", () => loadAccuracy());
+$("#accuracy-refresh")?.addEventListener("click", () => loadAccuracy());
 
 async function loadTraining() {
   const meta = $("#train-meta");

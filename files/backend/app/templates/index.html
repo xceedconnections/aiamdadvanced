@@ -50,6 +50,7 @@
         <a href="/scammers.php" data-page="scammers" class="nav"><span class="nav-ico">⚠</span>SCAMMERS</a>
         <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
         <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
+        <a href="/accuracy.php" data-page="accuracy" class="nav"><span class="nav-ico">◉</span>Accuracy</a>
         <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
         <a href="/training-history.php" data-page="training-history" class="nav"><span class="nav-ico">◷</span>Training History</a>
         <a href="/ml-logs.php" data-page="ml-logs" class="nav"><span class="nav-ico">◈</span>AI Training Logs</a>
@@ -689,6 +690,85 @@
         </div>
       </section>
 
+      <section id="page-accuracy" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Model evaluation</h3>
+            <div class="filter-bar" style="margin:0;gap:.5rem;align-items:center">
+              <label>
+                Period
+                <select id="accuracy-days">
+                  <option value="1">1 day</option>
+                  <option value="7" selected>7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+              </label>
+              <label>
+                VICIdial
+                <select id="accuracy-server-filter">
+                  <option value="">ALL</option>
+                </select>
+              </label>
+              <button class="ghost" type="button" id="accuracy-refresh">Refresh</button>
+            </div>
+          </div>
+          <p class="hint">
+            Ground truth comes from <strong>Training</strong> teaches linked to a call.
+            Teach more calls to improve these metrics. Unlabeled CDR volume is not included.
+          </p>
+          <div class="stat-grid" id="accuracy-stats"></div>
+          <p id="accuracy-msg" class="hint"></p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Confusion matrix</h3></div>
+          <p class="hint">Rows = AI predicted · Columns = taught (actual)</p>
+          <div class="table-wrap">
+            <table class="confusion-table" id="accuracy-confusion">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>Confidence calibration</h3></div>
+          <p class="hint">
+            For each confidence band: does accuracy match the claimed confidence?
+            Gap &gt; 0 means over-confident. ECE summarizes overall calibration error (lower is better).
+          </p>
+          <div id="accuracy-calibration" class="calib-list"></div>
+        </div>
+
+        <div class="panel-grid two">
+          <div class="panel">
+            <div class="panel-head"><h3>False HUMAN</h3></div>
+            <p class="hint">Machines / AA sent to agents (AI said HUMAN, teach was not)</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Call</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
+                </thead>
+                <tbody id="accuracy-fh-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>False MACHINE</h3></div>
+            <p class="hint">Humans discarded (AI hung up / AA, teach was HUMAN)</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Call</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
+                </thead>
+                <tbody id="accuracy-fm-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="page-training" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Correct AI decisions</h3></div>
@@ -1104,6 +1184,6 @@
     </main>
   </div>
 
-  <script src="/static/app.js?v=no-confirm-wipe-1"></script>
+  <script src="/static/app.js?v=accuracy-dash-1"></script>
 </body>
 </html>

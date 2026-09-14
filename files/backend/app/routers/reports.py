@@ -423,6 +423,9 @@ def server_reports(
             .filter(
                 CallAnalysis.server_id == s.id,
                 TrainingCorrection.created_at >= since,
+                TrainingCorrection.is_active == True,  # noqa: E712
+                TrainingCorrection.action == "teach",
+                TrainingCorrection.call_id.isnot(None),
             )
             .all()
         )
@@ -449,6 +452,180 @@ def server_reports(
             )
         )
     return reports
+
+
+def _norm_label(value: Optional[str]) -> str:
+    v = str(value or "").strip().upper()
+    if v == "CANCELLED":
+        return "SIT"
+    if v in _ALLOWED_STATUS and v != "ALL":
+        return v
+    return "ERROR"
+
+
+def _is_agent_path(label: str) -> bool:
+    """Only LIVE HUMAN is sent to agents; everything else is hangup/AA."""
+    return _norm_label(label) == "HUMAN"
+
+
+@router.get("/reports/accuracy")
+def accuracy_report(
+    days: int = Query(7, ge=1, le=365),
+    server_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Labeled AMD evaluation from Training teaches (ground truth).
+
+    predicted = TrainingCorrection.ai_status (engine label at teach time)
+    actual    = TrainingCorrection.corrected_status (human teach)
+    confidence from CallAnalysis (unchanged by teach)
+    """
+    require_not_dialer(user)
+    since = datetime.utcnow() - timedelta(days=days)
+
+    q = (
+        db.query(TrainingCorrection, CallAnalysis)
+        .join(CallAnalysis, CallAnalysis.id == TrainingCorrection.call_id)
+        .filter(
+            TrainingCorrection.created_at >= since,
+            TrainingCorrection.is_active == True,  # noqa: E712
+            TrainingCorrection.action == "teach",
+            TrainingCorrection.call_id.isnot(None),
+        )
+        .order_by(TrainingCorrection.call_id.asc(), TrainingCorrection.id.desc())
+    )
+    if server_id is not None:
+        q = q.filter(CallAnalysis.server_id == int(server_id))
+
+    # Latest teach per call wins
+    seen: set[int] = set()
+    rows: list[dict] = []
+    for tc, ca in q.all():
+        cid = int(tc.call_id)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        predicted = _norm_label(tc.ai_status)
+        actual = _norm_label(tc.corrected_status)
+        conf = float(ca.confidence or 0.0)
+        conf = max(0.0, min(1.0, conf))
+        rows.append(
+            {
+                "call_analysis_id": cid,
+                "call_id": ca.call_id or "",
+                "predicted": predicted,
+                "actual": actual,
+                "confidence": conf,
+                "correct": predicted == actual,
+                "server_id": ca.server_id,
+                "labeled_at": tc.created_at.isoformat() if tc.created_at else None,
+            }
+        )
+
+    n = len(rows)
+    n_correct = sum(1 for r in rows if r["correct"])
+    accuracy = (n_correct / n) if n else None
+
+    # Agent-routing errors (what matters operationally)
+    false_human = [
+        r for r in rows if _is_agent_path(r["predicted"]) and not _is_agent_path(r["actual"])
+    ]
+    false_machine = [
+        r for r in rows if (not _is_agent_path(r["predicted"])) and _is_agent_path(r["actual"])
+    ]
+
+    # Confusion matrix (predicted × actual)
+    labels_order = ["HUMAN", "MACHINE", "IVR", "BLANK", "SIT", "FAX", "ERROR"]
+    present = set()
+    counts: dict[tuple[str, str], int] = {}
+    for r in rows:
+        key = (r["predicted"], r["actual"])
+        counts[key] = counts.get(key, 0) + 1
+        present.add(r["predicted"])
+        present.add(r["actual"])
+    labels = [x for x in labels_order if x in present]
+    matrix = []
+    for pred in labels:
+        row_cells = []
+        for act in labels:
+            row_cells.append(counts.get((pred, act), 0))
+        matrix.append({"predicted": pred, "counts": row_cells})
+
+    # Confidence calibration (10 buckets)
+    buckets = []
+    ece_num = 0.0
+    for i in range(10):
+        lo = i / 10.0
+        hi = (i + 1) / 10.0
+        if i == 9:
+            in_b = [r for r in rows if lo <= r["confidence"] <= hi]
+        else:
+            in_b = [r for r in rows if lo <= r["confidence"] < hi]
+        bn = len(in_b)
+        if bn:
+            b_acc = sum(1 for r in in_b if r["correct"]) / bn
+            b_conf = sum(r["confidence"] for r in in_b) / bn
+            ece_num += abs(b_conf - b_acc) * bn
+        else:
+            b_acc = None
+            b_conf = None
+        buckets.append(
+            {
+                "lo": lo,
+                "hi": hi,
+                "label": f"{int(lo * 100)}–{int(hi * 100)}%",
+                "n": bn,
+                "accuracy": None if b_acc is None else round(b_acc, 4),
+                "avg_confidence": None if b_conf is None else round(b_conf, 4),
+                "gap": None
+                if b_acc is None or b_conf is None
+                else round(b_conf - b_acc, 4),
+            }
+        )
+    ece = round(ece_num / n, 4) if n else None
+
+    server_map = {s.id: s.name for s in db.query(VicidialServer).all()}
+
+    def _examples(items: list[dict], limit: int = 15) -> list[dict]:
+        out = []
+        for r in items[:limit]:
+            out.append(
+                {
+                    "call_analysis_id": r["call_analysis_id"],
+                    "call_id": r["call_id"],
+                    "predicted": r["predicted"],
+                    "actual": r["actual"],
+                    "confidence": round(r["confidence"], 4),
+                    "server_name": server_map.get(r["server_id"], "—"),
+                    "labeled_at": r["labeled_at"],
+                }
+            )
+        return out
+
+    return {
+        "days": days,
+        "server_id": server_id,
+        "n_labeled": n,
+        "n_correct": n_correct,
+        "accuracy": None if accuracy is None else round(accuracy, 4),
+        "accuracy_pct": None if accuracy is None else round(accuracy * 100.0, 2),
+        "false_human": len(false_human),
+        "false_machine": len(false_machine),
+        "false_human_rate": round(len(false_human) / n, 4) if n else None,
+        "false_machine_rate": round(len(false_machine) / n, 4) if n else None,
+        "confusion_labels": labels,
+        "confusion_matrix": matrix,
+        "calibration": buckets,
+        "ece": ece,
+        "false_human_examples": _examples(false_human),
+        "false_machine_examples": _examples(false_machine),
+        "note": (
+            "Metrics use Training teaches only (call-linked). "
+            "False HUMAN = AI said HUMAN but teach was not HUMAN (sent to agents wrongly). "
+            "False MACHINE = AI hung up / AA'd a call taught as HUMAN."
+        ),
+    }
 
 
 @router.get("/reports/hourly")

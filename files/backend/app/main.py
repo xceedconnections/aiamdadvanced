@@ -218,6 +218,7 @@ def health():
 @app.get("/cdr.php", response_class=HTMLResponse)
 @app.get("/vicidialservers.php", response_class=HTMLResponse)
 @app.get("/reports.php", response_class=HTMLResponse)
+@app.get("/accuracy.php", response_class=HTMLResponse)
 @app.get("/training.php", response_class=HTMLResponse)
 @app.get("/training-history.php", response_class=HTMLResponse)
 @app.get("/ml-logs.php", response_class=HTMLResponse)
