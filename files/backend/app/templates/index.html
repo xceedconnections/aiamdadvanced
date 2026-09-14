@@ -900,7 +900,7 @@
       <section id="page-wipe" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Wipe detection logs</h3></div>
-          <p class="hint">Clears OpenAMD database call logs (PostgreSQL) <strong>and</strong> matching WAV files under <code>/opt/openamd/recordings</code> (AMD analyze clips <strong>and</strong> SCAMMERS full-call recordings under <code>recordings/scam/</code>). Also removes SCAMMERS database rows. VICIdial itself is not modified.</p>
+          <p class="hint">Clears OpenAMD database call logs (PostgreSQL) <strong>and</strong> matching WAV files under <code>/opt/openamd/recordings</code> (AMD analyze clips <strong>and</strong> SCAMMERS full-call recordings under <code>recordings/scam/</code>). Also removes SCAMMERS database rows, training linked to those calls, and clears playable DB audio blobs used by CDR Play. VICIdial itself is not modified.</p>
           <div class="stat-grid" id="wipe-stats"></div>
           <form id="wipe-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete records older than (days) — leave blank for ALL</label>
@@ -916,7 +916,7 @@
       <section id="page-audio" class="page hidden">
         <div class="panel">
           <div class="panel-head"><h3>Audio cleanup</h3></div>
-          <p class="hint">Deletes WAV files under <code>/opt/openamd/recordings</code> — including AMD analyze audio <strong>and</strong> SCAMMERS 2‑minute agent recordings in <code>recordings/scam/</code> — to free disk space.</p>
+          <p class="hint">Deletes disk WAVs under <code>/opt/openamd/recordings</code> (AMD + <code>recordings/scam/</code>) <strong>and</strong> clears playable PostgreSQL audio blobs so CDR Play stops after cleanup. Disk file count alone can be 0 while CDR still plays from the database — stats below show both.</p>
           <div class="stat-grid" id="audio-stats"></div>
           <form id="audio-form" class="form-stack" style="max-width:420px;margin-top:1rem">
             <label>Delete audio older than (days) — leave blank for ALL</label>

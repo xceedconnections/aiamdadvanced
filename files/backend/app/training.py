@@ -207,6 +207,14 @@ def deactivate_override(
 
 def wipe_all_training(db: Session) -> dict[str, int]:
     """Remove all taught knowledge — server behaves like fresh install for training."""
+    # Clear override → correction FKs first, then hard-delete both tables.
+    try:
+        db.query(TrainingOverride).update(
+            {TrainingOverride.last_correction_id: None},
+            synchronize_session=False,
+        )
+    except Exception:
+        pass
     n_corr = db.query(TrainingCorrection).delete(synchronize_session=False)
     n_ov = db.query(TrainingOverride).delete(synchronize_session=False)
     db.commit()

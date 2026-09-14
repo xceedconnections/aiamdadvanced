@@ -2925,13 +2925,21 @@ $("#repair-recordings-btn")?.addEventListener("click", async () => {
 });
 
 function renderMaintStats(targetId, s) {
+  const dbMb = s.db_audio_mb != null ? s.db_audio_mb : 0;
+  const playable =
+    s.playable_recordings != null
+      ? s.playable_recordings
+      : (s.calls_with_audio_blob || 0) + (s.scam_with_audio || 0);
   const cards = [
     ["Call analyses", s.call_analyses],
+    ["SCAMMER calls", s.scam_calls != null ? s.scam_calls : "—"],
     ["Training corrections", s.training_corrections],
     ["Oldest call", s.oldest_call ? fmtTime(s.oldest_call) : "—"],
     ["Newest call", s.newest_call ? fmtTime(s.newest_call) : "—"],
-    ["Audio files", s.audio_files],
-    ["Audio size", `${s.audio_mb} MB (${s.audio_gb} GB)`],
+    ["Playable in CDR (DB)", playable],
+    ["DB audio size", `${dbMb} MB`],
+    ["Disk audio files", s.audio_files],
+    ["Disk audio size", `${s.audio_mb} MB (${s.audio_gb} GB)`],
     ["Recordings path", s.recordings_dir],
     ["Database", s.database || "postgresql"],
   ];
@@ -2970,9 +2978,13 @@ $("#wipe-form").addEventListener("submit", async (e) => {
       json: { confirm: confirmText, older_than_days: older },
     });
     $("#wipe-msg").textContent =
-      `Deleted ${data.deleted_call_analyses} call logs, ${data.deleted_training_corrections} corrections` +
+      `Deleted ${data.deleted_call_analyses} call logs, ${data.deleted_scam_calls || 0} SCAMMER rows, ` +
+      `${data.deleted_training_corrections} corrections, ${data.deleted_training_overrides || 0} overrides` +
+      (data.cleared_amd_audio_blobs != null
+        ? `, cleared ${data.cleared_amd_audio_blobs} AMD DB recordings`
+        : "") +
       (data.deleted_audio_files != null
-        ? `, and ${data.deleted_audio_files} audio file(s) (${data.freed_mb || 0} MB).`
+        ? `, and ${data.deleted_audio_files} disk file(s) (${data.freed_mb || 0} MB).`
         : ".");
     if (data.failed_audio_files) {
       $("#wipe-msg").textContent += ` Warning: ${data.failed_audio_files} audio file(s) could not be removed.`;
@@ -2999,8 +3011,9 @@ $("#audio-form").addEventListener("submit", async (e) => {
       json: { confirm: confirmText, older_than_days: older },
     });
     $("#audio-msg").textContent =
-      `Deleted ${data.deleted_files} files, freed ${data.freed_mb} MB (${data.freed_gb} GB).` +
-      (data.failed_files ? ` Failed: ${data.failed_files}.` : "");
+      `Deleted ${data.deleted_files || 0} disk files; cleared ${data.cleared_amd_audio_blobs || 0} AMD + ` +
+      `${data.scam_audio_cleared || 0} SCAMMER DB recordings; freed ${data.freed_mb || 0} MB.` +
+      (data.failed_files ? ` Failed disk: ${data.failed_files}.` : "");
     e.target.reset();
     loadAudioPage();
   } catch (err) {

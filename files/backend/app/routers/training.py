@@ -47,7 +47,8 @@ class WipeTrainingRequest(BaseModel):
 
 
 def _require_admin(user: User):
-    if user.role not in ("superadmin", "admin"):
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role not in ("superadmin", "admin"):
         raise HTTPException(status_code=403, detail="Admin role required")
 
 
@@ -255,26 +256,26 @@ def delete_history_item(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Soft-remove a history row and deactivate matching override if this was its last teach."""
+    """Hard-delete a history row; deactivate override if this was its last teach."""
     _require_admin(user)
     row = db.query(TrainingCorrection).filter(TrainingCorrection.id == correction_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Correction not found")
     phone = row.phone_number or ""
-    row.is_active = False
-    row.action = "revert"
-    row.notes = (row.notes or "") + " [deleted from history]"
+    row_id = row.id
     if phone:
         ov = (
             db.query(TrainingOverride)
             .filter(TrainingOverride.phone_number == phone)
             .first()
         )
-        if ov and ov.last_correction_id == row.id:
+        if ov and ov.last_correction_id == row_id:
             ov.is_active = False
+            ov.last_correction_id = None
             ov.updated_at = datetime.utcnow()
+    db.delete(row)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted": 1}
 
 
 @router.post("/history/delete")
@@ -283,7 +284,7 @@ def bulk_delete_history(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Soft-delete selected training history rows (checkbox delete)."""
+    """Hard-delete selected training history rows (checkbox delete)."""
     _require_admin(user)
     ids = [int(i) for i in (payload.ids or []) if int(i) > 0]
     if not ids:
@@ -294,20 +295,18 @@ def bulk_delete_history(
         if not row:
             continue
         phone = row.phone_number or ""
-        row.is_active = False
-        row.action = "revert"
-        note = row.notes or ""
-        if "[deleted from history]" not in note:
-            row.notes = note + " [deleted from history]"
+        row_id = row.id
         if phone:
             ov = (
                 db.query(TrainingOverride)
                 .filter(TrainingOverride.phone_number == phone)
                 .first()
             )
-            if ov and ov.last_correction_id == row.id:
+            if ov and ov.last_correction_id == row_id:
                 ov.is_active = False
+                ov.last_correction_id = None
                 ov.updated_at = datetime.utcnow()
+        db.delete(row)
         deleted += 1
     db.commit()
     return {"ok": True, "deleted": deleted}
@@ -361,9 +360,17 @@ def wipe_training(
 ):
     """Delete all training audit history (AMD always judges from audio regardless)."""
     _require_admin(user)
-    if payload.confirm.strip().upper() != "WIPE TRAINING":
+    confirm = payload.confirm.strip().upper()
+    if confirm not in ("WIPE TRAINING", "WIPE"):
         raise HTTPException(status_code=400, detail="Type WIPE TRAINING to confirm")
-    result = wipe_all_training(db)
+    try:
+        result = wipe_all_training(db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Training wipe failed: {exc}",
+        ) from exc
     return {
         "ok": True,
         **result,

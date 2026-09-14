@@ -35,7 +35,8 @@ class DisplayTimezoneBody(BaseModel):
 
 
 def _require_admin(user: User):
-    if user.role not in ("superadmin", "admin"):
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role not in ("superadmin", "admin"):
         raise HTTPException(status_code=403, detail="Admin role required")
 
 
