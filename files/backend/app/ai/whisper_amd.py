@@ -27,6 +27,10 @@ _MACHINE_RE = re.compile(
     r"the\s+(person|passion|party|portion|passenger|persons?)\s+"
     r"you(?:'re|\s+are|\s+have)?\s*(calling|called|call)|"
     r"you(?:'re|\s+are)\s+calling|"
+    # "You have reached. Mail." / "you've reached the voicemail of…"
+    r"you\s+have\s+reached|you'?ve\s+reached|you\s+reached|"
+    r"reached\s+(the\s+)?(mailbox|voicemail|voice\s*mail|mail)|"
+    r"please\s+leave\s+(a\s+)?message|"
     r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automated|"
     r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
     r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
@@ -240,6 +244,14 @@ def classify_transcript(
         return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"
     if _IVR_RE.search(t) or is_number_readout(t):
         return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "ivr_digits"
+    # Tiny fragments: "You have reached. Mail." / "reached mail" without full phrase match
+    if re.search(r"\breached\b", t, re.I) and re.search(r"\bmail(box)?\b", t, re.I):
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if re.search(r"\byou\s+have\s+reached\b", t, re.I):
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Standalone "Mail." / "Mailbox." on a short clip after silence → VM
+    if re.fullmatch(r"\s*mails?(box)?\.?\s*", t, re.I):
+        return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
     # Scripted line with "calling" and no human greeting → treat as AM

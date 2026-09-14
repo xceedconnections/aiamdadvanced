@@ -30,7 +30,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "5.1.0",
+    "version": "5.1.1",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
 }
 
@@ -46,8 +46,13 @@ class AnalysisResult:
 
 def _load_audio(
     data: bytes, target_sr: int = 8000
-) -> Tuple[np.ndarray, int, float, float]:
-    """Return (audio, sample_rate, peak_before_normalize, rms_before_normalize)."""
+) -> Tuple[np.ndarray, int, float, float, float, float]:
+    """Return (audio, sr, peak, raw_rms, abs_speech_ratio, abs_speech_ms).
+
+    Soft-normalizes so a single click/spike cannot crush real speech used by
+    VAD and blank detection (common on short AMD windows).
+    abs_* metrics are measured on the original level before normalize.
+    """
     if sf is None:
         raise RuntimeError("soundfile is not installed")
 
@@ -65,43 +70,128 @@ def _load_audio(
 
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
     raw_rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
-    if peak > 1e-6:
-        audio = audio / peak
 
-    return audio.astype(np.float32), sr, peak, raw_rms
+    # Absolute speech (pre-normalize) — independent of clicks / gain
+    abs_speech_ratio = 0.0
+    abs_speech_ms = 0.0
+    if len(audio) > 0 and sr > 0:
+        energy_pre = _frame_energy(audio, sr, frame_ms=20)
+        if len(energy_pre):
+            abs_thr = 0.012
+            mask = energy_pre >= abs_thr
+            abs_speech_ratio = float(np.mean(mask))
+            # longest contiguous run
+            longest = 0
+            cur = 0
+            for v in mask:
+                if bool(v):
+                    cur += 1
+                    longest = max(longest, cur)
+                else:
+                    cur = 0
+            abs_speech_ms = float(longest * 20)
+
+    if peak > 1e-6 and len(audio) >= 80:
+        abs_a = np.abs(audio)
+        soft = float(np.percentile(abs_a, 99.0))
+        if soft > 1e-4 and peak > soft * 2.5:
+            audio = np.clip(audio, -soft, soft) / (soft * 1.05)
+        else:
+            audio = audio / peak
+        audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
+    elif peak > 1e-6:
+        audio = (audio / peak).astype(np.float32)
+
+    return (
+        audio.astype(np.float32),
+        sr,
+        peak,
+        raw_rms,
+        abs_speech_ratio,
+        abs_speech_ms,
+    )
+
+def _has_audible_voice(feats: Dict[str, float]) -> bool:
+    """True when the clip has real voice energy (not digital silence / empty)."""
+    peak = float(feats.get("peak", 0.0))
+    raw_rms = float(feats.get("raw_rms", feats.get("rms", 0.0)))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    activity_ratio = float(feats.get("activity_ratio", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    abs_ratio = float(feats.get("abs_speech_ratio", 0.0))
+    abs_long = float(feats.get("abs_speech_ms", 0.0))
+
+    if abs_long >= 140 and peak >= 0.04:
+        return True
+    if abs_ratio >= 0.10 and peak >= 0.05:
+        return True
+    if peak >= 0.08 and longest_burst >= 120 and (
+        speech_ratio >= 0.08 or activity_ratio >= 0.12
+    ):
+        return True
+    if peak >= 0.10 and raw_rms >= 0.015 and activity_ratio >= 0.10:
+        return True
+    if peak >= 0.08 and speech_ratio >= 0.15:
+        return True
+    if longest_burst >= 200 and peak >= 0.04 and activity_ratio >= 0.15:
+        return True
+    return False
 
 
 def _is_blank(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """True when audio is empty, too short, or has no usable speech."""
+    """True only when audio has no usable voice at all.
+
+    Short AMD windows often contain a quiet 'hello' under 0.6s — those must
+    NOT be blank. Silero-alone blank is not enough when energy shows speech.
+    """
     duration = float(feats.get("duration", 0.0))
     peak = float(feats.get("peak", 1.0))
     raw_rms = float(feats.get("raw_rms", feats.get("rms", 0.0)))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     activity_ratio = float(feats.get("activity_ratio", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
 
-    if duration < 0.6:
+    # Empty / digital silence only
+    if duration < 0.20:
         return True
-    # Digital silence only — a quiet "hello" can have a small peak
     if peak < 0.008:
         return True
+
+    # Any clear voice → never blank (human hello or short VM fragment)
+    if _has_audible_voice(feats):
+        return False
+
+    # Short clip with no usable voice energy
+    if duration < 0.55:
+        return True
+
+    energy_quiet = (
+        speech_ratio < 0.10
+        and activity_ratio < 0.14
+        and longest_burst < 180
+        and raw_rms < 0.025
+        and float(feats.get("abs_speech_ms", 0.0)) < 160
+    )
 
     if silero and silero.get("ok"):
         s_ratio = float(silero.get("speech_ratio", 0.0))
         s_mean = float(silero.get("mean_prob", 0.0))
         s_long = float(silero.get("longest_speech_ms", 0.0))
         s_segs = int(silero.get("num_segments", 0))
-        # Any real speech island (quiet hello) is not blank
-        if s_long >= 180 and s_mean >= 0.22:
+        # Silero hears speech → not blank
+        if s_long >= 150 and s_mean >= 0.18:
             return False
-        if s_segs >= 1 and s_long >= 200:
+        if s_segs >= 1 and s_long >= 160:
             return False
-        if s_ratio < 0.06 and s_mean < 0.20 and s_long < 250 and s_segs <= 1:
+        # Blank only when Silero AND energy agree there is no voice
+        if energy_quiet and s_ratio < 0.08 and s_mean < 0.22 and s_long < 280 and s_segs <= 1:
             return True
-        if peak < 0.05 and s_ratio < 0.10 and s_long < 400:
+        if energy_quiet and peak < 0.06 and s_ratio < 0.12 and s_long < 350:
             return True
+        return False
 
     if peak < 0.025 and speech_ratio < 0.12 and activity_ratio < 0.15:
         return True
@@ -109,7 +199,9 @@ def _is_blank(
         return True
     if raw_rms < 0.008 and speech_ratio < 0.05 and activity_ratio < 0.12:
         return True
-    if peak < 0.04 and speech_ratio < 0.06 and activity_ratio < 0.10:
+    if peak < 0.04 and speech_ratio < 0.06 and activity_ratio < 0.10 and longest_burst < 150:
+        return True
+    if energy_quiet and peak < 0.05:
         return True
 
     return False
@@ -166,7 +258,8 @@ def _looks_like_short_human(
     if _looks_like_spoken_digit(feats, silero):
         return False
     duration = float(feats.get("duration", 0.0))
-    if duration < 0.7 or duration > 3.8:
+    # Allow short AMD windows (~0.4–0.6s) that still contain a hello syllable
+    if duration < 0.35 or duration > 3.8:
         return False
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
@@ -613,7 +706,9 @@ def analyze_audio(
     t0 = time.perf_counter()
 
     try:
-        audio, sr, peak, raw_rms = _load_audio(data, target_sr=sample_hint_sr)
+        audio, sr, peak, raw_rms, abs_speech_ratio, abs_speech_ms = _load_audio(
+            data, target_sr=sample_hint_sr
+        )
     except Exception as exc:
         ms = int((time.perf_counter() - t0) * 1000)
         if is_blank_as_machine_enabled():
@@ -664,6 +759,8 @@ def analyze_audio(
         "sit_conf": sit_conf,
         "internal_silence_ms": float(internal_sil),
         "activity_ratio": float(activity_ratio),
+        "abs_speech_ratio": float(abs_speech_ratio),
+        "abs_speech_ms": float(abs_speech_ms),
         **stats,
     }
 
@@ -672,7 +769,8 @@ def analyze_audio(
         pack=locale_pack,
     )
     h_status, h_confidence = _classify_heuristic(feats, beep, sit, pack)
-    silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.5)
+    # Slightly lower threshold so quiet telephony hello/VM is not missed
+    silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
     status, confidence, fuse_note = _fuse_with_silero(
         h_status, h_confidence, feats, silero, pack
     )
@@ -740,16 +838,31 @@ def analyze_audio(
     whisper_non_human = w_cue in ("ivr", "ivr_digits", "voicemail", "digits")
     if not whisper_non_human and w_text:
         try:
-            from app.ai.whisper_amd import is_number_readout
+            from app.ai.whisper_amd import classify_transcript, is_number_readout
 
             whisper_non_human = is_number_readout(w_text)
+            if not whisper_non_human:
+                w_status, _, w_cue2 = classify_transcript(w_text)
+                if w_status == "MACHINE" or w_cue2 in ("voicemail", "ivr_digits", "ivr"):
+                    whisper_non_human = True
+                    details["whisper_machine_from_text"] = True
         except Exception:
             whisper_non_human = False
+    # Dense/long greeting acoustics must not be overridden to HUMAN by short-human net
+    dense_greeting = (
+        float(feats.get("duration", 0.0)) >= 1.8
+        and (
+            float(feats.get("speech_ratio", 0.0)) >= 0.35
+            or float(silero.get("longest_speech_ms", 0.0) or 0) >= 1200
+            or float(feats.get("abs_speech_ms", 0.0)) >= 600
+        )
+    )
     if (
         status in ("MACHINE", "IVR")
         and float(feats.get("beep", 0.0)) < 0.5
         and _looks_like_short_human(feats, silero)
         and not whisper_non_human
+        and not dense_greeting
     ):
         status, confidence = "HUMAN", max(float(confidence), 0.86)
         details["short_human_safety_override"] = True
@@ -759,6 +872,7 @@ def analyze_audio(
         and float(confidence) < 0.80
         and float(feats.get("beep", 0.0)) < 0.5
         and not whisper_non_human
+        and not dense_greeting
         and not _is_blank(feats, silero)
     ):
         # Weak MACHINE (e.g. 67%) is not evidence enough to hang up a live hello
