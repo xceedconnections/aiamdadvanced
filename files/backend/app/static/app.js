@@ -1810,15 +1810,20 @@ $("#ml-logs-reset-model")?.addEventListener("click", async () => {
 });
 $("#ml-logs-wipe")?.addEventListener("click", async () => {
   const msg = $("#ml-logs-msg");
-  const typed = prompt(
-    'This deletes ALL ML sample logs (JSON+WAV) and rebuilds a fresh XGBoost.\nType WIPE to confirm:'
-  );
-  if (String(typed || "").trim().toUpperCase() !== "WIPE") {
+  if (
+    !confirm(
+      "Delete ALL ML sample logs (JSON+WAV) and rebuild a fresh XGBoost model?\n\nClick OK to continue."
+    )
+  ) {
     if (msg) {
       msg.className = "hint";
       msg.textContent = "Wipe cancelled.";
     }
     return;
+  }
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Wiping ML logs…";
   }
   try {
     const data = await api("/api/settings/ml/wipe", {
@@ -2629,7 +2634,7 @@ async function loadTrainingHistory() {
         const id = btn.getAttribute("data-id");
         if (!id || !confirm("Delete this history row?")) return;
         try {
-          await api(`/api/training/history/${id}`, { method: "DELETE" });
+          await api(`/api/training/history/${id}/delete`, { method: "POST", json: {} });
           loadTrainingHistory();
         } catch (err) {
           if (msg) {
@@ -2714,24 +2719,31 @@ $("#thist-delete-selected")?.addEventListener("click", async () => {
 
 $("#thist-delete-all")?.addEventListener("click", async () => {
   const msg = $("#thist-msg");
-  const typed = prompt(
-    'Delete ALL training history? Type WIPE TRAINING to confirm:'
-  );
-  if (String(typed || "").trim().toUpperCase() !== "WIPE TRAINING") {
+  if (
+    !confirm(
+      "Delete ALL training history permanently?\n\nThis cannot be undone. Click OK to continue."
+    )
+  ) {
     if (msg) {
       msg.className = "hint";
       msg.textContent = "Delete all cancelled.";
     }
     return;
   }
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Deleting all history…";
+  }
   try {
-    await api("/api/training/wipe", {
+    const data = await api("/api/training/wipe", {
       method: "POST",
       json: { confirm: "WIPE TRAINING" },
     });
     if (msg) {
       msg.className = "ok";
-      msg.textContent = "All training history wiped.";
+      msg.textContent =
+        `All training history wiped (${data.deleted_corrections || 0} corrections, ` +
+        `${data.deleted_overrides || 0} overrides).`;
     }
     loadTrainingHistory();
   } catch (err) {
@@ -2807,21 +2819,36 @@ $("#train-import-file")?.addEventListener("change", async (e) => {
 $("#train-wipe-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const confirmText = String(fd.get("confirm") || "").trim();
-  if (!confirm("Delete ALL training history? This only clears the audit log — AMD already judges every call from audio.")) return;
+  const confirmText = String(fd.get("confirm") || "").trim().toUpperCase();
   const msg = $("#train-wipe-msg");
+  if (confirmText !== "WIPE TRAINING" && confirmText !== "WIPE") {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Type WIPE TRAINING (or WIPE) to confirm.";
+    }
+    return;
+  }
+  if (!confirm("Delete ALL training history? This only clears the audit log — AMD already judges every call from audio.")) return;
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Wiping training…";
+  }
   try {
     const data = await api("/api/training/wipe", {
       method: "POST",
-      json: { confirm: confirmText },
+      json: { confirm: "WIPE TRAINING" },
     });
     if (msg) {
+      msg.className = "ok";
       msg.textContent =
         `Wiped ${data.deleted_overrides} overrides and ${data.deleted_corrections} history rows.`;
     }
     e.target.reset();
   } catch (err) {
-    if (msg) msg.textContent = err.message;
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message;
+    }
   }
 });
 
@@ -2963,20 +2990,32 @@ async function loadAudioPage() {
   renderMaintStats("#audio-stats", s);
 }
 
-$("#wipe-form").addEventListener("submit", async (e) => {
+$("#wipe-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const confirmText = String(fd.get("confirm") || "").trim();
+  const confirmText = String(fd.get("confirm") || "").trim().toUpperCase();
   const daysRaw = String(fd.get("older_than_days") || "").trim();
   const older = daysRaw === "" ? null : Number(daysRaw);
-  const scope = older == null ? "ALL detection logs" : `logs older than ${older} day(s)`;
+  if (confirmText !== "WIPE") {
+    $("#wipe-msg").textContent = 'Type WIPE (exactly) in the confirm box.';
+    $("#wipe-msg").className = "error";
+    return;
+  }
+  if (older != null && (!Number.isFinite(older) || older < 0)) {
+    $("#wipe-msg").textContent = "Days must be a number, or leave blank for ALL.";
+    $("#wipe-msg").className = "error";
+    return;
+  }
+  const scope = older == null ? "ALL detection logs + audio + stats" : `logs older than ${older} day(s)`;
   if (!confirm(`Permanently wipe ${scope}? This cannot be undone.`)) return;
-  $("#wipe-msg").textContent = "Wiping…";
+  $("#wipe-msg").className = "hint";
+  $("#wipe-msg").textContent = "Wiping… please wait (large DBs can take a minute).";
   try {
     const data = await api("/api/maintenance/wipe-logs", {
       method: "POST",
-      json: { confirm: confirmText, older_than_days: older },
+      json: { confirm: "WIPE", older_than_days: older },
     });
+    $("#wipe-msg").className = "ok";
     $("#wipe-msg").textContent =
       `Deleted ${data.deleted_call_analyses} call logs, ${data.deleted_scam_calls || 0} SCAMMER rows, ` +
       `${data.deleted_training_corrections} corrections, ${data.deleted_training_overrides || 0} overrides` +
@@ -2992,24 +3031,37 @@ $("#wipe-form").addEventListener("submit", async (e) => {
     e.target.reset();
     loadWipePage();
   } catch (err) {
+    $("#wipe-msg").className = "error";
     $("#wipe-msg").textContent = err.message;
   }
 });
 
-$("#audio-form").addEventListener("submit", async (e) => {
+$("#audio-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const confirmText = String(fd.get("confirm") || "").trim();
+  const confirmText = String(fd.get("confirm") || "").trim().toUpperCase();
   const daysRaw = String(fd.get("older_than_days") || "").trim();
   const older = daysRaw === "" ? null : Number(daysRaw);
-  const scope = older == null ? "ALL audio files" : `audio older than ${older} day(s)`;
+  if (confirmText !== "DELETE") {
+    $("#audio-msg").textContent = 'Type DELETE (exactly) in the confirm box.';
+    $("#audio-msg").className = "error";
+    return;
+  }
+  if (older != null && (!Number.isFinite(older) || older < 0)) {
+    $("#audio-msg").textContent = "Days must be a number, or leave blank for ALL.";
+    $("#audio-msg").className = "error";
+    return;
+  }
+  const scope = older == null ? "ALL audio (disk + DB blobs)" : `audio older than ${older} day(s)`;
   if (!confirm(`Permanently delete ${scope} from the AI AMD server?`)) return;
+  $("#audio-msg").className = "hint";
   $("#audio-msg").textContent = "Deleting audio…";
   try {
     const data = await api("/api/maintenance/delete-audio", {
       method: "POST",
-      json: { confirm: confirmText, older_than_days: older },
+      json: { confirm: "DELETE", older_than_days: older },
     });
+    $("#audio-msg").className = "ok";
     $("#audio-msg").textContent =
       `Deleted ${data.deleted_files || 0} disk files; cleared ${data.cleared_amd_audio_blobs || 0} AMD + ` +
       `${data.scam_audio_cleared || 0} SCAMMER DB recordings; freed ${data.freed_mb || 0} MB.` +
@@ -3017,6 +3069,7 @@ $("#audio-form").addEventListener("submit", async (e) => {
     e.target.reset();
     loadAudioPage();
   } catch (err) {
+    $("#audio-msg").className = "error";
     $("#audio-msg").textContent = err.message;
   }
 });

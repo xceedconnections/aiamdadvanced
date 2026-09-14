@@ -10,12 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.audio_cleanup import (
-    delete_old_recordings,
-    delete_paths,
-    delete_recordings_for_calls,
-    prune_empty_dirs,
-)
+from app.audio_cleanup import delete_old_recordings, prune_empty_dirs
 from app.auth.security import get_current_user
 from app.config import get_settings
 from app.database import get_db
@@ -28,7 +23,7 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
 class WipeRequest(BaseModel):
-    confirm: str = Field(..., description="Type WIPE to confirm", max_length=32)
+    confirm: str = Field(..., description="Type WIPE to confirm", max_length=64)
     older_than_days: Optional[int] = Field(
         default=None,
         ge=0,
@@ -38,7 +33,7 @@ class WipeRequest(BaseModel):
 
 
 class AudioCleanupRequest(BaseModel):
-    confirm: str = Field(..., description="Type DELETE to confirm", max_length=32)
+    confirm: str = Field(..., description="Type DELETE to confirm", max_length=64)
     older_than_days: Optional[int] = Field(
         default=None,
         ge=0,
@@ -50,7 +45,14 @@ class AudioCleanupRequest(BaseModel):
 def _require_admin(user: User):
     role = str(getattr(user, "role", "") or "").strip().lower()
     if role not in ("superadmin", "admin"):
-        raise HTTPException(status_code=403, detail="Admin role required")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Admin role required (your role: {role or 'none'})",
+        )
+
+
+def _norm_confirm(value: str) -> str:
+    return " ".join(str(value or "").strip().upper().split())
 
 
 def _disk_recordings_stats() -> dict:
@@ -141,44 +143,134 @@ def _db_audio_stats(db: Session) -> dict:
     }
 
 
-def _clear_call_audio_rows(db: Session, older_than_days: Optional[int]) -> int:
-    q = db.query(CallAnalysis)
-    if older_than_days is not None:
+def _clear_amd_audio_sql(db: Session, older_than_days: Optional[int]) -> int:
+    """Bulk-clear AMD blobs without loading them into Python memory."""
+    if older_than_days is None:
+        result = db.execute(
+            text(
+                "UPDATE call_analyses SET audio_blob = NULL, audio_path = '', "
+                "audio_saved = false "
+                "WHERE audio_blob IS NOT NULL OR COALESCE(audio_path, '') <> '' "
+                "OR audio_saved = true"
+            )
+        )
+    else:
         cutoff = datetime.utcnow() - timedelta(days=older_than_days)
-        q = q.filter(CallAnalysis.created_at < cutoff)
-    rows = q.all()
-    n = 0
-    for row in rows:
-        changed = False
-        if row.audio_blob is not None:
-            row.audio_blob = None
-            changed = True
-        if row.audio_path:
-            row.audio_path = ""
-            changed = True
-        if row.audio_saved:
-            row.audio_saved = False
-            changed = True
-        if changed:
-            n += 1
-    return n
+        result = db.execute(
+            text(
+                "UPDATE call_analyses SET audio_blob = NULL, audio_path = '', "
+                "audio_saved = false "
+                "WHERE created_at < :cutoff AND ("
+                "audio_blob IS NOT NULL OR COALESCE(audio_path, '') <> '' "
+                "OR audio_saved = true)"
+            ),
+            {"cutoff": cutoff},
+        )
+    return int(result.rowcount or 0)
 
 
-def _clear_scam_audio_rows(db: Session, older_than_days: Optional[int]) -> int:
-    q = db.query(ScamCall)
-    if older_than_days is not None:
+def _clear_scam_audio_sql(db: Session, older_than_days: Optional[int]) -> int:
+    """Bulk-clear SCAM blobs without loading them into Python memory."""
+    if older_than_days is None:
+        result = db.execute(
+            text(
+                "UPDATE scam_calls SET audio_blob = NULL, audio_path = '', "
+                "audio_saved = false "
+                "WHERE audio_blob IS NOT NULL OR COALESCE(audio_path, '') <> '' "
+                "OR audio_saved = true"
+            )
+        )
+    else:
         cutoff = datetime.utcnow() - timedelta(days=older_than_days)
-        q = q.filter(ScamCall.created_at < cutoff)
-    rows = q.all()
-    n = 0
-    for row in rows:
-        if row.audio_path:
-            delete_paths([row.audio_path])
-        row.audio_blob = None
-        row.audio_path = ""
-        row.audio_saved = False
-        n += 1
-    return n
+        result = db.execute(
+            text(
+                "UPDATE scam_calls SET audio_blob = NULL, audio_path = '', "
+                "audio_saved = false "
+                "WHERE created_at < :cutoff AND ("
+                "audio_blob IS NOT NULL OR COALESCE(audio_path, '') <> '' "
+                "OR audio_saved = true)"
+            ),
+            {"cutoff": cutoff},
+        )
+    return int(result.rowcount or 0)
+
+
+def _wipe_database(db: Session, older_than_days: Optional[int]) -> dict:
+    """
+    FK-safe wipe using SQL only (never SELECT audio_blob into app memory).
+    Order: clear FKs → delete children → delete parents.
+    """
+    if older_than_days is None:
+        cleared_amd = _clear_amd_audio_sql(db, None)
+        cleared_scam = _clear_scam_audio_sql(db, None)
+        deleted_corr = db.execute(text("DELETE FROM training_corrections")).rowcount or 0
+        deleted_ov = db.execute(text("DELETE FROM training_overrides")).rowcount or 0
+        deleted_scam = db.execute(text("DELETE FROM scam_calls")).rowcount or 0
+        deleted_calls = db.execute(text("DELETE FROM call_analyses")).rowcount or 0
+    else:
+        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        cleared_amd = _clear_amd_audio_sql(db, older_than_days)
+        cleared_scam = _clear_scam_audio_sql(db, older_than_days)
+
+        # Break FKs pointing at calls that will be removed
+        db.execute(
+            text(
+                "UPDATE training_overrides SET source_call_id = NULL "
+                "WHERE source_call_id IN ("
+                "SELECT id FROM call_analyses WHERE created_at < :cutoff)"
+            ),
+            {"cutoff": cutoff},
+        )
+        db.execute(
+            text(
+                "UPDATE training_corrections SET call_id = NULL "
+                "WHERE call_id IN ("
+                "SELECT id FROM call_analyses WHERE created_at < :cutoff)"
+            ),
+            {"cutoff": cutoff},
+        )
+
+        deleted_corr = (
+            db.execute(
+                text("DELETE FROM training_corrections WHERE created_at < :cutoff"),
+                {"cutoff": cutoff},
+            ).rowcount
+            or 0
+        )
+        # Overrides linked only by age of source call already nulled; delete inactive/orphan optional
+        deleted_ov = (
+            db.execute(
+                text(
+                    "DELETE FROM training_overrides WHERE updated_at < :cutoff "
+                    "OR created_at < :cutoff"
+                ),
+                {"cutoff": cutoff},
+            ).rowcount
+            or 0
+        )
+        deleted_scam = (
+            db.execute(
+                text("DELETE FROM scam_calls WHERE created_at < :cutoff"),
+                {"cutoff": cutoff},
+            ).rowcount
+            or 0
+        )
+        deleted_calls = (
+            db.execute(
+                text("DELETE FROM call_analyses WHERE created_at < :cutoff"),
+                {"cutoff": cutoff},
+            ).rowcount
+            or 0
+        )
+
+    return {
+        "cleared_amd_audio_blobs": int(cleared_amd),
+        "cleared_scam_audio_blobs": int(cleared_scam),
+        "deleted_training_corrections": int(deleted_corr),
+        "deleted_training_overrides": int(deleted_ov),
+        "deleted_scam_calls": int(deleted_scam),
+        "deleted_call_analyses": int(deleted_calls),
+    }
 
 
 @router.get("/stats")
@@ -212,7 +304,6 @@ def maintenance_stats(
         "newest_call": newest[0].isoformat() if newest and newest[0] else None,
         **disk,
         **blobs,
-        # Convenience total for UI
         "playable_recordings": int(blobs.get("calls_with_audio_blob") or 0)
         + int(blobs.get("scam_with_audio") or 0),
     }
@@ -224,109 +315,41 @@ def wipe_logs(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Delete detection/CDR rows, training linked to them, SCAMMERS rows, and all audio (disk + DB blobs)."""
+    """Delete detection/CDR rows, training, SCAMMERS, and all audio (disk + DB blobs)."""
     _require_admin(user)
-    if payload.confirm.strip().upper() != "WIPE":
-        raise HTTPException(status_code=400, detail="Type WIPE in confirm field")
+    if _norm_confirm(payload.confirm) != "WIPE":
+        raise HTTPException(status_code=400, detail='Type "WIPE" in the confirm field')
 
-    if payload.older_than_days is not None:
-        cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
-        rows = db.query(CallAnalysis).filter(CallAnalysis.created_at < cutoff).all()
-        scam_rows = db.query(ScamCall).filter(ScamCall.created_at < cutoff).all()
-    else:
-        rows = db.query(CallAnalysis).all()
-        scam_rows = db.query(ScamCall).all()
-
-    old_ids = [row.id for row in rows]
-
-    # Disk WAVs for those calls + orphan sweep (includes recordings/scam/)
-    audio_result = delete_recordings_for_calls(rows)
-    orphan = delete_old_recordings(payload.older_than_days)
-
-    scam_file_bytes = 0
-    for srow in scam_rows:
-        if srow.audio_path:
-            r = delete_paths([srow.audio_path])
-            scam_file_bytes += int(r.get("freed_bytes") or 0)
-            orphan["deleted_files"] = int(orphan.get("deleted_files") or 0) + int(
-                r.get("deleted_files") or 0
-            )
-        db.delete(srow)
-    deleted_scam = len(scam_rows)
-
-    # Clear AMD DB blobs before deleting rows (CDR Play uses these)
-    cleared_amd = _clear_call_audio_rows(db, payload.older_than_days)
-
-    deleted_overrides = 0
-    deleted_corr = 0
-    deleted_calls = 0
+    # Disk first (does not touch DB blobs)
+    try:
+        orphan = delete_old_recordings(payload.older_than_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        if payload.older_than_days is not None:
-            cutoff = datetime.utcnow() - timedelta(days=payload.older_than_days)
-            # Break FK training_overrides.source_call_id → call_analyses.id
-            if old_ids:
-                deleted_overrides += (
-                    db.query(TrainingOverride)
-                    .filter(TrainingOverride.source_call_id.in_(old_ids))
-                    .delete(synchronize_session=False)
-                )
-                # Also null any leftovers that weren't deleted
-                db.query(TrainingOverride).filter(
-                    TrainingOverride.source_call_id.in_(old_ids)
-                ).update({TrainingOverride.source_call_id: None}, synchronize_session=False)
-
-                deleted_corr = (
-                    db.query(TrainingCorrection)
-                    .filter(TrainingCorrection.call_id.in_(old_ids))
-                    .delete(synchronize_session=False)
-                )
-            deleted_corr += (
-                db.query(TrainingCorrection)
-                .filter(TrainingCorrection.created_at < cutoff)
-                .delete(synchronize_session=False)
-            )
-            deleted_calls = (
-                db.query(CallAnalysis)
-                .filter(CallAnalysis.created_at < cutoff)
-                .delete(synchronize_session=False)
-            )
-        else:
-            deleted_corr = db.query(TrainingCorrection).delete(synchronize_session=False)
-            deleted_overrides = db.query(TrainingOverride).delete(synchronize_session=False)
-            deleted_calls = db.query(CallAnalysis).delete(synchronize_session=False)
-
+        db_result = _wipe_database(db, payload.older_than_days)
         db.commit()
     except Exception as exc:
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Wipe failed (database constraint or lock): {exc}",
+            detail=f"Wipe failed (database): {exc}",
         ) from exc
 
-    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR))
-    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR) / "scam")
+    root = Path(get_settings().RECORDINGS_DIR)
+    prune_empty_dirs(root)
+    prune_empty_dirs(root / "scam")
 
-    freed = (
-        int(audio_result.get("freed_bytes") or 0)
-        + int(orphan.get("freed_bytes") or 0)
-        + scam_file_bytes
-    )
     return {
         "ok": True,
-        "deleted_call_analyses": int(deleted_calls or 0),
-        "deleted_training_corrections": int(deleted_corr or 0),
-        "deleted_training_overrides": int(deleted_overrides or 0),
-        "deleted_scam_calls": deleted_scam,
-        "cleared_amd_audio_blobs": cleared_amd,
-        "deleted_audio_files": int(audio_result.get("deleted_files") or 0)
-        + int(orphan.get("deleted_files") or 0),
-        "failed_audio_files": int(audio_result.get("failed_files") or 0)
-        + int(orphan.get("failed_files") or 0),
-        "freed_mb": round(freed / (1024 * 1024), 2),
+        **db_result,
+        "deleted_audio_files": int(orphan.get("deleted_files") or 0),
+        "failed_audio_files": int(orphan.get("failed_files") or 0),
+        "freed_mb": float(orphan.get("freed_mb") or 0),
         "older_than_days": payload.older_than_days,
         "wiped_by": user.username,
         "at": datetime.utcnow().isoformat() + "Z",
+        "recordings_dir": str(root),
     }
 
 
@@ -338,8 +361,8 @@ def delete_audio(
 ):
     """Delete AMD + SCAM audio on disk AND clear playable DB blobs (CDR Play)."""
     _require_admin(user)
-    if payload.confirm.strip().upper() != "DELETE":
-        raise HTTPException(status_code=400, detail="Type DELETE in confirm field")
+    if _norm_confirm(payload.confirm) != "DELETE":
+        raise HTTPException(status_code=400, detail='Type "DELETE" in the confirm field')
 
     try:
         result = delete_old_recordings(payload.older_than_days)
@@ -347,8 +370,8 @@ def delete_audio(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        cleared_amd = _clear_call_audio_rows(db, payload.older_than_days)
-        cleared_scam = _clear_scam_audio_rows(db, payload.older_than_days)
+        cleared_amd = _clear_amd_audio_sql(db, payload.older_than_days)
+        cleared_scam = _clear_scam_audio_sql(db, payload.older_than_days)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -357,22 +380,14 @@ def delete_audio(
             detail=f"Audio DB clear failed: {exc}",
         ) from exc
 
-    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR))
-    prune_empty_dirs(Path(get_settings().RECORDINGS_DIR) / "scam")
+    root = Path(get_settings().RECORDINGS_DIR)
+    prune_empty_dirs(root)
+    prune_empty_dirs(root / "scam")
 
     result["deleted_by"] = user.username
     result["cleared_amd_audio_blobs"] = cleared_amd
     result["scam_audio_cleared"] = cleared_scam
     result["includes_scam_recordings"] = True
     result["includes_amd_db_blobs"] = True
-    if result.get("failed_files"):
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Deleted {result.get('deleted_files', 0)} file(s) and cleared "
-                f"{cleared_amd} AMD / {cleared_scam} SCAM DB recordings, but "
-                f"{result['failed_files']} disk file(s) remain. "
-                f"Dir: {result.get('recordings_dir')}"
-            ),
-        )
+    result["ok"] = True
     return result

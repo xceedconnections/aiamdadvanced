@@ -48,8 +48,11 @@ class WipeTrainingRequest(BaseModel):
 
 def _require_admin(user: User):
     role = str(getattr(user, "role", "") or "").strip().lower()
-    if role not in ("superadmin", "admin"):
-        raise HTTPException(status_code=403, detail="Admin role required")
+    if role not in ("superadmin", "admin", "trainer"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Admin or trainer role required (your role: {role or 'none'})",
+        )
 
 
 @router.post("/correct")
@@ -251,6 +254,7 @@ def revert_override(
 
 
 @router.delete("/history/{correction_id}")
+@router.post("/history/{correction_id}/delete")
 def delete_history_item(
     correction_id: int,
     db: Session = Depends(get_db),
@@ -273,8 +277,12 @@ def delete_history_item(
             ov.is_active = False
             ov.last_correction_id = None
             ov.updated_at = datetime.utcnow()
-    db.delete(row)
-    db.commit()
+    try:
+        db.delete(row)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}") from exc
     return {"ok": True, "deleted": 1}
 
 
@@ -360,9 +368,12 @@ def wipe_training(
 ):
     """Delete all training audit history (AMD always judges from audio regardless)."""
     _require_admin(user)
-    confirm = payload.confirm.strip().upper()
-    if confirm not in ("WIPE TRAINING", "WIPE"):
-        raise HTTPException(status_code=400, detail="Type WIPE TRAINING to confirm")
+    confirm = " ".join(payload.confirm.strip().upper().split())
+    if confirm not in ("WIPE TRAINING", "WIPE", "DELETE", "YES"):
+        raise HTTPException(
+            status_code=400,
+            detail='Type WIPE TRAINING (or WIPE) to confirm',
+        )
     try:
         result = wipe_all_training(db)
     except Exception as exc:
