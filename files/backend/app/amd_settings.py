@@ -24,11 +24,14 @@ DEFAULTS = {
     "ml_xgb_high_confidence": 0.85,
     "ml_low_confidence_threshold": 0.85,
     "ml_save_low_confidence": True,
+    # faster-whisper model: tiny | tiny.en | base | base.en | small | small.en
+    "ml_whisper_model": "base.en",
     # Portal display only — does not change OS/server clock
     "display_timezone": "UTC",
 }
 
 _ALLOWED_ACTIONS = {"MACHINE", "IVR", "SIT", "ERROR"}
+_ALLOWED_WHISPER_MODELS = {"tiny", "tiny.en", "base", "base.en", "small", "small.en"}
 
 
 def settings_path() -> Path:
@@ -60,6 +63,9 @@ def load_amd_settings() -> dict[str, Any]:
                     data["ml_whisper_enabled"] = bool(raw["ml_whisper_enabled"])
                 if "ml_save_low_confidence" in raw:
                     data["ml_save_low_confidence"] = bool(raw["ml_save_low_confidence"])
+                wmodel = str(raw.get("ml_whisper_model") or "").strip()
+                if wmodel in _ALLOWED_WHISPER_MODELS:
+                    data["ml_whisper_model"] = wmodel
                 for key in ("ml_xgb_high_confidence", "ml_low_confidence_threshold"):
                     if key in raw:
                         try:
@@ -106,6 +112,7 @@ def save_amd_settings(
     ml_xgb_high_confidence: float = 0.85,
     ml_low_confidence_threshold: float = 0.85,
     ml_save_low_confidence: bool = True,
+    ml_whisper_model: str = "base.en",
 ) -> dict[str, Any]:
     pct = int(min_human_confidence_percent)
     if pct < 0 or pct > 100:
@@ -113,6 +120,11 @@ def save_amd_settings(
     action = str(below_threshold_action or "MACHINE").strip().upper()
     if action not in _ALLOWED_ACTIONS:
         raise ValueError("below_threshold_action must be one of MACHINE, IVR, SIT, ERROR")
+    wmodel = str(ml_whisper_model or "base.en").strip()
+    if wmodel not in _ALLOWED_WHISPER_MODELS:
+        raise ValueError(
+            "ml_whisper_model must be one of: " + ", ".join(sorted(_ALLOWED_WHISPER_MODELS))
+        )
 
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,6 +149,7 @@ def save_amd_settings(
         "ml_xgb_high_confidence": max(0.5, min(0.99, float(ml_xgb_high_confidence))),
         "ml_low_confidence_threshold": max(0.5, min(0.99, float(ml_low_confidence_threshold))),
         "ml_save_low_confidence": bool(ml_save_low_confidence),
+        "ml_whisper_model": wmodel,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     out = dict(payload)
@@ -218,6 +231,7 @@ def resolve_effective_amd_settings(server: Any | None = None) -> dict[str, Any]:
         "ml_xgb_high_confidence": float(g.get("ml_xgb_high_confidence", 0.85)),
         "ml_low_confidence_threshold": float(g.get("ml_low_confidence_threshold", 0.85)),
         "ml_save_low_confidence": bool(g.get("ml_save_low_confidence", True)),
+        "ml_whisper_model": str(g.get("ml_whisper_model") or "base.en"),
         "source": "global",
         "ml_source": "global",
         "gate_source": "global",

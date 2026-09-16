@@ -19,6 +19,7 @@ class AmdSettingsUpdate(BaseModel):
     ml_xgb_high_confidence: float = Field(0.85, ge=0.5, le=0.99)
     ml_low_confidence_threshold: float = Field(0.85, ge=0.5, le=0.99)
     ml_save_low_confidence: bool = True
+    ml_whisper_model: str = Field("base.en", max_length=16)
 
 
 class MlLabelBody(BaseModel):
@@ -88,9 +89,17 @@ def put_amd_settings(
             ml_xgb_high_confidence=payload.ml_xgb_high_confidence,
             ml_low_confidence_threshold=payload.ml_low_confidence_threshold,
             ml_save_low_confidence=payload.ml_save_low_confidence,
+            ml_whisper_model=payload.ml_whisper_model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        from app.ai.whisper_amd import reset_whisper_model
+
+        reset_whisper_model()
+    except Exception:
+        pass
 
     # Warm bootstrap model only when enabling (lazy, once)
     if payload.ml_pipeline_enabled:

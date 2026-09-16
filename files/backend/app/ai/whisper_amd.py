@@ -15,7 +15,13 @@ from typing import Any, Dict, Optional, Tuple
 
 _lock = threading.Lock()
 _model = None
+_model_name_loaded = ""
 _model_error = ""
+
+# Free local STT via faster-whisper. base.en is much more accurate than tiny
+# on telephony VM scripts; still CPU-friendly with int8.
+_ALLOWED_WHISPER_MODELS = ("tiny", "tiny.en", "base", "base.en", "small", "small.en")
+_DEFAULT_WHISPER_MODEL = "base.en"
 
 # Phrase cues (English NA + common IVR). Tiny often mishears "person" as "passion".
 _MACHINE_RE = re.compile(
@@ -33,7 +39,9 @@ _MACHINE_RE = re.compile(
     r"you\s+have\s+reached|you'?ve\s+reached|you\s+reached|"
     r"reached\s+(the\s+)?(mailbox|voicemail|voice\s*mail|mail)|"
     r"please\s+leave\s+(a\s+)?message|"
-    r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automated|"
+    r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automati(?:c|ed)|"
+    r"been\s+forwarded\s+to|it'?s\s+been\s+forwarded|"
+    r"automatic\s+voice\s+message|automated\s+voice\s+message|"
     r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
     r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
     r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep|"
@@ -310,22 +318,61 @@ def whisper_available() -> bool:
         return False
 
 
-def _get_model():
-    global _model, _model_error
+def _resolve_whisper_model_name() -> str:
+    try:
+        from app.amd_settings import load_amd_settings
+
+        name = str(load_amd_settings().get("ml_whisper_model") or "").strip()
+    except Exception:
+        name = ""
+    if name not in _ALLOWED_WHISPER_MODELS:
+        name = _DEFAULT_WHISPER_MODEL
+    return name
+
+
+def reset_whisper_model() -> None:
+    """Drop cached model so next call reloads (after Settings change)."""
+    global _model, _model_name_loaded, _model_error
     with _lock:
-        if _model is not None:
+        _model = None
+        _model_name_loaded = ""
+        _model_error = ""
+
+
+def _get_model():
+    global _model, _model_name_loaded, _model_error
+    want = _resolve_whisper_model_name()
+    with _lock:
+        if _model is not None and _model_name_loaded == want:
             return _model
-        if _model_error:
+        if _model is not None and _model_name_loaded != want:
+            _model = None
+            _model_name_loaded = ""
+            _model_error = ""
+        if _model_error and _model_name_loaded == want:
             return None
         try:
             from faster_whisper import WhisperModel
 
-            # CPU, int8 — tiny footprint; only loaded if ML+whisper path runs
-            _model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            # CPU int8 — free, local, no API. base.en ≈ better accuracy than tiny.
+            beam_hint = want  # noqa: F841 — name kept for logs
+            _model = WhisperModel(want, device="cpu", compute_type="int8")
+            _model_name_loaded = want
+            _model_error = ""
             return _model
         except Exception as exc:
             _model_error = str(exc)
+            _model_name_loaded = want
             return None
+
+
+def _transcribe_beam_size() -> int:
+    name = _resolve_whisper_model_name()
+    if name.startswith("small"):
+        return 3
+    if name.startswith("base"):
+        return 2
+    return 1
 
 
 def _trim_to_speech(clip, sr: int = 16000):
@@ -393,11 +440,12 @@ def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict
         clip = (clip / peak) * 0.9
 
     try:
+        beam = _transcribe_beam_size()
         segments, info = model.transcribe(
             clip,
             language="en",
-            beam_size=1,
-            best_of=1,
+            beam_size=beam,
+            best_of=beam,
             vad_filter=True,
             vad_parameters=dict(
                 min_silence_duration_ms=250,

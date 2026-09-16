@@ -526,7 +526,7 @@
                 <p class="hint" style="margin-top:0">Below this % → Whisper check (if on); still low → MACHINE.</p>
                 <label class="inline">
                   <input type="checkbox" id="server-ml-whisper" checked />
-                  Use Faster-Whisper Tiny on uncertain HUMAN only
+                  Use Faster-Whisper on uncertain HUMAN only
                 </label>
                 <label class="inline">
                   <input type="checkbox" id="server-ml-save" checked />
@@ -777,9 +777,11 @@
             <button class="ghost" type="button" id="machine-phrases-save">Save phrases</button>
           </div>
           <p class="hint">
-            When Whisper hears any of these words or phrases in the AMD clip, the call is disposed as
-            <strong>MACHINE</strong> (voicemail / answering machine). One phrase per line.
-            Built-in cues (leave a message, voicemail, record your name, …) stay active even if this list is empty.
+            When speech-to-text hears any of these words or phrases in the AMD clip, the call is disposed as
+            <strong>MACHINE</strong>. One phrase per line. Matching is flexible: a long line still hits if a
+            3–4+ word core appears (e.g. your full “forwarded…” line still matches
+            “It's been forwarded to an automatic voice message”).
+            Built-in cues stay active even if this list is empty.
           </p>
           <textarea
             id="machine-phrases-words"
@@ -1102,8 +1104,17 @@
               </p>
               <label class="inline">
                 <input type="checkbox" id="amd-ml-whisper" checked />
-                Use Faster-Whisper Tiny on uncertain HUMAN only
+                Use Faster-Whisper on uncertain HUMAN only
               </label>
+              <label for="amd-ml-whisper-model">Speech-to-text model (free, local)</label>
+              <select id="amd-ml-whisper-model">
+                <option value="tiny.en">tiny.en — fastest, least accurate</option>
+                <option value="base.en" selected>base.en — recommended (better text)</option>
+                <option value="small.en">small.en — best accuracy, slower CPU</option>
+              </select>
+              <p class="hint" style="margin-top:0">
+                First run downloads the model once. Remains free / offline. Restart not required after Save.
+              </p>
               <label class="inline">
                 <input type="checkbox" id="amd-ml-save-low" checked />
                 Save low-confidence clips for agent labeling / retrain

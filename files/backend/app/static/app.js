@@ -1353,6 +1353,10 @@ async function loadAmdSettings() {
       $("#amd-blank-as-machine").checked = cfg.blank_as_machine !== false;
     }
     if ($("#amd-ml-whisper")) $("#amd-ml-whisper").checked = cfg.ml_whisper_enabled !== false;
+    if ($("#amd-ml-whisper-model")) {
+      const m = cfg.ml_whisper_model || "base.en";
+      $("#amd-ml-whisper-model").value = m;
+    }
     if ($("#amd-ml-save-low")) $("#amd-ml-save-low").checked = cfg.ml_save_low_confidence !== false;
     if ($("#amd-ml-high")) {
       const v = Number(cfg.ml_xgb_high_confidence ?? 0.85);
@@ -1401,6 +1405,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
           : true,
         ml_pipeline_enabled: mlOn,
         ml_whisper_enabled: $("#amd-ml-whisper") ? $("#amd-ml-whisper").checked : true,
+        ml_whisper_model: $("#amd-ml-whisper-model")?.value || "base.en",
         ml_save_low_confidence: $("#amd-ml-save-low") ? $("#amd-ml-save-low").checked : true,
         ml_xgb_high_confidence: Math.min(0.99, Math.max(0.5, mlHighPct / 100)),
         ml_low_confidence_threshold: Math.min(0.99, Math.max(0.5, mlLowPct / 100)),

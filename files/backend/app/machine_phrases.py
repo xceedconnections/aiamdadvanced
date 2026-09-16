@@ -34,7 +34,6 @@ BUILTIN_MACHINE_PHRASES = [
 DEFAULT_CUSTOM: list[str] = []
 
 _cache_mtime: float | None = None
-_cache_patterns: list[tuple[str, re.Pattern[str]]] = []
 _cache_words: list[str] = []
 
 
@@ -73,6 +72,39 @@ def _phrase_to_pattern(phrase: str) -> re.Pattern[str]:
     return re.compile(rf"\b{body}\b", re.I)
 
 
+def _normalize_for_match(text: str) -> str:
+    t = (text or "").lower()
+    t = t.replace("'", "'").replace("'", "'")
+    t = re.sub(r"\bit'?s\b", "it is", t)
+    t = re.sub(r"\byou'?re\b", "you are", t)
+    t = re.sub(r"\byou'?ve\b", "you have", t)
+    t = re.sub(r"\bcan'?t\b", "cannot", t)
+    t = re.sub(r"[^a-z0-9'\s]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _match_phrase_flexible(text: str, phrase: str) -> bool:
+    """Exact phrase, or any contiguous 3+ word core from the phrase (handles Whisper wording drift)."""
+    t = _normalize_for_match(text)
+    p = _normalize_for_match(phrase)
+    if not t or not p:
+        return False
+    if _phrase_to_pattern(p).search(t):
+        return True
+    words = p.split()
+    if len(words) < 3:
+        return False
+    # Long custom lines often start differently than Tiny/Base transcripts
+    # ("your call has been forwarded…" vs "It's been forwarded…").
+    min_core = 3 if len(words) <= 5 else 4
+    for length in range(len(words), min_core - 1, -1):
+        for i in range(0, len(words) - length + 1):
+            core = " ".join(words[i : i + length])
+            if _phrase_to_pattern(core).search(t):
+                return True
+    return False
+
+
 def load_machine_phrases() -> dict[str, Any]:
     path = settings_path()
     words = list(DEFAULT_CUSTOM)
@@ -105,33 +137,30 @@ def save_machine_phrases(phrases: list[str] | str | None = None) -> dict[str, An
 
 
 def _invalidate_cache() -> None:
-    global _cache_mtime, _cache_patterns, _cache_words
+    global _cache_mtime, _cache_words
     _cache_mtime = None
-    _cache_patterns = []
     _cache_words = []
 
 
-def _ensure_patterns() -> list[tuple[str, re.Pattern[str]]]:
-    global _cache_mtime, _cache_patterns, _cache_words
+def _ensure_words() -> list[str]:
+    global _cache_mtime, _cache_words
     path = settings_path()
     mtime = path.stat().st_mtime if path.exists() else -1.0
-    if _cache_mtime == mtime and _cache_patterns is not None:
-        return _cache_patterns
+    if _cache_mtime == mtime and _cache_words is not None:
+        return _cache_words
     cfg = load_machine_phrases()
     words = list(cfg.get("phrases") or [])
-    patterns = [(w, _phrase_to_pattern(w)) for w in words]
     _cache_mtime = mtime
-    _cache_patterns = patterns
     _cache_words = words
-    return patterns
+    return words
 
 
 def match_custom_machine_phrase(text: str) -> str | None:
-    """If transcript matches a custom phrase, return that phrase; else None."""
+    """If transcript matches a custom phrase (or a 3–4+ word core of it), return that phrase."""
     t = (text or "").strip()
     if not t:
         return None
-    for label, pat in _ensure_patterns():
-        if pat.search(t):
+    for label in _ensure_words():
+        if _match_phrase_flexible(t, label):
             return label
     return None
