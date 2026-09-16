@@ -386,31 +386,15 @@ function getDisplayTimezone() {
 }
 
 async function loadDisplayTimezone() {
-  const local = (localStorage.getItem("openamd_tz") || "").trim();
-  if (local) state.displayTimezone = local;
+  // System default from server applies to every user (source of truth).
   try {
     const data = await api("/api/settings/display");
-    const serverTz = (data.display_timezone || "").trim();
-    if (serverTz && serverTz !== "UTC") {
-      state.displayTimezone = serverTz;
-      localStorage.setItem("openamd_tz", serverTz);
-    } else if (local && local !== "UTC") {
-      // Keep admin's local choice and persist it (save may have failed earlier)
-      state.displayTimezone = local;
-      try {
-        await api("/api/settings/display", {
-          method: "PUT",
-          json: { display_timezone: local },
-        });
-      } catch (e) {
-        /* ignore */
-      }
-    } else {
-      state.displayTimezone = serverTz || local || "UTC";
-      localStorage.setItem("openamd_tz", state.displayTimezone);
-    }
+    const serverTz = (data.display_timezone || "UTC").trim() || "UTC";
+    state.displayTimezone = serverTz;
+    localStorage.setItem("openamd_tz", serverTz);
   } catch (e) {
-    if (local) state.displayTimezone = local;
+    const local = (localStorage.getItem("openamd_tz") || "").trim() || "UTC";
+    state.displayTimezone = local;
   }
   syncTimezoneSelects();
   tickClock();
@@ -425,9 +409,6 @@ function syncTimezoneSelects() {
     top.value = tz;
   }
   if (settings) {
-    if (!settings.options.length && top) {
-      settings.innerHTML = top.innerHTML;
-    }
     ensureTimezoneOption(settings, tz);
     settings.value = tz;
   }
@@ -450,10 +431,19 @@ async function saveDisplayTimezone(tz) {
   localStorage.setItem("openamd_tz", value);
   syncTimezoneSelects();
   tickClock();
-  await api("/api/settings/display", {
-    method: "PUT",
-    json: { display_timezone: value },
-  });
+  // Persist as system default (admin). Non-admins keep local session only.
+  try {
+    await api("/api/settings/display", {
+      method: "PUT",
+      json: { display_timezone: value },
+    });
+  } catch (err) {
+    const msg = String(err.message || "");
+    if (/403|admin|forbidden/i.test(msg)) {
+      return; // personal session override only
+    }
+    throw err;
+  }
 }
 
 function filterRowsByWindow(rows, withinSeconds) {
@@ -3287,7 +3277,7 @@ $("#settings-tz-save")?.addEventListener("click", async () => {
     await saveDisplayTimezone(tz);
     if (msg) {
       msg.className = "ok";
-      msg.textContent = `Display timezone saved: ${tz}`;
+      msg.textContent = `System default timezone saved: ${tz} (applies to all users)`;
     }
   } catch (err) {
     if (msg) {

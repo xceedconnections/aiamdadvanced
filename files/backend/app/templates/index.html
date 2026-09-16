@@ -95,7 +95,7 @@
         </div>
         <div class="topbar-meta">
           <span class="pill" id="health-pill">SYSTEM ONLINE</span>
-          <label class="inline" style="gap:.35rem;margin:0" title="Display timezone for clock, Live, CDR (does not change server OS time)">
+          <label class="inline" style="gap:.35rem;margin:0" title="Uses system default timezone from Settings (does not change server OS time)">
             <span class="hint" style="white-space:nowrap">TZ</span>
             <select id="display-timezone" style="max-width:11rem;font-size:.8rem">
               <option value="UTC">UTC</option>
@@ -105,8 +105,12 @@
               <option value="America/Los_Angeles">America/Los_Angeles</option>
               <option value="America/Toronto">America/Toronto</option>
               <option value="America/Vancouver">America/Vancouver</option>
+              <option value="America/Halifax">America/Halifax</option>
+              <option value="America/St_Johns">America/St_Johns</option>
               <option value="Europe/London">Europe/London</option>
               <option value="Europe/Paris">Europe/Paris</option>
+              <option value="Europe/Berlin">Europe/Berlin</option>
+              <option value="Europe/Dublin">Europe/Dublin</option>
               <option value="Asia/Karachi">Asia/Karachi</option>
               <option value="Asia/Dubai">Asia/Dubai</option>
               <option value="Asia/Kolkata">Asia/Kolkata</option>
@@ -1187,14 +1191,34 @@
               <button type="submit">Update password</button>
               <p id="password-msg" class="hint"></p>
             </form>
-            <div class="panel-head" style="margin-top:1rem"><h3>Display timezone</h3></div>
+            <div class="panel-head" style="margin-top:1rem"><h3>System default timezone</h3></div>
             <p class="hint">
-              Changes how the top clock, Live Calls, and CDR show times. Does <strong>not</strong> change the server OS clock.
-              Same control as the TZ dropdown in the top bar.
+              Sets the portal default for <strong>all users</strong> (top clock, Live Calls, CDR, reports).
+              Does <strong>not</strong> change the server OS clock. After Save, every login uses this timezone.
             </p>
-            <label for="settings-display-timezone">Timezone</label>
-            <select id="settings-display-timezone" style="max-width:280px"></select>
-            <button type="button" class="ghost" id="settings-tz-save" style="margin-top:.5rem">Save timezone</button>
+            <label for="settings-display-timezone">Default timezone</label>
+            <select id="settings-display-timezone" style="max-width:280px">
+              <option value="UTC">UTC</option>
+              <option value="America/New_York">America/New_York (US Eastern)</option>
+              <option value="America/Chicago">America/Chicago (US Central)</option>
+              <option value="America/Denver">America/Denver (US Mountain)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (US Pacific)</option>
+              <option value="America/Toronto">America/Toronto</option>
+              <option value="America/Vancouver">America/Vancouver</option>
+              <option value="America/Halifax">America/Halifax</option>
+              <option value="America/St_Johns">America/St_Johns</option>
+              <option value="Europe/London">Europe/London (UK)</option>
+              <option value="Europe/Paris">Europe/Paris</option>
+              <option value="Europe/Berlin">Europe/Berlin</option>
+              <option value="Europe/Dublin">Europe/Dublin</option>
+              <option value="Asia/Karachi">Asia/Karachi</option>
+              <option value="Asia/Dubai">Asia/Dubai</option>
+              <option value="Asia/Kolkata">Asia/Kolkata</option>
+              <option value="Asia/Singapore">Asia/Singapore</option>
+              <option value="Australia/Sydney">Australia/Sydney</option>
+              <option value="Pacific/Auckland">Pacific/Auckland</option>
+            </select>
+            <button type="button" class="ghost" id="settings-tz-save" style="margin-top:.5rem">Save as system default</button>
             <p id="settings-tz-msg" class="hint"></p>
             <div class="panel-head" style="margin-top:1rem"><h3>Recordings link repair</h3></div>
             <p class="hint">If Play shows missing audio, repair scans <code>/opt/openamd/recordings</code> and relinks WAV files to Call IDs.</p>
@@ -1223,6 +1247,6 @@
     </main>
   </div>
 
-  <script src="/static/app.js?v=accuracy-empty-1"></script>
+  <script src="/static/app.js?v=sys-tz-1"></script>
 </body>
 </html>
