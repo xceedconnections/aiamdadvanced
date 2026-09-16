@@ -22,7 +22,9 @@ _MACHINE_RE = re.compile(
     r"\b("
     r"leave\s+(a\s+)?message|voicemail|voice\s*mail|not\s+available|unavailable|"
     r"can'?t\s+take\s+your\s+call|unable\s+to\s+take|after\s+the\s+(tone|beep)|"
-    r"at\s+the\s+(tone|beep)|record\s+your\s+message|please\s+leave|mailbox|"
+    r"at\s+the\s+(tone|beep)|record\s+your\s+(message|name)|please\s+leave|mailbox|"
+    r"if\s+you\s+record|record\s+your\s+name\s+and|"
+    r"please\s+record\s+your\s+(name|message)|"
     # Classic carrier VM: "The person you're calling…" (Tiny: passion/party/portion)
     r"the\s+(person|passion|party|portion|passenger|persons?)\s+"
     r"you(?:'re|\s+are|\s+have)?\s*(calling|called|call)|"
@@ -34,7 +36,8 @@ _MACHINE_RE = re.compile(
     r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automated|"
     r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
     r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
-    r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep"
+    r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep|"
+    r"we(?:'ll|\s+will)\s+(get\s+back|return\s+your\s+call|call\s+you\s+back)"
     r")\b",
     re.I,
 )
@@ -260,10 +263,23 @@ def classify_transcript(
         return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
     if re.search(r"\byou\s+have\s+reached\b", t, re.I):
         return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # "Hi. If you record your name…" — greeting word + VM instruction
+    if re.search(r"\brecord\s+your\s+name\b", t, re.I):
+        return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if re.search(r"\bif\s+you\s+record\b", t, re.I):
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
     # Standalone "Mail." / "Mailbox." on a short clip after silence → VM
     if re.fullmatch(r"\s*mails?(box)?\.?\s*", t, re.I):
         return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Live hello only when the whole clip is a short greeting — not "Hi" + VM script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
+        if re.search(
+            r"\b(record|message|mailbox|voicemail|forwarded|reached|beep|tone|"
+            r"unavailable|not\s+available|call\s+back)\b",
+            t,
+            re.I,
+        ):
+            return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
         return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
     # Scripted line with "calling" and no human greeting → treat as AM
     if re.search(r"\b(you(?:'re|\s+are)\s+calling|you\s+have\s+called)\b", t, re.I):
