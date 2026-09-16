@@ -30,7 +30,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "5.1.1",
+    "version": "5.1.2",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
 }
 
@@ -138,6 +138,27 @@ def _has_audible_voice(feats: Dict[str, float]) -> bool:
     return False
 
 
+def _is_line_noise_only(feats: Dict[str, float]) -> bool:
+    """True for quiet line/carrier noise with no absolute speech islands.
+
+    Relative percentile activity can look 'busy' on flat noise and must not
+    override absolute silence (false HUMAN to agents).
+    """
+    peak = float(feats.get("peak", 1.0))
+    raw_rms = float(feats.get("raw_rms", feats.get("rms", 0.0)))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    abs_ratio = float(feats.get("abs_speech_ratio", 0.0))
+    abs_long = float(feats.get("abs_speech_ms", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    if peak >= 0.045:
+        return False
+    if abs_long >= 100 or abs_ratio >= 0.06:
+        return False
+    if speech_ratio >= 0.12 and longest_burst >= 200:
+        return False
+    return raw_rms < 0.014 and peak < 0.045
+
+
 def _is_blank(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
@@ -153,11 +174,17 @@ def _is_blank(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     activity_ratio = float(feats.get("activity_ratio", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    abs_ratio = float(feats.get("abs_speech_ratio", 0.0))
+    abs_long = float(feats.get("abs_speech_ms", 0.0))
 
     # Empty / digital silence only
     if duration < 0.20:
         return True
     if peak < 0.008:
+        return True
+
+    # Quiet carrier / line noise with no absolute speech → blank (not HUMAN)
+    if _is_line_noise_only(feats):
         return True
 
     # Any clear voice → never blank (human hello or short VM fragment)
@@ -170,10 +197,14 @@ def _is_blank(
 
     energy_quiet = (
         speech_ratio < 0.10
-        and activity_ratio < 0.14
         and longest_burst < 180
         and raw_rms < 0.025
-        and float(feats.get("abs_speech_ms", 0.0)) < 160
+        and abs_long < 160
+        and (
+            activity_ratio < 0.20
+            or abs_ratio < 0.05
+            or peak < 0.04
+        )
     )
 
     if silero and silero.get("ok"):
@@ -181,10 +212,10 @@ def _is_blank(
         s_mean = float(silero.get("mean_prob", 0.0))
         s_long = float(silero.get("longest_speech_ms", 0.0))
         s_segs = int(silero.get("num_segments", 0))
-        # Silero hears speech → not blank
-        if s_long >= 150 and s_mean >= 0.18:
+        # Silero hears speech → not blank (unless absolute levels are line-noise)
+        if s_long >= 150 and s_mean >= 0.18 and not _is_line_noise_only(feats):
             return False
-        if s_segs >= 1 and s_long >= 160:
+        if s_segs >= 1 and s_long >= 160 and peak >= 0.05:
             return False
         # Blank only when Silero AND energy agree there is no voice
         if energy_quiet and s_ratio < 0.08 and s_mean < 0.22 and s_long < 280 and s_segs <= 1:
@@ -197,9 +228,9 @@ def _is_blank(
         return True
     if raw_rms < 0.003 and speech_ratio < 0.08:
         return True
-    if raw_rms < 0.008 and speech_ratio < 0.05 and activity_ratio < 0.12:
+    if raw_rms < 0.008 and speech_ratio < 0.05 and (activity_ratio < 0.18 or abs_ratio < 0.05):
         return True
-    if peak < 0.04 and speech_ratio < 0.06 and activity_ratio < 0.10 and longest_burst < 150:
+    if peak < 0.04 and speech_ratio < 0.06 and longest_burst < 150 and abs_long < 120:
         return True
     if energy_quiet and peak < 0.05:
         return True
@@ -253,6 +284,13 @@ def _looks_like_short_human(
     if float(feats.get("beep", 0.0)) >= 0.5:
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
+        return False
+    # Line noise / empty air must never look like a short hello
+    if _is_line_noise_only(feats) or _is_blank(feats, silero):
+        return False
+    peak = float(feats.get("peak", 0.0))
+    abs_long = float(feats.get("abs_speech_ms", 0.0))
+    if peak < 0.05 and abs_long < 80:
         return False
     # Spoken digit / IVR prompt syllable is not a live hello
     if _looks_like_spoken_digit(feats, silero):
