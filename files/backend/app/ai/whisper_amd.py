@@ -176,10 +176,19 @@ def is_number_readout(text: str) -> bool:
     return len(compact) >= 3 and digit_n >= 2
 
 
-def is_hello_mishear(text: str) -> bool:
-    """Tiny often reduces muffled/elderly 'hello' to 'Oh.' / 'O' / 'Ah'."""
+def is_hello_mishear(text: str, *, audio_seconds: Optional[float] = None) -> bool:
+    """Tiny often reduces muffled/elderly 'hello' to 'Oh.' / 'O' / 'Ah'.
+
+    Do NOT trust this on very short clips — Tiny also turns the start of
+    'Your call has been forwarded…' / VM into a lone 'Oh.'.
+    """
     t = (text or "").strip().lower().rstrip(".")
-    return t in ("oh", "o", "ah", "uh", "mm", "hmm", "huh", "ay", "ey")
+    if t not in ("oh", "o", "ah", "uh", "mm", "hmm", "huh", "ay", "ey"):
+        return False
+    # Sub-1s clips are usually truncated VM / early-media, not a full hello
+    if audio_seconds is not None and float(audio_seconds) < 1.05:
+        return False
+    return True
 
 
 def is_whisper_hallucination(text: str) -> bool:
@@ -222,11 +231,13 @@ def clean_transcript(text: str) -> Tuple[str, bool]:
 def classify_transcript(
     text: str,
     xgb_probs: Optional[Dict[str, float]] = None,
+    *,
+    audio_seconds: Optional[float] = None,
 ) -> Tuple[Optional[str], float, str]:
     """Return (status_or_None, confidence, cue). None = no strong cue.
 
     Spoken digits / IVR prompts / voicemail phrases → MACHINE (VICIdial AA).
-    Bare 'Oh.' (elderly hello mishear) → HUMAN.
+    Bare 'Oh.' (elderly hello mishear) → HUMAN — only when clip is long enough.
     """
     probs = xgb_probs or {}
     t, hall = clean_transcript(text)
@@ -235,8 +246,8 @@ def classify_transcript(
     if not t:
         return None, 0.0, "none"
 
-    # Elderly / muffled hello often becomes "Oh." — send to agent
-    if is_hello_mishear(t):
+    # Elderly / muffled hello often becomes "Oh." — send to agent (not on tiny clips)
+    if is_hello_mishear(t, audio_seconds=audio_seconds):
         return "HUMAN", max(0.88, float(probs.get("HUMAN", 0.5))), "human_short"
 
     # Voicemail phrases first (incl. Tiny mishears like "passion you're calling")
@@ -399,6 +410,10 @@ def refine_with_whisper(
     max_seconds: float = 4.0,
 ) -> Tuple[Optional[str], float, Dict[str, Any]]:
     """Return (status_or_None, confidence, details). None status = keep XGB decision."""
+    import numpy as np
+
+    clip = np.asarray(audio, dtype=np.float32)
+    audio_seconds = float(len(clip) / float(sr or 1)) if sr and len(clip) else 0.0
     text, info, base = _transcribe_clip(audio, sr, max_seconds)
     if not base.get("whisper_ok"):
         return None, 0.0, base
@@ -407,6 +422,7 @@ def refine_with_whisper(
         "whisper_ok": True,
         "transcript": text[:240],
         "language": getattr(info, "language", "") or "",
+        "audio_seconds": round(audio_seconds, 3),
     }
     if base.get("hallucination_cleared"):
         details["hallucination_cleared"] = True
@@ -415,7 +431,14 @@ def refine_with_whisper(
     if not text:
         return None, 0.0, {**details, "cue": "none"}
 
-    status, conf, cue = classify_transcript(text, xgb_probs)
+    status, conf, cue = classify_transcript(
+        text, xgb_probs, audio_seconds=audio_seconds
+    )
+    # Lone "Oh." on a sub-1s clip: do not promote to HUMAN (often truncated VM)
+    if cue == "human_short" and is_hello_mishear(text) and audio_seconds < 1.05:
+        details["cue"] = "oh_too_short"
+        details["oh_suppressed"] = True
+        return None, 0.0, details
     details["cue"] = cue
     if status:
         return status, conf, details
