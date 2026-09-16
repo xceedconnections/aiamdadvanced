@@ -470,7 +470,7 @@ def _is_agent_path(label: str) -> bool:
 
 @router.get("/reports/accuracy")
 def accuracy_report(
-    days: int = Query(7, ge=1, le=365),
+    days: int = Query(30, ge=1, le=365),
     server_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -484,13 +484,44 @@ def accuracy_report(
     require_not_dialer(user)
     since = datetime.utcnow() - timedelta(days=days)
 
+    # Diagnostics — page should never look "broken" when simply unlabeled
+    calls_q = db.query(func.count(CallAnalysis.id)).filter(CallAnalysis.created_at >= since)
+    if server_id is not None:
+        calls_q = calls_q.filter(CallAnalysis.server_id == int(server_id))
+    n_calls_period = int(calls_q.scalar() or 0)
+
+    teach_base = db.query(TrainingCorrection).filter(
+        or_(
+            TrainingCorrection.action == "teach",
+            TrainingCorrection.action.is_(None),
+            TrainingCorrection.action == "",
+        ),
+        TrainingCorrection.is_active == True,  # noqa: E712
+    )
+    n_teaches_all = int(teach_base.count() or 0)
+    n_teaches_period = int(
+        teach_base.filter(TrainingCorrection.created_at >= since).count() or 0
+    )
+    n_teaches_with_call = int(
+        teach_base.filter(
+            TrainingCorrection.created_at >= since,
+            TrainingCorrection.call_id.isnot(None),
+        ).count()
+        or 0
+    )
+    n_phone_only = max(0, n_teaches_period - n_teaches_with_call)
+
     q = (
         db.query(TrainingCorrection, CallAnalysis)
         .join(CallAnalysis, CallAnalysis.id == TrainingCorrection.call_id)
         .filter(
             TrainingCorrection.created_at >= since,
             TrainingCorrection.is_active == True,  # noqa: E712
-            TrainingCorrection.action == "teach",
+            or_(
+                TrainingCorrection.action == "teach",
+                TrainingCorrection.action.is_(None),
+                TrainingCorrection.action == "",
+            ),
             TrainingCorrection.call_id.isnot(None),
         )
         .order_by(TrainingCorrection.call_id.asc(), TrainingCorrection.id.desc())
@@ -603,6 +634,19 @@ def accuracy_report(
             )
         return out
 
+    empty_reason = None
+    if n == 0:
+        if n_calls_period == 0:
+            empty_reason = "no_calls"
+        elif n_teaches_period == 0 and n_teaches_all == 0:
+            empty_reason = "never_taught"
+        elif n_teaches_period == 0 and n_teaches_all > 0:
+            empty_reason = "outside_period"
+        elif n_phone_only > 0 and n_teaches_with_call == 0:
+            empty_reason = "phone_only_teaches"
+        else:
+            empty_reason = "no_matching_labels"
+
     return {
         "days": days,
         "server_id": server_id,
@@ -620,10 +664,15 @@ def accuracy_report(
         "ece": ece,
         "false_human_examples": _examples(false_human),
         "false_machine_examples": _examples(false_machine),
+        "n_calls_period": n_calls_period,
+        "n_teaches_all": n_teaches_all,
+        "n_teaches_period": n_teaches_period,
+        "n_teaches_with_call": n_teaches_with_call,
+        "n_phone_only": n_phone_only,
+        "empty_reason": empty_reason,
         "note": (
-            "Metrics use Training teaches only (call-linked). "
-            "False HUMAN = AI said HUMAN but teach was not HUMAN (sent to agents wrongly). "
-            "False MACHINE = AI hung up / AA'd a call taught as HUMAN."
+            "Metrics use Training teaches linked to a call. "
+            "CDR volume alone does not fill this page — open Training, play a call, set the true label, Save."
         ),
     }
 

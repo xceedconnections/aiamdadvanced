@@ -2450,7 +2450,7 @@ $("#report-days").addEventListener("change", loadReports);
 
 async function loadAccuracy() {
   const msg = $("#accuracy-msg");
-  const days = $("#accuracy-days")?.value || "7";
+  const days = $("#accuracy-days")?.value || "30";
   const serverId = ($("#accuracy-server-filter")?.value || "").trim();
   const params = new URLSearchParams({ days });
   if (serverId) params.set("server_id", serverId);
@@ -2460,15 +2460,33 @@ async function loadAccuracy() {
   }
   try {
     const d = await api(`/api/reports/accuracy?${params}`);
+    const emptyHints = {
+      never_taught:
+        "No Training labels yet. Open Training → play a call → set the true label → Save. Accuracy fills from those teaches (not from CDR alone).",
+      outside_period: `No teaches in the last ${d.days} day(s), but ${d.n_teaches_all || 0} teach(es) exist overall — try 90 days.`,
+      phone_only_teaches:
+        "Teaches exist by phone only (no linked recording). Accuracy needs call-linked teaches from the Training page.",
+      no_calls: `No CDR calls in the last ${d.days} day(s) for this filter.`,
+      no_matching_labels:
+        "No call-linked teaches in this filter. Use Training to label calls.",
+    };
     if (msg) {
-      msg.className = "hint";
-      msg.textContent = d.n_labeled
-        ? `${d.n_labeled} labeled call(s) · ECE ${d.ece == null ? "—" : d.ece}`
-        : "No labeled teaches in this period — correct calls on Training to populate metrics.";
+      if (d.n_labeled) {
+        msg.className = "ok";
+        msg.textContent = `${d.n_labeled} labeled call(s) · ECE ${d.ece == null ? "—" : d.ece}`;
+      } else {
+        msg.className = "hint";
+        msg.textContent =
+          emptyHints[d.empty_reason] ||
+          d.note ||
+          "No labeled teaches in this period — correct calls on Training to populate metrics.";
+      }
     }
 
     const cards = [
-      ["Labeled calls", d.n_labeled || 0],
+      ["CDR calls (period)", d.n_calls_period || 0],
+      ["Teaches (period)", d.n_teaches_period || 0],
+      ["Labeled for eval", d.n_labeled || 0],
       ["Overall accuracy", d.accuracy_pct == null ? "—" : `${d.accuracy_pct}%`],
       ["Correct", d.n_correct || 0],
       ["False HUMAN", d.false_human || 0],
@@ -2497,7 +2515,7 @@ async function loadAccuracy() {
     if (thead && tbody) {
       if (!labels.length) {
         thead.innerHTML = "";
-        tbody.innerHTML = `<tr><td class="hint">No data</td></tr>`;
+        tbody.innerHTML = `<tr><td class="hint">No labeled data yet — teach calls on Training first</td></tr>`;
       } else {
         thead.innerHTML = `<tr><th>AI \\ Actual</th>${labels
           .map((l) => `<th>${escapeHtml(l)}</th>`)
@@ -2520,13 +2538,16 @@ async function loadAccuracy() {
     // Calibration bars
     const calib = $("#accuracy-calibration");
     if (calib) {
-      calib.innerHTML = (d.calibration || [])
-        .map((b) => {
-          const accPct = b.accuracy == null ? 0 : b.accuracy * 100;
-          const confPct = b.avg_confidence == null ? 0 : b.avg_confidence * 100;
-          const gap =
-            b.gap == null ? "—" : `${b.gap >= 0 ? "+" : ""}${(b.gap * 100).toFixed(1)} pts`;
-          return `<div class="calib-row">
+      if (!(d.n_labeled > 0)) {
+        calib.innerHTML = `<p class="hint">Calibration appears after you have labeled teaches.</p>`;
+      } else {
+        calib.innerHTML = (d.calibration || [])
+          .map((b) => {
+            const accPct = b.accuracy == null ? 0 : b.accuracy * 100;
+            const confPct = b.avg_confidence == null ? 0 : b.avg_confidence * 100;
+            const gap =
+              b.gap == null ? "—" : `${b.gap >= 0 ? "+" : ""}${(b.gap * 100).toFixed(1)} pts`;
+            return `<div class="calib-row">
             <div class="calib-label">${escapeHtml(b.label)} <span class="hint">n=${b.n}</span></div>
             <div class="calib-bars">
               <div class="calib-bar conf" style="width:${Math.min(100, confPct)}%" title="Avg confidence ${confPct.toFixed(1)}%"></div>
@@ -2534,8 +2555,9 @@ async function loadAccuracy() {
             </div>
             <div class="calib-meta hint">conf ${b.avg_confidence == null ? "—" : (b.avg_confidence * 100).toFixed(1) + "%"} · acc ${b.accuracy == null ? "—" : (b.accuracy * 100).toFixed(1) + "%"} · gap ${gap}</div>
           </div>`;
-        })
-        .join("");
+          })
+          .join("");
+      }
     }
 
     const exRow = (r) => `<tr>
