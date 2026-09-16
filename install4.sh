@@ -73,4 +73,19 @@ log "Testing Python import..."
 export PYTHONPATH="${BACKEND}"
 "${VENV}/bin/python" -c "from app.main import app; print('IMPORT OK:', app.title)"
 
+# Ensure Whisper STT models are cached (new installs + upgrades via install4).
+log "Caching Faster-Whisper models (tiny.en, base.en, small.en)..."
+"${VENV}/bin/python" - <<'PY' || true
+from faster_whisper import WhisperModel
+
+for name in ("tiny.en", "base.en", "small.en"):
+    try:
+        print(f"Loading/caching {name} …")
+        WhisperModel(name, device="cpu", compute_type="int8")
+        print(f"OK: {name}")
+    except Exception as exc:
+        print(f"WARNING: failed to download {name}: {exc}")
+print("Whisper model cache ready (or partial).")
+PY
+
 log "Phase 4 complete — backend + portal deployed."

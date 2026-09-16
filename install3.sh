@@ -31,6 +31,21 @@ pip install 'bcrypt==4.0.1' --force-reinstall
 log "Optional: faster-whisper (ML pipeline Whisper stage)..."
 pip install 'faster-whisper>=1.1.0' || echo "WARNING: faster-whisper not installed; ML pipeline will use XGBoost only"
 
+# Pre-download Whisper STT models so first AMD call is not delayed (best effort).
+log "Downloading Faster-Whisper models (tiny.en, base.en, small.en)..."
+python - <<'PY' || true
+from faster_whisper import WhisperModel
+
+for name in ("tiny.en", "base.en", "small.en"):
+    try:
+        print(f"Loading/caching {name} …")
+        WhisperModel(name, device="cpu", compute_type="int8")
+        print(f"OK: {name}")
+    except Exception as exc:
+        print(f"WARNING: failed to download {name}: {exc}")
+print("Whisper model cache ready (or partial).")
+PY
+
 # Hybrid engine uses Silero VAD via onnxruntime (already in requirements).
 # Pre-download ONNX weights into /opt/openamd/models (best effort).
 log "Downloading Silero VAD ONNX model (best effort)..."

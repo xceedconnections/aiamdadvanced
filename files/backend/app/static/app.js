@@ -4,7 +4,7 @@ const state = {
   role: localStorage.getItem("openamd_role") || "",
   serverId: localStorage.getItem("openamd_server_id") || "",
   serverName: localStorage.getItem("openamd_server_name") || "",
-  displayTimezone: localStorage.getItem("openamd_tz") || "UTC",
+  displayTimezone: localStorage.getItem("openamd_tz") || "",
   liveTimer: null,
   audioObjectUrl: null,
   cdrPage: 1,
@@ -373,14 +373,12 @@ function fmtTime(iso) {
 }
 
 function getDisplayTimezone() {
-  const sel = ($("#display-timezone")?.value || "").trim();
-  if (sel) {
-    state.displayTimezone = sel;
-    return sel;
-  }
+  // Prefer in-memory / saved system default — never trust the <select> default (UTC)
+  // before loadDisplayTimezone() finishes, or the clock sticks on UTC forever.
   return (
     (state.displayTimezone || "").trim() ||
     (localStorage.getItem("openamd_tz") || "").trim() ||
+    ($("#display-timezone")?.value || "").trim() ||
     "UTC"
   );
 }
@@ -401,7 +399,11 @@ async function loadDisplayTimezone() {
 }
 
 function syncTimezoneSelects() {
-  const tz = getDisplayTimezone();
+  const tz =
+    (state.displayTimezone || "").trim() ||
+    (localStorage.getItem("openamd_tz") || "").trim() ||
+    "UTC";
+  state.displayTimezone = tz;
   const top = $("#display-timezone");
   const settings = $("#settings-display-timezone");
   if (top) {
