@@ -111,6 +111,30 @@ textarea::placeholder {
   -webkit-text-fill-color: #f1f5f9;
   border: 1px solid rgba(148, 163, 184, 0.35) !important;
 }
+#machine-phrases-words {
+  width: 100%;
+  background: #0c1422 !important;
+  color: #f1f5f9 !important;
+  -webkit-text-fill-color: #f1f5f9;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+  font-family: var(--mono);
+  line-height: 1.45;
+  resize: vertical;
+}
+.phrase-builtin-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  columns: 2;
+  gap: 1.5rem;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+.phrase-builtin-list li {
+  margin-bottom: 0.25rem;
+}
+@media (max-width: 700px) {
+  .phrase-builtin-list { columns: 1; }
+}
 button {
   margin-top: .85rem;
   width: 100%;

@@ -32,6 +32,7 @@ const routePages = {
   "/vicidialservers.php": "servers",
   "/reports.php": "reports",
   "/accuracy.php": "accuracy",
+  "/machine-phrases.php": "machine-phrases",
   "/training.php": "training",
   "/training-history.php": "training-history",
   "/ml-logs.php": "ml-logs",
@@ -192,6 +193,9 @@ function openPage(page) {
   if (page === "reports") loadReports();
   if (page === "accuracy") {
     fillServerFilters().finally(() => loadAccuracy());
+  }
+  if (page === "machine-phrases") {
+    loadMachinePhrases();
   }
   if (page === "live") {
     fillServerFilters().then(() => loadLive());
@@ -2585,6 +2589,64 @@ async function loadAccuracy() {
 $("#accuracy-days")?.addEventListener("change", () => loadAccuracy());
 $("#accuracy-server-filter")?.addEventListener("change", () => loadAccuracy());
 $("#accuracy-refresh")?.addEventListener("click", () => loadAccuracy());
+
+async function loadMachinePhrases() {
+  const ta = $("#machine-phrases-words");
+  const msg = $("#machine-phrases-msg");
+  const ul = $("#machine-phrases-builtin");
+  if (!ta) return;
+  try {
+    const cfg = await api("/api/settings/machine-phrases");
+    const words = cfg.phrases || [];
+    ta.value = words.join("\n");
+    if (ul) {
+      ul.innerHTML = "";
+      (cfg.builtin_phrases || []).forEach((p) => {
+        const li = document.createElement("li");
+        li.textContent = p;
+        ul.appendChild(li);
+      });
+    }
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = `${words.length} custom phrase(s). Built-in cues remain active.`;
+    }
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message || "Failed to load phrases";
+    }
+  }
+}
+
+async function saveMachinePhrases() {
+  const ta = $("#machine-phrases-words");
+  const msg = $("#machine-phrases-msg");
+  if (!ta) return;
+  const words = ta.value
+    .split(/[\n,;]+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+  try {
+    const res = await api("/api/settings/machine-phrases", {
+      method: "PUT",
+      json: { phrases: words },
+    });
+    const saved = res.phrases || words;
+    ta.value = saved.join("\n");
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = `Saved ${saved.length} phrase(s). Matching transcripts count as MACHINE/VM.`;
+    }
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message || "Save failed";
+    }
+  }
+}
+
+$("#machine-phrases-save")?.addEventListener("click", () => saveMachinePhrases());
 
 async function loadTraining() {
   const meta = $("#train-meta");

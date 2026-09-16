@@ -105,6 +105,32 @@ def put_amd_settings(
     return saved
 
 
+class MachinePhrasesUpdate(BaseModel):
+    phrases: list[str] | str = Field(default_factory=list)
+
+
+@router.get("/machine-phrases")
+def get_machine_phrases(user: User = Depends(get_current_user)):
+    """Custom MACHINE/VM phrases for Whisper transcript matching."""
+    _require_admin(user)
+    from app.machine_phrases import load_machine_phrases
+
+    return load_machine_phrases()
+
+
+@router.put("/machine-phrases")
+def put_machine_phrases(
+    payload: MachinePhrasesUpdate,
+    user: User = Depends(get_current_user),
+):
+    _require_admin(user)
+    from app.machine_phrases import save_machine_phrases
+
+    saved = save_machine_phrases(phrases=payload.phrases)
+    saved["updated_by"] = user.username
+    return saved
+
+
 @router.get("/ml/stats")
 def get_ml_stats(user: User = Depends(get_current_user)):
     _require_admin(user)

@@ -253,6 +253,20 @@ def classify_transcript(
     if is_hello_mishear(t, audio_seconds=audio_seconds):
         return "HUMAN", max(0.88, float(probs.get("HUMAN", 0.5))), "human_short"
 
+    # Portal custom MACHINE/VM phrases (Settings → Machine Phrases)
+    try:
+        from app.machine_phrases import match_custom_machine_phrase
+
+        custom_hit = match_custom_machine_phrase(t)
+        if custom_hit:
+            return (
+                "MACHINE",
+                max(0.95, float(probs.get("MACHINE", 0.5))),
+                f"custom_phrase:{custom_hit}",
+            )
+    except Exception:
+        pass
+
     # Voicemail phrases first (incl. Tiny mishears like "passion you're calling")
     if _MACHINE_RE.search(t):
         return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"

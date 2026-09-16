@@ -51,6 +51,7 @@
         <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
         <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
         <a href="/accuracy.php" data-page="accuracy" class="nav"><span class="nav-ico">◉</span>Accuracy</a>
+        <a href="/machine-phrases.php" data-page="machine-phrases" class="nav"><span class="nav-ico">✉</span>Machine Phrases</a>
         <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
         <a href="/training-history.php" data-page="training-history" class="nav"><span class="nav-ico">◷</span>Training History</a>
         <a href="/ml-logs.php" data-page="ml-logs" class="nav"><span class="nav-ico">◈</span>AI Training Logs</a>
@@ -766,6 +767,33 @@
               </table>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="page-machine-phrases" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Machine / VM phrases</h3>
+            <button class="ghost" type="button" id="machine-phrases-save">Save phrases</button>
+          </div>
+          <p class="hint">
+            When Whisper hears any of these words or phrases in the AMD clip, the call is disposed as
+            <strong>MACHINE</strong> (voicemail / answering machine). One phrase per line.
+            Built-in cues (leave a message, voicemail, record your name, …) stay active even if this list is empty.
+          </p>
+          <textarea
+            id="machine-phrases-words"
+            rows="12"
+            placeholder="your call has been forwarded&#10;please leave your name&#10;at the sound of the tone"
+          ></textarea>
+          <p class="hint" id="machine-phrases-msg"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Built-in cues (always on)</h3></div>
+          <p class="hint" style="margin-top:0">
+            These are already matched by the engine. Add extras above for carrier scripts or Whisper mishears you see in Training.
+          </p>
+          <ul id="machine-phrases-builtin" class="phrase-builtin-list"></ul>
         </div>
       </section>
 
