@@ -890,7 +890,21 @@ def _classify_heuristic(
     if _looks_like_short_human(feats):
         return "HUMAN", 0.8
 
-    # Uncertain → MACHINE (clear AM bias). Live hello must match short_human.
+    # Ambiguous but audible speech in a normal AMD window → prefer HUMAN
+    # (stock 8369 is HUMAN-permissive; hanging these starved agents on 8399).
+    peak = float(feats.get("peak", 0.0))
+    if (
+        0.9 <= duration <= 3.5
+        and peak >= 0.08
+        and 0.10 <= speech_ratio <= 0.45
+        and num_bursts <= 5
+        and longest_burst <= 900
+        and float(feats.get("beep", 0.0)) < 0.5
+        and float(feats.get("ringback", 0.0)) < 0.5
+    ):
+        return "HUMAN", 0.76
+
+    # Uncertain silence / dense unknown → MACHINE
     return "MACHINE", 0.72
 
 
