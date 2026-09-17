@@ -304,9 +304,9 @@ def _looks_like_short_human(
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
 
     # Long continuous talk in the AMD window → greeting / IVR, not hello
-    if longest_burst >= 1400 and speech_ratio >= 0.42:
+    if longest_burst >= 1100 and speech_ratio >= 0.38:
         return False
-    if speech_ratio >= 0.62 and duration >= 2.2:
+    if speech_ratio >= 0.55 and duration >= 1.8:
         return False
     # Digit/IVR readout is several short words with real speech fill
     # A noisy "hello" can also split into 3 energy blips — do not treat those as IVR
@@ -317,14 +317,14 @@ def _looks_like_short_human(
         s_long = float(silero.get("longest_speech_ms", 0.0))
         s_segs = int(silero.get("num_segments", 0))
         s_ratio = float(silero.get("speech_ratio", 0.0))
-        if s_long >= 1500 and s_ratio >= 0.38:
+        if s_long >= 1200 and s_ratio >= 0.32:
             return False
-        if s_segs >= 3 and s_ratio >= 0.28:
+        if s_segs >= 3 and s_ratio >= 0.25:
             return False
-        if s_segs <= 2 and s_long <= 1200 and s_long >= 80:
+        if s_segs <= 2 and s_long <= 900 and s_long >= 80:
             return True
 
-    if num_bursts <= 4 and longest_burst <= 1200 and speech_ratio <= 0.45:
+    if num_bursts <= 3 and longest_burst <= 900 and speech_ratio <= 0.40:
         return True
     return False
 
@@ -873,7 +873,10 @@ def analyze_audio(
     w_block = ml_block.get("whisper") if isinstance(ml_block.get("whisper"), dict) else {}
     w_cue = str(w_block.get("cue") or "")
     w_text = str(w_block.get("transcript") or "")
-    whisper_non_human = w_cue in ("ivr", "ivr_digits", "voicemail", "digits")
+    whisper_non_human = (
+        w_cue in ("ivr", "ivr_digits", "voicemail", "digits")
+        or w_cue.startswith("custom_phrase")
+    )
     if not whisper_non_human and w_text:
         try:
             from app.ai.whisper_amd import classify_transcript, is_number_readout
@@ -881,7 +884,9 @@ def analyze_audio(
             whisper_non_human = is_number_readout(w_text)
             if not whisper_non_human:
                 w_status, _, w_cue2 = classify_transcript(w_text)
-                if w_status == "MACHINE" or w_cue2 in ("voicemail", "ivr_digits", "ivr"):
+                if w_status == "MACHINE" or w_cue2 in ("voicemail", "ivr_digits", "ivr") or str(
+                    w_cue2
+                ).startswith("custom_phrase"):
                     whisper_non_human = True
                     details["whisper_machine_from_text"] = True
         except Exception:
@@ -917,6 +922,25 @@ def analyze_audio(
         status, confidence = "HUMAN", max(float(confidence), 0.78)
         details["uncertain_machine_to_human"] = True
         details["fuse_note"] = "uncertain_machine_to_human"
+
+    # Final guard: never send agent a call whose Whisper text is clearly VM/IVR
+    if status == "HUMAN" and w_text:
+        try:
+            from app.ai.whisper_amd import classify_transcript, is_number_readout
+
+            w_status, w_conf, w_cue2 = classify_transcript(w_text)
+            if (
+                w_status == "MACHINE"
+                or is_number_readout(w_text)
+                or w_cue2 in ("voicemail", "ivr_digits", "ivr")
+                or str(w_cue2).startswith("custom_phrase")
+            ):
+                status = "MACHINE"
+                confidence = max(float(confidence), float(w_conf or 0.93), 0.93)
+                details["whisper_vm_final_block"] = True
+                details["fuse_note"] = w_cue2 or "voicemail"
+        except Exception:
+            pass
 
     # Safety net: spoken digit / IVR syllable must not reach agents
     if status == "HUMAN" and _looks_like_spoken_digit(feats, silero) and not (

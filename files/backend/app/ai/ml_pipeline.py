@@ -132,7 +132,7 @@ def run_ml_pipeline(
                 details["ml_note"] = note + "_whisper_unavailable"
                 return None
             w_status, w_conf, w_det = refine_with_whisper(
-                audio, sr, xgb_probs=probs, max_seconds=4.0
+                audio, sr, xgb_probs=probs, max_seconds=5.0
             )
             details["whisper"] = w_det
             details["whisper_used"] = True
@@ -188,25 +188,59 @@ def run_ml_pipeline(
         details["ml_note"] = "blank_override_high_human"
         return b_status, b_conf, details
 
-    # Fast path: clear short live "hello" — do not stall agent connect for Whisper
-    if looks_human and str(hybrid_status).upper() == "HUMAN" and float(hybrid_confidence) >= 0.80:
-        details["ml_note"] = "short_human_skip_whisper_fast_agent"
-        return "HUMAN", max(float(hybrid_confidence), float(conf), 0.86), details
-
+    # Always run Whisper before agent when enabled — short "hello-looking" clips
+    # are often carrier/Google Voice VM ("Message system. One.", "Voicemail").
+    # Skipping Whisper here was sending scripted VM to agents.
     w_hit = _apply_whisper("human_to_agent")
     if w_hit:
         status, conf = w_hit
         if status != "HUMAN":
             details["ml_note"] = (details.get("ml_note") or "") + "+block_non_human"
             return status, float(conf), details
+        # Whisper said HUMAN — still block if transcript is clearly VM wording
+        w_text = ""
+        if isinstance(details.get("whisper"), dict):
+            w_text = str(details["whisper"].get("transcript") or "")
+        if w_text:
+            try:
+                from app.ai.whisper_amd import classify_transcript
+
+                w_status2, w_conf2, w_cue2 = classify_transcript(
+                    w_text,
+                    xgb_probs=probs,
+                    audio_seconds=float(feats.get("duration") or 0),
+                )
+                if w_status2 == "MACHINE" or str(w_cue2).startswith("custom_phrase"):
+                    details["ml_note"] = (details.get("ml_note") or "") + "+vm_override_human_cue"
+                    if isinstance(details.get("whisper"), dict):
+                        details["whisper"]["cue"] = w_cue2 or "voicemail"
+                    return "MACHINE", max(0.93, float(w_conf2 or 0.93)), details
+            except Exception:
+                pass
     else:
         # Whisper invented junk ("Here I go") or empty — don't send digits to agents
         w_cue = ""
+        w_text = ""
         if isinstance(details.get("whisper"), dict):
             w_cue = str(details["whisper"].get("cue") or "")
+            w_text = str(details["whisper"].get("transcript") or "")
         if looks_digit or (w_cue == "hallucination" and not looks_human):
             details["ml_note"] = (details.get("ml_note") or "") + "+digit_or_hallucination_machine"
             return "MACHINE", 0.9, details
+        # Transcript present but classify returned no cue — re-check hard VM words
+        if w_text:
+            try:
+                from app.ai.whisper_amd import classify_transcript
+
+                w_status2, w_conf2, w_cue2 = classify_transcript(
+                    w_text, xgb_probs=probs, audio_seconds=float(feats.get("duration") or 0)
+                )
+                if w_status2 == "MACHINE" or str(w_cue2).startswith("custom_phrase"):
+                    details["ml_note"] = (details.get("ml_note") or "") + "+transcript_vm_block"
+                    details["whisper"]["cue"] = w_cue2 or "voicemail"
+                    return "MACHINE", max(0.93, float(w_conf2 or 0.93)), details
+            except Exception:
+                pass
         if whisper_on and not details.get("whisper_used"):
             details["ml_note"] = "human_whisper_unavailable"
         elif not whisper_on:

@@ -17,6 +17,9 @@ from app.config import get_settings
 BUILTIN_MACHINE_PHRASES = [
     "leave a message",
     "voicemail",
+    "message system",
+    "messaging system",
+    "voice message",
     "not available",
     "after the tone",
     "record your message",

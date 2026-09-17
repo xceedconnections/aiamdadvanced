@@ -26,11 +26,16 @@ _DEFAULT_WHISPER_MODEL = "base.en"
 # Phrase cues (English NA + common IVR). Tiny often mishears "person" as "passion".
 _MACHINE_RE = re.compile(
     r"\b("
-    r"leave\s+(a\s+)?message|voicemail|voice\s*mail|not\s+available|unavailable|"
-    r"can'?t\s+take\s+your\s+call|unable\s+to\s+take|after\s+the\s+(tone|beep)|"
+    r"leave\s+(a\s+)?message|voicemails?|voice\s*mails?|not\s+available|unavailable|"
+    r"can'?t\s+take\s+your\s+call|unable\s+to\s+take|after\s+the\s+(tone|beep|sound)|"
     r"at\s+the\s+(tone|beep)|record\s+your\s+(message|name)|please\s+leave|mailbox|"
     r"if\s+you\s+record|record\s+your\s+name\s+and|"
     r"please\s+record\s+your\s+(name|message)|"
+    # Google Voice / carrier: "Message system. One." / messaging system
+    r"message\s+system|messaging\s+system|voice\s+messaging|voice\s+message|"
+    r"answering\s+(machine|service)|automated\s+(attendant|message)|"
+    r"this\s+is\s+(the\s+)?(voicemail|voice\s*mail|mailbox|messaging)|"
+    r"you\s+have\s+reached\s+(the\s+)?(voicemail|mailbox|message)|"
     # Classic carrier VM: "The person you're calling…" (Tiny: passion/party/portion)
     r"the\s+(person|passion|party|portion|passenger|persons?)\s+"
     r"you(?:'re|\s+are|\s+have)?\s*(calling|called|call)|"
@@ -45,7 +50,8 @@ _MACHINE_RE = re.compile(
     r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
     r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
     r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep|"
-    r"we(?:'ll|\s+will)\s+(get\s+back|return\s+your\s+call|call\s+you\s+back)"
+    r"we(?:'ll|\s+will)\s+(get\s+back|return\s+your\s+call|call\s+you\s+back)|"
+    r"subscriber|not\s+in\s+service|has\s+a\s+message"
     r")\b",
     re.I,
 )
@@ -135,11 +141,12 @@ _OH_AMBIGUOUS = {"oh", "o"}
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias Tiny toward short phone greetings + digits + classic VM
+# Bias toward phone greetings + digits + classic / Google Voice VM
 _AMD_INITIAL_PROMPT = (
     "Hello. Hello. Hi. Yeah. Yes. Zero. One. Two. Three. Four. Five. "
+    "Message system. One. Voicemail. "
     "The person you are calling is not available. "
-    "Voicemail. Please leave a message after the beep. Press one for English."
+    "Please leave a message after the beep. Press one for English."
 )
 
 
@@ -293,11 +300,23 @@ def classify_transcript(
     # Standalone "Mail." / "Mailbox." on a short clip after silence → VM
     if re.fullmatch(r"\s*mails?(box)?\.?\s*", t, re.I):
         return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Standalone "Voicemail." / "Voice mail."
+    if re.fullmatch(r"\s*voice\s*mails?\.?\s*", t, re.I):
+        return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # "Message system. One." / "Message. System." + optional digit (Google Voice etc.)
+    if re.search(r"\bmessage\s+system\b", t, re.I) or re.search(
+        r"\bmessaging\s+system\b", t, re.I
+    ):
+        return "MACHINE", max(0.95, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if re.search(r"\b(message|mail|mailbox|voicemail)\b", t, re.I) and re.search(
+        r"\b(one|two|three|four|five|six|seven|eight|nine|zero|[0-9])\b", t, re.I
+    ):
+        return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
     # Live hello only when the whole clip is a short greeting — not "Hi" + VM script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         if re.search(
             r"\b(record|message|mailbox|voicemail|forwarded|reached|beep|tone|"
-            r"unavailable|not\s+available|call\s+back)\b",
+            r"unavailable|not\s+available|call\s+back|system)\b",
             t,
             re.I,
         ):
