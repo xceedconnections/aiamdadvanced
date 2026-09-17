@@ -99,13 +99,13 @@ def run_ml_pipeline(
         }
         return "MACHINE", max(0.93, float(feats.get("ringback_conf") or 0.93)), details
 
-    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
+    if _is_truncated_script_clip(feats):
         details = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
-            "ml_note": "script_clip_structure",
+            "ml_note": "truncated_script_clip",
         }
         # Still run Whisper when possible — may confirm VM wording — but never agent
         try:
@@ -119,6 +119,10 @@ def run_ml_pipeline(
                 details["whisper_used"] = True
                 if w_status == "MACHINE":
                     return "MACHINE", max(0.93, float(w_conf or 0.93)), details
+                if w_status == "HUMAN":
+                    # Ultra-short dense clip + Whisper hello is still risky; keep MACHINE
+                    # unless acoustics are clearly not truncated-dense (shouldn't happen)
+                    pass
         except Exception as exc:
             details["whisper_error"] = str(exc)
         return "MACHINE", 0.9, details
@@ -248,8 +252,8 @@ def run_ml_pipeline(
         details["ml_note"] = "blank_override_high_human"
         return b_status, b_conf, details
 
-    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
-        details["ml_note"] = "script_structure_block"
+    if _is_truncated_script_clip(feats):
+        details["ml_note"] = "truncated_script_block"
         return "MACHINE", 0.9, details
 
     # Always run Whisper before agent when enabled — short "hello-looking" clips

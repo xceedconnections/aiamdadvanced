@@ -339,9 +339,11 @@ def _looks_like_spoken_digit(
 
 
 def _is_front_speech_then_silence(feats: Dict[str, float]) -> bool:
-    """Spoken content then long dead air — common AMD cut of VM/IVR greeting.
+    """Front-loaded scripted talk then long dead air — VM/IVR cut by AMD timer.
 
-    Live hello is usually one short burst; multi-burst/script then silence is AM.
+    IMPORTANT: a live "Hello" at the start of a 2s window ALSO looks like
+    speech-then-silence. Do NOT treat 1–2 short bursts as MACHINE — that was
+    hanging up real humans on 8399 while 8369 still connected them.
     """
     duration = float(feats.get("duration", 0.0))
     front = float(feats.get("front_energy_ratio", 0.5))
@@ -351,16 +353,21 @@ def _is_front_speech_then_silence(feats: Dict[str, float]) -> bool:
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
     if duration < 1.15:
         return False
-    if front < 0.85 or longest_silence < 650:
+    if front < 0.88 or longest_silence < 700:
         return False
-    if speech_ratio < 0.12:
+    if speech_ratio < 0.22:
         return False
-    # Multi-syllable / choppy script before the silence
-    if num_bursts >= 2 and speech_ratio >= 0.18:
+    # Live hello / short answer: few short islands then quiet — NEVER AM
+    if num_bursts <= 2 and longest_burst <= 750 and speech_ratio <= 0.42:
+        return False
+    if num_bursts <= 3 and longest_burst <= 550 and speech_ratio <= 0.32:
+        return False
+    # Scripted AM: denser / multi-phrase before the dead air
+    if num_bursts >= 4 and speech_ratio >= 0.28:
         return True
-    if longest_burst >= 380 and speech_ratio >= 0.20:
+    if num_bursts >= 3 and speech_ratio >= 0.36:
         return True
-    if num_bursts >= 3 and longest_burst <= 280:
+    if longest_burst >= 900 and speech_ratio >= 0.38:
         return True
     return False
 
@@ -1152,8 +1159,9 @@ def analyze_audio(
             },
         )
 
-    # Truncated / front-speech-then-silence VM/IVR openings — never to agents
-    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
+    # Ultra-short dense truncated VM/IVR only — do NOT early-exit on
+    # front-speech-then-silence (live hellos look the same; need Whisper/fuse).
+    if _is_truncated_script_clip(feats):
         ms = int((time.perf_counter() - t0) * 1000)
         return AnalysisResult(
             status="MACHINE",
@@ -1168,7 +1176,7 @@ def analyze_audio(
                 "blank_as_machine": is_blank_as_machine_enabled(),
                 "heuristic_status": h_status,
                 "heuristic_confidence": round(float(h_confidence), 4),
-                "fuse_note": "script_clip_structure",
+                "fuse_note": "truncated_script_clip",
                 "script_structure_block": True,
                 "ml_pipeline_enabled": False,
                 "silero": {
