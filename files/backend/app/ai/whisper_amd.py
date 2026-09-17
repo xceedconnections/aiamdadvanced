@@ -214,7 +214,7 @@ def is_hello_mishear(text: str, *, audio_seconds: Optional[float] = None) -> boo
     'Your call has been forwarded…' / VM into a lone 'Oh.'.
     """
     t = (text or "").strip().lower().rstrip(".")
-    if t not in ("oh", "o", "ah", "uh", "mm", "hmm", "huh", "ay", "ey"):
+    if t not in ("oh", "o", "ah", "uh", "mm", "hmm", "huh", "ay", "ey", "go", "guh"):
         return False
     # Sub-1s clips are usually truncated VM / early-media, not a full hello
     if audio_seconds is not None and float(audio_seconds) < 1.05:
@@ -299,7 +299,7 @@ def classify_transcript(
     # Require ~1s+ clip so ultra-short truncated VM openings stay MACHINE.
     if re.fullmatch(
         r"\s*(hello+|hi|hey|yeah|yes|yep|yup|yo|no+|nope|nah|what|huh|"
-        r"ok|okay|sure|alright|right|oh|ah|uh|mm|hmm)\.?\s*",
+        r"ok|okay|sure|alright|right|oh|ah|uh|mm|hmm|go+|guh)\.?\s*",
         t,
         re.I,
     ):
