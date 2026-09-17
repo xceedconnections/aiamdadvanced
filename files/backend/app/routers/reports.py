@@ -66,6 +66,7 @@ def _ml_fields_from_features(raw: Optional[str]) -> dict:
         "whisper_transcript": "",
         "whisper_cue": "",
         "ml_note": "",
+        "decision_reason": "",
     }
     if not raw:
         return out
@@ -83,10 +84,18 @@ def _ml_fields_from_features(raw: Optional[str]) -> dict:
     transcript = str(whisper.get("transcript") or details.get("whisper_transcript") or "")[:240]
     cue = str(whisper.get("cue") or "")
     note = str(ml.get("ml_note") or details.get("ml_note") or "")
+    reason = str(
+        details.get("decision_reason")
+        or details.get("fuse_note")
+        or ml.get("decision_reason")
+        or note
+        or ""
+    )[:120]
     out["whisper_used"] = used
     out["whisper_transcript"] = transcript
     out["whisper_cue"] = cue
     out["ml_note"] = note
+    out["decision_reason"] = reason
     return out
 
 
@@ -115,6 +124,7 @@ def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
         whisper_transcript=ml["whisper_transcript"],
         whisper_cue=ml["whisper_cue"],
         ml_note=ml["ml_note"],
+        decision_reason=ml["decision_reason"],
     )
 
 
@@ -203,6 +213,7 @@ def _export_headers() -> list[str]:
         "audio_seconds",
         "whisper_used",
         "whisper_transcript",
+        "decision_reason",
     ]
 
 
@@ -224,6 +235,7 @@ def _export_row(r: CallAnalysis, server_map: dict) -> list[str]:
         f"{float(r.audio_seconds or 0):.3f}",
         "1" if ml["whisper_used"] else "0",
         ml["whisper_transcript"],
+        ml.get("decision_reason") or "",
     ]
 
 

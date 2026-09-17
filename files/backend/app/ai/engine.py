@@ -399,6 +399,31 @@ def _is_truncated_script_clip(feats: Dict[str, float]) -> bool:
     return False
 
 
+def _is_hard_machine_acoustics(
+    feats: Dict[str, float],
+    silero: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Structures that must never go to agents — even if Whisper heard 'hello'."""
+    if float(feats.get("beep", 0.0) or 0.0) >= 0.5:
+        return True
+    if float(feats.get("ringback", 0.0) or 0.0) >= 0.5:
+        return True
+    if float(feats.get("sit", 0.0) or 0.0) >= 0.5:
+        return True
+    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
+        return True
+    if _is_voip_noise_burst(feats, silero):
+        return True
+    # Dense scripted fill (real VM greeting), not a one-word live hello
+    duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    if duration >= 1.8 and speech_ratio >= 0.48 and (num_bursts >= 4 or longest_burst >= 1000):
+        return True
+    return False
+
+
 def _looks_like_short_human(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
@@ -464,12 +489,12 @@ def _looks_like_short_human(
     # (Whisper may hear "No." / "Oh."; acoustics still look like a short answer)
     if (
         duration >= 1.15
-        and 0.10 <= speech_ratio <= 0.38
+        and 0.10 <= speech_ratio <= 0.42
         and num_bursts <= 5
-        and longest_burst <= 520
-        and longest_silence >= 400
+        and longest_burst <= 780
+        and longest_silence >= 350
         and peak >= 0.08
-        and (front <= 0.78 or longest_silence >= 600)
+        and (front <= 0.80 or longest_silence >= 550)
     ):
         return True
 
@@ -477,20 +502,21 @@ def _looks_like_short_human(
         s_long = float(silero.get("longest_speech_ms", 0.0))
         s_segs = int(silero.get("num_segments", 0))
         s_ratio = float(silero.get("speech_ratio", 0.0))
-        if s_long >= 1200 and s_ratio >= 0.32:
+        if s_long >= 1400 and s_ratio >= 0.38:
             return False
         # Noisy hello can be 3 Silero islands; only dense multi-seg is AM
-        if s_segs >= 4 and s_ratio >= 0.30:
+        if s_segs >= 4 and s_ratio >= 0.32:
             return False
         # Ultra-short dense Silero speech → truncated script
         if duration < 0.90 and s_ratio >= 0.40 and s_long >= 200:
             return False
-        if s_segs <= 3 and s_long <= 900 and s_long >= 80 and speech_ratio <= 0.40:
+        if s_segs <= 3 and s_long <= 1100 and s_long >= 80 and speech_ratio <= 0.42:
             return True
 
-    if num_bursts <= 5 and longest_burst <= 520 and speech_ratio <= 0.35 and longest_silence >= 350:
+    # Classic short hello: 1–3 islands, syllable up to ~780ms, room silence
+    if num_bursts <= 5 and longest_burst <= 780 and speech_ratio <= 0.40 and longest_silence >= 300:
         return True
-    if num_bursts <= 3 and longest_burst <= 900 and speech_ratio <= 0.40:
+    if num_bursts <= 3 and longest_burst <= 900 and speech_ratio <= 0.42:
         return True
     return False
 
@@ -1222,32 +1248,32 @@ def analyze_audio(
                     details["whisper_machine_from_text"] = True
         except Exception:
             whisper_non_human = False
-    # Dense/long greeting acoustics must not be overridden to HUMAN by short-human net
+    # Dense/long greeting acoustics must not be overridden to HUMAN by short-human net.
+    # Do NOT use abs_speech_ms alone — a loud live "hello" easily exceeds 600ms.
     dense_greeting = (
         float(feats.get("duration", 0.0)) >= 1.8
+        and float(feats.get("speech_ratio", 0.0)) >= 0.45
         and (
-            float(feats.get("speech_ratio", 0.0)) >= 0.35
-            or float(silero.get("longest_speech_ms", 0.0) or 0) >= 1200
-            or float(feats.get("abs_speech_ms", 0.0)) >= 600
+            float(feats.get("num_bursts", 0.0)) >= 4
+            or float(feats.get("longest_burst_ms", 0.0)) >= 1000
+            or float(silero.get("longest_speech_ms", 0.0) or 0) >= 1400
         )
     )
-    # Agent-protect: only confirm HUMAN when Whisper positively heard a short greeting.
-    # Never flip MACHINE/IVR → HUMAN on weak confidence or acoustic hello alone.
+    # Whisper heard a clear live greeting ("Hello." / "No.") → agent unless hard AM.
+    # Do NOT require looks_like_short_human — Silero often splits hello into 3 islands
+    # and that was wrongly overriding Whisper "Hello." to MACHINE.
     if (
         status in ("MACHINE", "IVR")
-        and float(feats.get("beep", 0.0)) < 0.5
-        and float(feats.get("ringback", 0.0)) < 0.5
         and w_cue == "human_short"
-        and _looks_like_short_human(feats, silero)
         and not whisper_non_human
         and not dense_greeting
-        and not _is_truncated_script_clip(feats)
-        and not _is_front_speech_then_silence(feats)
-        and not _is_voip_noise_burst(feats, silero)
+        and not _is_hard_machine_acoustics(feats, silero)
     ):
-        status, confidence = "HUMAN", max(float(confidence), 0.86)
+        status, confidence = "HUMAN", max(float(confidence), 0.90)
+        details["whisper_human_authoritative"] = True
         details["short_human_safety_override"] = True
-        details["fuse_note"] = "short_human_greeting"
+        details["fuse_note"] = "whisper_human_short"
+        details["decision_reason"] = "whisper_live_greeting"
     # Removed uncertain_machine_to_human — it was the main AM→agent leak.
 
     # Final guard: never send agent a call whose Whisper text is clearly VM/IVR
@@ -1319,6 +1345,13 @@ def analyze_audio(
         details["fuse_note"] = "whisper_no_human_cue"
 
     ms = int((time.perf_counter() - t0) * 1000)
+    if not details.get("decision_reason"):
+        details["decision_reason"] = str(
+            details.get("fuse_note")
+            or (details.get("ml") or {}).get("ml_note")
+            or details.get("heuristic_status")
+            or status
+        )
     return AnalysisResult(
         status=status,
         confidence=round(float(confidence), 4),

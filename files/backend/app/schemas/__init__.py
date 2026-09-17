@@ -205,6 +205,7 @@ class CallOut(BaseModel):
     whisper_transcript: str = ""
     whisper_cue: str = ""
     ml_note: str = ""
+    decision_reason: str = ""
 
     class Config:
         from_attributes = True

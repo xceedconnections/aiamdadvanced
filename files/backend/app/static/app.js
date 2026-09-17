@@ -502,6 +502,13 @@ function gatedNote(r) {
   return "";
 }
 
+function decisionBadge(r) {
+  const reason = (r && (r.decision_reason || r.ml_note) || "").trim();
+  if (!reason) return "";
+  const short = reason.length > 42 ? reason.slice(0, 40) + "…" : reason;
+  return `<div class="hint" style="margin-top:.15rem;opacity:.85" title="${escapeHtml(reason)}">∵ ${escapeHtml(short)}</div>`;
+}
+
 function whisperBadge(r) {
   if (!r || !r.whisper_used) return "";
   const text = (r.whisper_transcript || "").trim();
@@ -527,7 +534,7 @@ function callRowHtml(r) {
     <td>${escapeHtml(r.called_number || "—")}</td>
     <td>${escapeHtml(r.caller_id || "—")}</td>
     <td>${escapeHtml(r.campaign || "—")}</td>
-    <td>${statusBadge(r.status)}${gatedNote(r)}${whisperBadge(r)}</td>
+    <td>${statusBadge(r.status)}${gatedNote(r)}${whisperBadge(r)}${decisionBadge(r)}</td>
     <td>${(r.confidence * 100).toFixed(1)}%</td>
     <td>${r.processing_ms}</td>
     <td>${teachButtons(r)}</td>
@@ -541,6 +548,7 @@ function callCardHtml(r) {
       <span class="hint">${fmtTime(r.created_at)}</span>
     </div>
     ${whisperBadge(r)}
+    ${decisionBadge(r)}
     <div class="call-card-grid">
       <div><div class="k">Call ID</div><div class="v">${escapeHtml(r.call_id)}</div></div>
       <div><div class="k">Server</div><div class="v">${escapeHtml(r.server_name || "—")}</div></div>

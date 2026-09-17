@@ -57,6 +57,7 @@ def run_ml_pipeline(
         _blank_disposition,
         _is_blank,
         _is_front_speech_then_silence,
+        _is_hard_machine_acoustics,
         _is_truncated_script_clip,
         _is_voip_noise_burst,
         _looks_like_short_human,
@@ -256,10 +257,14 @@ def run_ml_pipeline(
         if status != "HUMAN":
             details["ml_note"] = (details.get("ml_note") or "") + "+block_non_human"
             return status, float(conf), details
-        # Whisper said HUMAN — only allow agent if acoustics also look like short hello
-        if not looks_human:
-            details["ml_note"] = (details.get("ml_note") or "") + "+whisper_human_without_short_hello"
-            return "MACHINE", 0.88, details
+        # Whisper said live greeting — trust it unless hard AM structure.
+        # Requiring looks_human here was marking real "Hello." as MACHINE
+        # (Silero splits hello; loud abs_speech looked "dense").
+        if _is_hard_machine_acoustics(feats, silero):
+            details["ml_note"] = (details.get("ml_note") or "") + "+whisper_human_but_hard_am"
+            return "MACHINE", 0.9, details
+        details["ml_note"] = (details.get("ml_note") or "") + "+whisper_human_trust"
+        details["decision_reason"] = "whisper_live_greeting"
         # Whisper said HUMAN — still block if transcript is clearly VM wording
         w_text = ""
         if isinstance(details.get("whisper"), dict):
