@@ -172,6 +172,12 @@ def run_ml_pipeline(
             if cue == "hallucination" and looks_digit:
                 details["ml_note"] = note + "_hallucination_digit_machine"
                 return "MACHINE", 0.9
+            # Empty / junk Whisper on one-sided VoIP noise → never agent
+            if (not transcript or cue in ("hallucination", "none", "too_short")) and _is_voip_noise_burst(
+                feats, silero
+            ):
+                details["ml_note"] = note + "_voip_noise_after_whisper"
+                return "BLANK", 0.95
         except Exception as exc:
             details["whisper_error"] = str(exc)
             details["ml_note"] = note + "_whisper_error"

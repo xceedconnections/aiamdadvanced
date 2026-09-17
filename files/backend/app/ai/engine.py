@@ -134,10 +134,11 @@ def _is_voip_noise_burst(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """Loud non-speech front burst then silence — VoIP early-media / comfort noise.
+    """Loud non-speech noise dump with silence on the other side — VoIP artifact.
 
-    Same artifact often appears on every call on a bad trunk. Must not go to agents.
-    Example: ~1s noise dump (high ZCR, no pitch) then dead air for the rest of AMD.
+    Same comfort-noise / early-media burst often appears on every call on a bad
+    trunk. Can be front-loaded (noise then silence) OR back-loaded (silence then
+    noise). Must not go to agents.
     """
     duration = float(feats.get("duration", 0.0))
     peak = float(feats.get("peak", 0.0))
@@ -147,26 +148,28 @@ def _is_voip_noise_burst(
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     beep = float(feats.get("beep", 0.0))
-    if beep >= 0.5:
+    ring = float(feats.get("ringback", 0.0))
+    if beep >= 0.5 or ring >= 0.5:
         return False
     if duration < 0.7 or duration > 4.2:
         return False
     if peak < 0.06:
         return False
-    # Almost all energy in first half + clear trailing silence
-    if front < 0.85 or longest_silence < 400:
+    # Energy almost entirely in one half (front dump OR rear dump after lead-in silence)
+    one_sided = front >= 0.85 or front <= 0.18
+    if not one_sided or longest_silence < 350:
         return False
-    # High ZCR = noise/static/tone, not a voiced "hello"
-    if zcr >= 0.20:
+    # High ZCR = noise/static, not a voiced "hello"
+    if zcr >= 0.18:
         return True
-    # Extreme front dump (≈ all energy first half) + long continuous burst
-    if front >= 0.95 and num_bursts <= 2 and longest_burst >= 650 and zcr >= 0.12:
+    # Extreme one-sided dump + long continuous burst
+    if num_bursts <= 2 and longest_burst >= 550 and zcr >= 0.12:
         return True
-    # Silero disagrees that the loud front is speech
+    # Silero disagrees that the loud dump is speech
     if silero and silero.get("ok"):
         s_mean = float(silero.get("mean_prob", 0.0) or 0.0)
         s_long = float(silero.get("longest_speech_ms", 0.0) or 0.0)
-        if front >= 0.88 and longest_silence >= 450 and s_mean < 0.28 and s_long < 900:
+        if longest_silence >= 400 and s_mean < 0.28 and s_long < 900:
             return True
     return False
 
