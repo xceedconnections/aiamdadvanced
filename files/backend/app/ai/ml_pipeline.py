@@ -56,6 +56,7 @@ def run_ml_pipeline(
     from app.ai.engine import (
         _blank_disposition,
         _is_blank,
+        _is_truncated_script_clip,
         _is_voip_noise_burst,
         _looks_like_short_human,
         _looks_like_spoken_digit,
@@ -95,6 +96,30 @@ def run_ml_pipeline(
             "ringback_detected": True,
         }
         return "MACHINE", max(0.93, float(feats.get("ringback_conf") or 0.93)), details
+
+    if _is_truncated_script_clip(feats):
+        details = {
+            "ml_pipeline": True,
+            "hybrid_status": hybrid_status,
+            "hybrid_confidence": round(float(hybrid_confidence), 4),
+            "whisper_policy": "whisper_before_agent",
+            "ml_note": "truncated_script_clip",
+        }
+        # Still run Whisper when possible — may confirm VM wording — but never agent
+        try:
+            from app.ai.whisper_amd import refine_with_whisper, whisper_available
+
+            if whisper_on and whisper_available():
+                w_status, w_conf, w_det = refine_with_whisper(
+                    audio, sr, xgb_probs={}, max_seconds=5.0
+                )
+                details["whisper"] = w_det
+                details["whisper_used"] = True
+                if w_status == "MACHINE":
+                    return "MACHINE", max(0.93, float(w_conf or 0.93)), details
+        except Exception as exc:
+            details["whisper_error"] = str(exc)
+        return "MACHINE", 0.9, details
 
     details: Dict[str, Any] = {
         "ml_pipeline": True,

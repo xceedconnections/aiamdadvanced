@@ -339,6 +339,37 @@ def _looks_like_spoken_digit(
     return True
 
 
+def _is_truncated_script_clip(feats: Dict[str, float]) -> bool:
+    """Ultra-short AMD windows with dense speech are usually truncated VM/IVR.
+
+    Live hello in <0.85s is a single sparse syllable; continuous fill is the
+    start of a scripted greeting cut by the AMD timer.
+    """
+    duration = float(feats.get("duration", 0.0))
+    if duration < 0.35 or duration >= 0.90:
+        return False
+    if float(feats.get("beep", 0.0)) >= 0.5 or float(feats.get("ringback", 0.0)) >= 0.5:
+        return False
+    peak = float(feats.get("peak", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    abs_long = float(feats.get("abs_speech_ms", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    activity_ratio = float(feats.get("activity_ratio", speech_ratio))
+    if peak < 0.05:
+        return False
+    # Dense fill in a tiny window → script fragment, not "hello"
+    if speech_ratio >= 0.42 or activity_ratio >= 0.50:
+        return True
+    if longest_burst >= 220 and speech_ratio >= 0.28:
+        return True
+    if abs_long >= 200 and speech_ratio >= 0.25:
+        return True
+    if num_bursts >= 2 and speech_ratio >= 0.32 and duration < 0.75:
+        return True
+    return False
+
+
 def _looks_like_short_human(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
@@ -357,6 +388,9 @@ def _looks_like_short_human(
     # Line noise / empty air / VoIP noise burst must never look like a short hello
     if _is_line_noise_only(feats) or _is_blank(feats, silero) or _is_voip_noise_burst(feats, silero):
         return False
+    # Truncated dense VM/IVR openings must not look like hello
+    if _is_truncated_script_clip(feats):
+        return False
     peak = float(feats.get("peak", 0.0))
     abs_long = float(feats.get("abs_speech_ms", 0.0))
     if peak < 0.05 and abs_long < 80:
@@ -371,6 +405,13 @@ def _looks_like_short_human(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+
+    # Sub-second windows: only sparse single-syllable hellos count as human
+    if duration < 0.90:
+        if speech_ratio > 0.38 or longest_burst > 380 or num_bursts >= 3:
+            return False
+        if abs_long >= 280 and speech_ratio >= 0.30:
+            return False
 
     # Long continuous talk in the AMD window → greeting / IVR, not hello
     if longest_burst >= 1100 and speech_ratio >= 0.38:
@@ -389,6 +430,9 @@ def _looks_like_short_human(
         if s_long >= 1200 and s_ratio >= 0.32:
             return False
         if s_segs >= 3 and s_ratio >= 0.25:
+            return False
+        # Ultra-short dense Silero speech → truncated script
+        if duration < 0.90 and s_ratio >= 0.40 and s_long >= 200:
             return False
         if s_segs <= 2 and s_long <= 900 and s_long >= 80:
             return True
@@ -711,6 +755,10 @@ def _classify_heuristic(
         _is_blank(feats) or _is_voip_noise_burst(feats)
     ):
         return _blank_disposition()[:2]
+
+    # Truncated dense AMD clip (often <0.7s of VM/IVR opening) → MACHINE
+    if _is_truncated_script_clip(feats):
+        return "MACHINE", 0.88
 
     # Short live "hello" before aggressive NA voicemail rules
     if _looks_like_short_human(feats):
@@ -1147,6 +1195,13 @@ def analyze_audio(
         confidence = max(float(confidence), float(feats.get("ringback_conf", 0.93)), 0.93)
         details["ringback_final_block"] = True
         details["fuse_note"] = "ringback_tone"
+
+    # Final guard: ultra-short dense script fragments must never reach agents
+    if status == "HUMAN" and _is_truncated_script_clip(feats):
+        status = "MACHINE"
+        confidence = max(float(confidence), 0.9)
+        details["truncated_script_final_block"] = True
+        details["fuse_note"] = "truncated_script_clip"
 
     # Safety net: spoken digit / IVR syllable must not reach agents
     if status == "HUMAN" and _looks_like_spoken_digit(feats, silero) and not (
