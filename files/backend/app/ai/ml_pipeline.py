@@ -85,6 +85,17 @@ def run_ml_pipeline(
         }
         return b_status, b_conf, details
 
+    if float(feats.get("ringback", 0.0) or 0.0) >= 0.5:
+        details = {
+            "ml_pipeline": True,
+            "hybrid_status": hybrid_status,
+            "hybrid_confidence": round(float(hybrid_confidence), 4),
+            "whisper_policy": "whisper_before_agent",
+            "ml_note": "ringback_tone",
+            "ringback_detected": True,
+        }
+        return "MACHINE", max(0.93, float(feats.get("ringback_conf") or 0.93)), details
+
     details: Dict[str, Any] = {
         "ml_pipeline": True,
         "hybrid_status": hybrid_status,

@@ -349,6 +349,8 @@ def _looks_like_short_human(
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
+    if float(feats.get("ringback", 0.0)) >= 0.5:
+        return False
     # Line noise / empty air / VoIP noise burst must never look like a short hello
     if _is_line_noise_only(feats) or _is_blank(feats, silero) or _is_voip_noise_burst(feats, silero):
         return False
@@ -513,6 +515,63 @@ def _detect_sit(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     return False, 0.0
 
 
+def _band_peak(spectrum: np.ndarray, freqs: np.ndarray, lo: float, hi: float) -> float:
+    m = (freqs >= lo) & (freqs <= hi)
+    if not np.any(m):
+        return 0.0
+    return float(np.max(spectrum[m]))
+
+
+def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
+    """Audible ringback / ringing (call not answered) — must not go to agents.
+
+    North America: dual-tone 440 Hz + 480 Hz.
+    Many other regions: strong ~400–450 Hz tone.
+    AMD windows often capture one ring cycle (tone then silence).
+    """
+    if audio is None or len(audio) < int(sr * 0.45):
+        return False, 0.0
+
+    seg = audio[: min(len(audio), int(sr * 1.8))]
+    rms = float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
+    if rms < 0.015:
+        return False, 0.0
+
+    window = np.hanning(len(seg))
+    spectrum = np.abs(np.fft.rfft(seg * window))
+    freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
+    overall = float(np.mean(spectrum) + 1e-9)
+
+    p440 = _band_peak(spectrum, freqs, 432, 448)
+    p480 = _band_peak(spectrum, freqs, 472, 488)
+    p425 = _band_peak(spectrum, freqs, 415, 435)
+    p400 = _band_peak(spectrum, freqs, 390, 410)
+    # Speech/VM energy is broader; ringback is narrowly tonal in 400–490 Hz
+    speech_band = _band_peak(spectrum, freqs, 700, 3000)
+    low_tone = max(p440, p480, p425, p400)
+
+    # Classic US dual-tone ringback (very distinctive)
+    if p440 > overall * 18.0 and p480 > overall * 18.0:
+        conf = min(0.99, max(0.9, (min(p440, p480) / overall) / 60.0))
+        return True, float(conf)
+    if p440 > overall * 14.0 and p480 > overall * 12.0 and low_tone > speech_band * 1.5:
+        return True, 0.94
+    if p480 > overall * 14.0 and p440 > overall * 12.0 and low_tone > speech_band * 1.5:
+        return True, 0.94
+
+    # Single-tone ring (~400/425 Hz) that dominates over speech bands
+    if low_tone > overall * 28.0 and low_tone > speech_band * 4.0:
+        # Prefer clips that look like tone-then-silence (not continuous speech)
+        mid = len(audio) // 2
+        e1 = float(np.sum(audio[:mid] ** 2))
+        e2 = float(np.sum(audio[mid:] ** 2))
+        front = e1 / (e1 + e2 + 1e-12)
+        if front >= 0.75:
+            return True, 0.9
+
+    return False, 0.0
+
+
 def _internal_silence_ms(mask: np.ndarray, frame_ms: int = 20) -> float:
     """Longest silence that is not leading or trailing (AM greeting pause)."""
     if len(mask) < 3:
@@ -639,6 +698,10 @@ def _classify_heuristic(
 
     if beep:
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
+
+    # Audible ringing / ringback — call not answered
+    if float(feats.get("ringback", 0.0)) >= 0.5:
+        return "MACHINE", max(0.93, float(feats.get("ringback_conf", 0.93)))
 
     # Blank / near-silent — never pass to agents when blank detection is on
     if is_blank_as_machine_enabled() and (
@@ -848,6 +911,7 @@ def analyze_audio(
 
     beep, beep_conf = _detect_beep(audio, sr)
     sit, sit_conf = _detect_sit(audio, sr)
+    ring, ring_conf = _detect_ringback(audio, sr)
     internal_sil = _internal_silence_ms(mask, frame_ms=20)
 
     feats = {
@@ -861,6 +925,8 @@ def analyze_audio(
         "beep_conf": beep_conf,
         "sit": float(sit),
         "sit_conf": sit_conf,
+        "ringback": float(ring),
+        "ringback_conf": float(ring_conf),
         "internal_silence_ms": float(internal_sil),
         "activity_ratio": float(activity_ratio),
         "abs_speech_ratio": float(abs_speech_ratio),
@@ -877,6 +943,35 @@ def analyze_audio(
     h_status, h_confidence = _classify_heuristic(feats, beep, sit, pack)
     # Slightly lower threshold so quiet telephony hello/VM is not missed
     silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
+
+    # Ringback / ringing (not answered) — never send to agents
+    if float(feats.get("ringback", 0.0)) >= 0.5:
+        ms = int((time.perf_counter() - t0) * 1000)
+        return AnalysisResult(
+            status="MACHINE",
+            confidence=max(0.93, float(feats.get("ringback_conf", 0.93))),
+            processing_ms=ms,
+            audio_seconds=round(duration, 3),
+            details={
+                **feats,
+                "engine": "hybrid",
+                "locale_pack_enabled": bool(locale_pack_enabled),
+                "locale_pack": pack_name,
+                "blank_as_machine": is_blank_as_machine_enabled(),
+                "heuristic_status": h_status,
+                "heuristic_confidence": round(float(h_confidence), 4),
+                "fuse_note": "ringback_tone",
+                "ringback_detected": True,
+                "ml_pipeline_enabled": False,
+                "silero": {
+                    "ok": bool(silero.get("ok")),
+                    "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
+                    "num_segments": int(silero.get("num_segments", 0)),
+                    "longest_speech_ms": round(float(silero.get("longest_speech_ms", 0.0)), 1),
+                    "mean_prob": round(float(silero.get("mean_prob", 0.0)), 4),
+                },
+            },
+        )
 
     # VoIP trunk noise (same burst on every call) → BLANK before fuse/ML can false-HUMAN
     if is_blank_as_machine_enabled() and _is_voip_noise_burst(feats, silero):
@@ -1002,6 +1097,7 @@ def analyze_audio(
     if (
         status in ("MACHINE", "IVR")
         and float(feats.get("beep", 0.0)) < 0.5
+        and float(feats.get("ringback", 0.0)) < 0.5
         and _looks_like_short_human(feats, silero)
         and not whisper_non_human
         and not dense_greeting
@@ -1013,6 +1109,7 @@ def analyze_audio(
         status in ("MACHINE", "IVR")
         and float(confidence) < 0.80
         and float(feats.get("beep", 0.0)) < 0.5
+        and float(feats.get("ringback", 0.0)) < 0.5
         and not whisper_non_human
         and not dense_greeting
         and not _is_blank(feats, silero)
@@ -1040,6 +1137,13 @@ def analyze_audio(
                 details["fuse_note"] = w_cue2 or "voicemail"
         except Exception:
             pass
+
+    # Final guard: audible ringback must never reach agents
+    if status == "HUMAN" and float(feats.get("ringback", 0.0)) >= 0.5:
+        status = "MACHINE"
+        confidence = max(float(confidence), float(feats.get("ringback_conf", 0.93)), 0.93)
+        details["ringback_final_block"] = True
+        details["fuse_note"] = "ringback_tone"
 
     # Safety net: spoken digit / IVR syllable must not reach agents
     if status == "HUMAN" and _looks_like_spoken_digit(feats, silero) and not (
