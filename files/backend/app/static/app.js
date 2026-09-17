@@ -260,7 +260,11 @@ function statusBadge(status) {
     ERROR: "ERROR",
   };
   const label = labels[status] || status;
-  return `<span class="badge ${status}">${label}</span>`;
+  const extra =
+    String(status || "").toUpperCase() === "BLANK"
+      ? `<span class="fallback-8369" title="Quiet/silent audio — not hung up as VM. Stock VICIdial AMD 8369 decides (may still go to an agent).">sent to 8369</span>`
+      : "";
+  return `<span class="badge ${status}">${label}</span>${extra}`;
 }
 
 function confClass(conf) {
@@ -272,6 +276,8 @@ function confClass(conf) {
 
 function actionChip(status) {
   if (status === "HUMAN") return `<span class="action-chip to-agent">→ TO AGENT</span>`;
+  if (status === "BLANK")
+    return `<span class="action-chip to-8369" title="Stock VICIdial AMD 8369">→ 8369</span>`;
   return `<span class="action-chip disposed">✕ DISPOSED</span>`;
 }
 
@@ -484,7 +490,7 @@ function audioButtons(r) {
   // Empty/tiny WAV disposed as BLANK — nothing to play or relink
   if (missing && status === "BLANK") {
     return `<div class="audio-actions">
-      <span class="audio-blank" title="Empty or silent capture — hung up as MACHINE (AA)">no audio (blank)</span>
+      <span class="audio-blank" title="Quiet/silent capture — not hung up. Sent to stock VICIdial AMD 8369.">no audio (sent to 8369)</span>
     </div>`;
   }
   return `<div class="audio-actions">
@@ -1413,7 +1419,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
-      ? " Blank/silent → BLANK (VICIdial AA)."
+      ? " Blank/silent → BLANK, sent to stock AMD 8369 (not hung up)."
       : " Blank/silent may pass as HUMAN (global).";
     if (data.ml_pipeline_enabled) {
       const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);
@@ -1480,7 +1486,7 @@ async function loadMlSamples() {
               <option value="MACHINE">Voicemail/MACHINE</option>
               <option value="IVR">IVR</option>
               <option value="SIT">SIT</option>
-              <option value="BLANK">BLANK / Silent</option>
+              <option value="BLANK">BLANK / Silent (→ 8369)</option>
             </select>`;
         return `<tr>
           <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
@@ -1632,7 +1638,7 @@ async function loadMlLogs() {
               <option value="MACHINE">MACHINE</option>
               <option value="IVR">IVR</option>
               <option value="SIT">SIT</option>
-              <option value="BLANK">BLANK / Silent</option>
+              <option value="BLANK">BLANK / Silent (→ 8369)</option>
             </select>`;
         const playBtn = s.has_audio
           ? `<button type="button" class="ghost btn-icon ml-log-play" data-id="${escapeHtml(s.id)}" title="Play WAV">▶</button>`

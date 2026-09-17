@@ -835,6 +835,24 @@ tr:hover td { background: rgba(59, 130, 246, 0.04); }
 .badge.IVR { background: rgba(168,85,247,.14); color: #c084fc; border: 1px solid rgba(168,85,247,.25); }
 .badge.SIT { background: rgba(245,158,11,.14); color: #fbbf24; border: 1px solid rgba(245,158,11,.25); }
 .badge.BLANK { background: rgba(148,163,184,.14); color: #cbd5e1; border: 1px solid rgba(148,163,184,.25); }
+.fallback-8369 {
+  display: inline-block;
+  margin-left: .35rem;
+  padding: .08rem .4rem;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 650;
+  letter-spacing: .02em;
+  color: #93c5fd;
+  background: rgba(59,130,246,.14);
+  border: 1px solid rgba(59,130,246,.35);
+  vertical-align: middle;
+}
+.action-chip.to-8369 {
+  color: #93c5fd;
+  border-color: rgba(59,130,246,.35);
+  background: rgba(59,130,246,.1);
+}
 .badge.SCAM { background: rgba(239,68,68,.16); color: #fca5a5; border: 1px solid rgba(239,68,68,.35); }
 .badge.SPAM { background: rgba(220,38,38,.22); color: #fecaca; border: 1px solid rgba(239,68,68,.55); font-weight: 700; }
 .badge.PENDING { background: rgba(148,163,184,.12); color: #94a3b8; border: 1px solid rgba(148,163,184,.25); }
