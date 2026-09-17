@@ -56,6 +56,7 @@ def run_ml_pipeline(
     from app.ai.engine import (
         _blank_disposition,
         _is_blank,
+        _is_front_speech_then_silence,
         _is_truncated_script_clip,
         _is_voip_noise_burst,
         _looks_like_short_human,
@@ -97,13 +98,13 @@ def run_ml_pipeline(
         }
         return "MACHINE", max(0.93, float(feats.get("ringback_conf") or 0.93)), details
 
-    if _is_truncated_script_clip(feats):
+    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
         details = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
-            "ml_note": "truncated_script_clip",
+            "ml_note": "script_clip_structure",
         }
         # Still run Whisper when possible — may confirm VM wording — but never agent
         try:
@@ -227,10 +228,9 @@ def run_ml_pipeline(
         if looks_digit:
             details["ml_note"] = (details.get("ml_note") or "") + "+digit_machine"
             return "MACHINE", 0.9, details
-        # No Whisper cue: prefer HUMAN when the clip is a sparse pickup or XGB is unsure
-        if looks_human or hybrid_status == "HUMAN" or conf < high_thr:
-            details["ml_note"] = (details.get("ml_note") or "") + "+uncertain_machine_to_human"
-            return "HUMAN", max(float(hybrid_confidence), 0.82), details
+        # Agent-protect: Whisper gave no cue — keep MACHINE (do not flip to HUMAN)
+        details["ml_note"] = (details.get("ml_note") or "") + "+keep_machine_no_whisper_cue"
+        return "MACHINE", max(float(conf), 0.85), details
 
     # Answering machine / IVR / SIT / BLANK with strong evidence → accept
     if status != "HUMAN":
@@ -243,6 +243,10 @@ def run_ml_pipeline(
         details["ml_note"] = "blank_override_high_human"
         return b_status, b_conf, details
 
+    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
+        details["ml_note"] = "script_structure_block"
+        return "MACHINE", 0.9, details
+
     # Always run Whisper before agent when enabled — short "hello-looking" clips
     # are often carrier/Google Voice VM ("Message system. One.", "Voicemail").
     # Skipping Whisper here was sending scripted VM to agents.
@@ -252,6 +256,10 @@ def run_ml_pipeline(
         if status != "HUMAN":
             details["ml_note"] = (details.get("ml_note") or "") + "+block_non_human"
             return status, float(conf), details
+        # Whisper said HUMAN — only allow agent if acoustics also look like short hello
+        if not looks_human:
+            details["ml_note"] = (details.get("ml_note") or "") + "+whisper_human_without_short_hello"
+            return "MACHINE", 0.88, details
         # Whisper said HUMAN — still block if transcript is clearly VM wording
         w_text = ""
         if isinstance(details.get("whisper"), dict):
@@ -296,8 +304,13 @@ def run_ml_pipeline(
                     return "MACHINE", max(0.93, float(w_conf2 or 0.93)), details
             except Exception:
                 pass
+        # No Whisper human cue → do not send to agents unless clear short hello
+        if not looks_human:
+            details["ml_note"] = (details.get("ml_note") or "") + "+no_whisper_cue_machine"
+            return "MACHINE", 0.88, details
         if whisper_on and not details.get("whisper_used"):
             details["ml_note"] = "human_whisper_unavailable"
+            return "MACHINE", 0.86, details
         elif not whisper_on:
             details["ml_note"] = "human_whisper_disabled"
 
