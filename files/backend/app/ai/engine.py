@@ -436,6 +436,8 @@ def _looks_like_short_human(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    longest_silence = float(feats.get("longest_silence_ms", 0.0))
+    front = float(feats.get("front_energy_ratio", 0.5))
 
     # Sub-second windows: only sparse single-syllable hellos count as human
     if duration < 0.90:
@@ -452,12 +454,24 @@ def _looks_like_short_human(
     # Dense multi-burst in a full AMD window is script, not a one-word hello
     if duration >= 1.5 and speech_ratio >= 0.45 and num_bursts >= 3:
         return False
-    if num_bursts >= 4 and speech_ratio >= 0.35:
+    if num_bursts >= 5 and speech_ratio >= 0.38:
         return False
-    # Digit/IVR readout is several short words with real speech fill
-    # A noisy "hello" can also split into 3 energy blips — do not treat those as IVR
-    if num_bursts >= 3 and longest_burst <= 550 and speech_ratio >= 0.28:
+    # Digit/IVR readout: denser fill than a noisy hello (hello often ~0.20–0.30)
+    if num_bursts >= 4 and longest_burst <= 350 and speech_ratio >= 0.36:
         return False
+
+    # Sparse late / mid-window pickup — live "hello" with silence around it
+    # (Whisper may hear "No." / "Oh."; acoustics still look like a short answer)
+    if (
+        duration >= 1.15
+        and 0.10 <= speech_ratio <= 0.38
+        and num_bursts <= 5
+        and longest_burst <= 520
+        and longest_silence >= 400
+        and peak >= 0.08
+        and (front <= 0.78 or longest_silence >= 600)
+    ):
+        return True
 
     if silero and silero.get("ok"):
         s_long = float(silero.get("longest_speech_ms", 0.0))
@@ -465,14 +479,17 @@ def _looks_like_short_human(
         s_ratio = float(silero.get("speech_ratio", 0.0))
         if s_long >= 1200 and s_ratio >= 0.32:
             return False
-        if s_segs >= 3 and s_ratio >= 0.25:
+        # Noisy hello can be 3 Silero islands; only dense multi-seg is AM
+        if s_segs >= 4 and s_ratio >= 0.30:
             return False
         # Ultra-short dense Silero speech → truncated script
         if duration < 0.90 and s_ratio >= 0.40 and s_long >= 200:
             return False
-        if s_segs <= 2 and s_long <= 900 and s_long >= 80:
+        if s_segs <= 3 and s_long <= 900 and s_long >= 80 and speech_ratio <= 0.40:
             return True
 
+    if num_bursts <= 5 and longest_burst <= 520 and speech_ratio <= 0.35 and longest_silence >= 350:
+        return True
     if num_bursts <= 3 and longest_burst <= 900 and speech_ratio <= 0.40:
         return True
     return False

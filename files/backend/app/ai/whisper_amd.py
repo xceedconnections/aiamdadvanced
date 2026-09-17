@@ -78,6 +78,8 @@ _HUMAN_RE = re.compile(
     r"\b("
     r"hello+|hullo|hallo|halo|allo|yellow|"
     r"hi|hey|yeah|yes|yep|yup|yo|speaking|this\s+is|"
+    # Live one-word answers — Whisper often hears "Hello" as "No."
+    r"no+|nope|nah|what|huh|ok|okay|sure|alright|right|"
     r"who(?:'s|\s+is)\s+this|good\s+(morning|afternoon|evening)|"
     r"how\s+are\s+you|can\s+i\s+help|what'?s\s+up|go\s+ahead|"
     r"i'?m\s+here|who(?:'s|\s+is)\s+calling|pardon|sorry"
@@ -292,6 +294,17 @@ def classify_transcript(
             )
     except Exception:
         pass
+
+    # Lone live answer (Hello / No / Yes / …). Whisper often mishears hello as "No."
+    # Require ~1s+ clip so ultra-short truncated VM openings stay MACHINE.
+    if re.fullmatch(
+        r"\s*(hello+|hi|hey|yeah|yes|yep|yup|yo|no+|nope|nah|what|huh|"
+        r"ok|okay|sure|alright|right|oh|ah|uh|mm|hmm)\.?\s*",
+        t,
+        re.I,
+    ):
+        if audio_seconds is None or float(audio_seconds) >= 0.95:
+            return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
 
     # Voicemail phrases first (incl. Tiny mishears like "passion you're calling")
     if _MACHINE_RE.search(t):
