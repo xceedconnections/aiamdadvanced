@@ -229,7 +229,11 @@ def run_ml_pipeline(
         if looks_digit:
             details["ml_note"] = (details.get("ml_note") or "") + "+digit_machine"
             return "MACHINE", 0.9, details
-        # Agent-protect: Whisper gave no cue — keep MACHINE (do not flip to HUMAN)
+        # Whisper silent: still send sparse live hello to agents (8369-like flow).
+        # Keep MACHINE only for hard AM / dense script — not every uncertain clip.
+        if looks_human and not _is_hard_machine_acoustics(feats, silero):
+            details["ml_note"] = (details.get("ml_note") or "") + "+rescue_short_human_no_whisper_cue"
+            return "HUMAN", max(float(conf), 0.82), details
         details["ml_note"] = (details.get("ml_note") or "") + "+keep_machine_no_whisper_cue"
         return "MACHINE", max(float(conf), 0.85), details
 
@@ -309,13 +313,21 @@ def run_ml_pipeline(
                     return "MACHINE", max(0.93, float(w_conf2 or 0.93)), details
             except Exception:
                 pass
-        # No Whisper human cue → do not send to agents unless clear short hello
-        if not looks_human:
+        # No Whisper human cue → prefer short-hello acoustics over hangup
+        if looks_human and not _is_hard_machine_acoustics(feats, silero):
+            details["ml_note"] = (details.get("ml_note") or "") + "+acoustic_hello_no_whisper_cue"
+            status, conf = "HUMAN", max(float(conf), 0.82)
+        elif not looks_human:
             details["ml_note"] = (details.get("ml_note") or "") + "+no_whisper_cue_machine"
             return "MACHINE", 0.88, details
         if whisper_on and not details.get("whisper_used"):
-            details["ml_note"] = "human_whisper_unavailable"
-            return "MACHINE", 0.86, details
+            # Whisper unavailable: still allow clear short hello (else agents starve)
+            if looks_human and not _is_hard_machine_acoustics(feats, silero):
+                details["ml_note"] = "human_whisper_unavailable_acoustic_ok"
+                status, conf = "HUMAN", max(float(conf), 0.82)
+            else:
+                details["ml_note"] = "human_whisper_unavailable"
+                return "MACHINE", 0.86, details
         elif not whisper_on:
             details["ml_note"] = "human_whisper_disabled"
 

@@ -21,7 +21,7 @@ DEFAULTS = {
     # Optional ML pipeline (XGBoost + Whisper on low conf). OFF = legacy hybrid only.
     "ml_pipeline_enabled": False,
     "ml_whisper_enabled": True,
-    "ml_xgb_high_confidence": 0.85,
+    "ml_xgb_high_confidence": 0.70,
     "ml_low_confidence_threshold": 0.85,
     "ml_save_low_confidence": True,
     # faster-whisper model: tiny | tiny.en | base | base.en | small | small.en

@@ -879,7 +879,11 @@ def _classify_heuristic(
     ):
         return "MACHINE", 0.7
 
-    # Uncertain → MACHINE (agent-protect). Live hello must match short_human above.
+    # Live short hello that missed earlier branches (noisy multi-burst)
+    if _looks_like_short_human(feats):
+        return "HUMAN", 0.8
+
+    # Uncertain → MACHINE (clear AM bias). Live hello must match short_human.
     return "MACHINE", 0.72
 
 
@@ -893,7 +897,8 @@ def _fuse_with_silero(
     """Blend heuristic decision with Silero VAD speech structure.
 
     Returns (status, confidence, fuse_note).
-    Agent-protect: never flip MACHINE → HUMAN on weak/uncertain evidence.
+    Prefer clear MACHINE hangups; still rescue sparse live hellos so agents
+    are not starved (stock 8369 is more HUMAN-permissive).
     """
     # Blank / no speech → BLANK (VICIdial AA) when portal setting is enabled
     if _is_blank(feats, silero) and is_blank_as_machine_enabled():
@@ -978,7 +983,17 @@ def _fuse_with_silero(
     ):
         return "HUMAN", max(confidence, 0.78), "agree_human_quiet"
 
-    # Agent-protect: do NOT prefer HUMAN on uncertain MACHINE (was prefer_human_uncertain)
+    # Agent-protect: do NOT prefer HUMAN on uncertain MACHINE when acoustics
+    # look like scripted AM. DO rescue sparse live hellos (stock 8369 flow).
+    if (
+        status in ("MACHINE", "IVR")
+        and float(confidence) < 0.84
+        and float(feats.get("beep", 0.0)) < 0.5
+        and float(feats.get("ringback", 0.0)) < 0.5
+        and not _is_hard_machine_acoustics(feats, silero)
+        and _looks_like_short_human(feats, silero)
+    ):
+        return "HUMAN", max(float(confidence), 0.82), "rescue_short_human"
 
     if (
         status == "HUMAN"
