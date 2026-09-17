@@ -836,7 +836,10 @@ def _classify_heuristic(
     if float(feats.get("ringback", 0.0)) >= 0.5:
         return "MACHINE", max(0.93, float(feats.get("ringback_conf", 0.93)))
 
-    # Blank / near-silent — never pass to agents when blank detection is on
+    # Blank / near-silent. If Record stopped on leading silence (~2s quiet),
+    # this is often a delayed live answer — do NOT MACHINE-hangup (8369 would
+    # still wait). Treat as HUMAN-leaning only when there is some energy;
+    # true digital silence stays BLANK.
     if is_blank_as_machine_enabled() and (
         _is_blank(feats) or _is_voip_noise_burst(feats)
     ):
