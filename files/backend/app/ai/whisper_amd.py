@@ -48,10 +48,17 @@ _MACHINE_RE = re.compile(
     r"been\s+forwarded\s+to|it'?s\s+been\s+forwarded|"
     r"automatic\s+voice\s+message|automated\s+voice\s+message|"
     r"your\s+call\s+has\s+been\s+forwarded|try\s+again\s+later|"
-    r"call\s+back\s+later|mailbox\s+is\s+full|is\s+not\s+available|"
+    r"call\s+back\s+later|mailbox\s+is\s+full|mail\s*box\s+(is\s+)?full|"
+    r"is\s+full\s+and|full\s+and\s+there\s+is\s+not|there\s+is\s+no\s+(more\s+)?"
+    r"(room|space|storage)|"
+    r"is\s+not\s+available|"
     r"please\s+record|leave\s+your\s+(name|message)|after\s+the\s+beep|"
     r"we(?:'ll|\s+will)\s+(get\s+back|return\s+your\s+call|call\s+you\s+back)|"
-    r"subscriber|not\s+in\s+service|has\s+a\s+message"
+    r"subscriber|not\s+in\s+service|has\s+a\s+message|"
+    # Carrier VM setup / blocked box (often truncated by AMD window)
+    r"not\s+been\s+set\s+up|have\s+not\s+been\s+set\s+up|been\s+set\s+up\s+yet|"
+    r"set\s+up\s+yet|please\s+try\s+your(\s+call)?|"
+    r"try\s+your\s+call\s+again|call\s+again\s+later"
     r")\b",
     re.I,
 )
@@ -60,7 +67,10 @@ _IVR_RE = re.compile(
     r"press\s+\d|for\s+(english|spanish)|menu|your\s+call\s+is\s+important|"
     r"please\s+hold|enter\s+your|dial\s+\d|options?\s+are|to\s+speak\s+to|"
     r"extension|account\s+number|pin\s+number|pound|hash\s+key|"
-    r"using\s+your\s+keypad|touch\s*tone"
+    r"using\s+your\s+keypad|touch\s*tone|"
+    r"if\s+you\s+have\s+not|not\s+been\s+set\s+up|set\s+up\s+yet|"
+    r"please\s+try\s+your|try\s+your\s+call|enter\s+your\s+(password|passcode|pin)|"
+    r"mailbox\s+is\s+full|is\s+full\s+and"
     r")\b",
     re.I,
 )
@@ -144,7 +154,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 # Bias toward phone greetings + digits + classic / Google Voice VM
 _AMD_INITIAL_PROMPT = (
     "Hello. Hello. Hi. Yeah. Yes. Zero. One. Two. Three. Four. Five. "
-    "Message system. One. Voicemail. "
+    "Message system. One. Voicemail. Mailbox is full and there is not. "
+    "If you have not been set up yet, please try your call again later. "
     "The person you are calling is not available. "
     "Please leave a message after the beep. Press one for English."
 )
@@ -312,16 +323,39 @@ def classify_transcript(
         r"\b(one|two|three|four|five|six|seven|eight|nine|zero|[0-9])\b", t, re.I
     ):
         return "MACHINE", max(0.93, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Truncated "mailbox is full and there is not [enough space]…"
+    if re.search(r"\bfull\b", t, re.I) and re.search(
+        r"\b(there\s+is\s+not|no\s+(more\s+)?(room|space)|and\s+there\s+is)\b", t, re.I
+    ):
+        return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "voicemail"
+    if re.fullmatch(r"\s*full\.?\s*", t, re.I):
+        return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # "If you have not been set up yet, please try your…" (carrier VM/IVR setup)
+    if re.search(r"\bset\s+up\b", t, re.I) and re.search(
+        r"\b(please\s+try|not\s+been|if\s+you\s+have\s+not)\b", t, re.I
+    ):
+        return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "ivr_digits"
+    if re.search(r"\bplease\s+try\s+your\b", t, re.I) and not _HUMAN_RE.search(t):
+        return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "ivr_digits"
     # Live hello only when the whole clip is a short greeting — not "Hi" + VM script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         if re.search(
             r"\b(record|message|mailbox|voicemail|forwarded|reached|beep|tone|"
-            r"unavailable|not\s+available|call\s+back|system)\b",
+            r"unavailable|not\s+available|call\s+back|system|full|set\s+up)\b",
             t,
             re.I,
         ):
             return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
         return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
+    # Multi-word scripted line with no live greeting → MACHINE/IVR (AMD often truncates)
+    if len(t.split()) >= 4 and not _HUMAN_RE.search(t):
+        if re.search(
+            r"\b(full|mailbox|voicemail|set\s+up|try\s+your|press|enter\s+your|"
+            r"forwarded|reached|leave\s+(a\s+)?message|not\s+available)\b",
+            t,
+            re.I,
+        ):
+            return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
     # Scripted line with "calling" and no human greeting → treat as AM
     if re.search(r"\b(you(?:'re|\s+are)\s+calling|you\s+have\s+called)\b", t, re.I):
         if not _HUMAN_RE.search(t):
