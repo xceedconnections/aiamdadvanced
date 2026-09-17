@@ -56,6 +56,7 @@ def run_ml_pipeline(
     from app.ai.engine import (
         _blank_disposition,
         _is_blank,
+        _is_voip_noise_burst,
         _looks_like_short_human,
         _looks_like_spoken_digit,
     )
@@ -69,6 +70,18 @@ def run_ml_pipeline(
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
             "ml_note": "blank_audio",
+        }
+        return b_status, b_conf, details
+
+    if is_blank_as_machine_enabled() and _is_voip_noise_burst(feats, silero):
+        b_status, b_conf, _ = _blank_disposition()
+        details = {
+            "ml_pipeline": True,
+            "hybrid_status": hybrid_status,
+            "hybrid_confidence": round(float(hybrid_confidence), 4),
+            "whisper_policy": "whisper_before_agent",
+            "ml_note": "voip_front_noise_burst",
+            "voip_noise_burst": True,
         }
         return b_status, b_conf, details
 

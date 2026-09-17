@@ -111,6 +111,66 @@ def _load_audio(
         abs_speech_ms,
     )
 
+def _compute_zcr(audio: np.ndarray) -> float:
+    """Zero-crossing rate — high for noise/static, lower for voiced speech."""
+    if audio is None or len(audio) < 2:
+        return 0.0
+    s = np.sign(audio.astype(np.float64))
+    s[s == 0] = 1.0
+    return float(np.mean(s[:-1] != s[1:]))
+
+
+def _front_energy_ratio(audio: np.ndarray) -> float:
+    """Fraction of energy in the first half of the clip (1.0 = all front-loaded)."""
+    if audio is None or len(audio) < 8:
+        return 0.5
+    mid = len(audio) // 2
+    e1 = float(np.sum(audio[:mid] ** 2))
+    e2 = float(np.sum(audio[mid:] ** 2))
+    return e1 / (e1 + e2 + 1e-12)
+
+
+def _is_voip_noise_burst(
+    feats: Dict[str, float],
+    silero: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Loud non-speech front burst then silence — VoIP early-media / comfort noise.
+
+    Same artifact often appears on every call on a bad trunk. Must not go to agents.
+    Example: ~1s noise dump (high ZCR, no pitch) then dead air for the rest of AMD.
+    """
+    duration = float(feats.get("duration", 0.0))
+    peak = float(feats.get("peak", 0.0))
+    front = float(feats.get("front_energy_ratio", 0.5))
+    zcr = float(feats.get("zcr", 0.0))
+    longest_silence = float(feats.get("longest_silence_ms", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
+    beep = float(feats.get("beep", 0.0))
+    if beep >= 0.5:
+        return False
+    if duration < 0.7 or duration > 4.2:
+        return False
+    if peak < 0.06:
+        return False
+    # Almost all energy in first half + clear trailing silence
+    if front < 0.85 or longest_silence < 400:
+        return False
+    # High ZCR = noise/static/tone, not a voiced "hello"
+    if zcr >= 0.20:
+        return True
+    # Extreme front dump (≈ all energy first half) + long continuous burst
+    if front >= 0.95 and num_bursts <= 2 and longest_burst >= 650 and zcr >= 0.12:
+        return True
+    # Silero disagrees that the loud front is speech
+    if silero and silero.get("ok"):
+        s_mean = float(silero.get("mean_prob", 0.0) or 0.0)
+        s_long = float(silero.get("longest_speech_ms", 0.0) or 0.0)
+        if front >= 0.88 and longest_silence >= 450 and s_mean < 0.28 and s_long < 900:
+            return True
+    return False
+
+
 def _has_audible_voice(feats: Dict[str, float]) -> bool:
     """True when the clip has real voice energy (not digital silence / empty)."""
     peak = float(feats.get("peak", 0.0))
@@ -185,6 +245,10 @@ def _is_blank(
 
     # Quiet carrier / line noise with no absolute speech → blank (not HUMAN)
     if _is_line_noise_only(feats):
+        return True
+
+    # VoIP early-media / comfort-noise burst (loud front, silent tail) → blank
+    if _is_voip_noise_burst(feats, silero):
         return True
 
     # Any clear voice → never blank (human hello or short VM fragment)
@@ -285,8 +349,8 @@ def _looks_like_short_human(
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
-    # Line noise / empty air must never look like a short hello
-    if _is_line_noise_only(feats) or _is_blank(feats, silero):
+    # Line noise / empty air / VoIP noise burst must never look like a short hello
+    if _is_line_noise_only(feats) or _is_blank(feats, silero) or _is_voip_noise_burst(feats, silero):
         return False
     peak = float(feats.get("peak", 0.0))
     abs_long = float(feats.get("abs_speech_ms", 0.0))
@@ -577,7 +641,9 @@ def _classify_heuristic(
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
 
     # Blank / near-silent — never pass to agents when blank detection is on
-    if is_blank_as_machine_enabled() and _is_blank(feats):
+    if is_blank_as_machine_enabled() and (
+        _is_blank(feats) or _is_voip_noise_burst(feats)
+    ):
         return _blank_disposition()[:2]
 
     # Short live "hello" before aggressive NA voicemail rules
@@ -799,6 +865,8 @@ def analyze_audio(
         "activity_ratio": float(activity_ratio),
         "abs_speech_ratio": float(abs_speech_ratio),
         "abs_speech_ms": float(abs_speech_ms),
+        "zcr": float(_compute_zcr(audio)),
+        "front_energy_ratio": float(_front_energy_ratio(audio)),
         **stats,
     }
 
@@ -809,6 +877,37 @@ def analyze_audio(
     h_status, h_confidence = _classify_heuristic(feats, beep, sit, pack)
     # Slightly lower threshold so quiet telephony hello/VM is not missed
     silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
+
+    # VoIP trunk noise (same burst on every call) → BLANK before fuse/ML can false-HUMAN
+    if is_blank_as_machine_enabled() and _is_voip_noise_burst(feats, silero):
+        b_status, b_conf, _ = _blank_disposition()
+        ms = int((time.perf_counter() - t0) * 1000)
+        return AnalysisResult(
+            status=b_status,
+            confidence=b_conf,
+            processing_ms=ms,
+            audio_seconds=round(duration, 3),
+            details={
+                **feats,
+                "engine": "hybrid",
+                "locale_pack_enabled": bool(locale_pack_enabled),
+                "locale_pack": pack_name,
+                "blank_as_machine": True,
+                "heuristic_status": h_status,
+                "heuristic_confidence": round(float(h_confidence), 4),
+                "fuse_note": "voip_front_noise_burst",
+                "voip_noise_burst": True,
+                "ml_pipeline_enabled": False,
+                "silero": {
+                    "ok": bool(silero.get("ok")),
+                    "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
+                    "num_segments": int(silero.get("num_segments", 0)),
+                    "longest_speech_ms": round(float(silero.get("longest_speech_ms", 0.0)), 1),
+                    "mean_prob": round(float(silero.get("mean_prob", 0.0)), 4),
+                },
+            },
+        )
+
     status, confidence, fuse_note = _fuse_with_silero(
         h_status, h_confidence, feats, silero, pack
     )
