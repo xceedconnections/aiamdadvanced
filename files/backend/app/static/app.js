@@ -255,14 +255,14 @@ function statusBadge(status) {
     MACHINE: "ANSWERING MACHINE",
     IVR: "IVR / MENU",
     SIT: "CANCELLED",
-    BLANK: "BLANK / SILENT",
+    BLANK: "HUMAN 8369",
     FAX: "FAX",
     ERROR: "ERROR",
   };
   const label = labels[status] || status;
   const extra =
     String(status || "").toUpperCase() === "BLANK"
-      ? `<span class="fallback-8369" title="Quiet/silent audio — not hung up as VM. Stock VICIdial AMD 8369 decides (may still go to an agent).">sent to 8369</span>`
+      ? `<span class="fallback-8369" title="AIAMD heard quiet/silent audio. Not hung up as VM. Stock VICIdial AMD 8369 decides (often a live answer).">via 8369</span>`
       : "";
   return `<span class="badge ${status}">${label}</span>${extra}`;
 }
@@ -277,7 +277,7 @@ function confClass(conf) {
 function actionChip(status) {
   if (status === "HUMAN") return `<span class="action-chip to-agent">→ TO AGENT</span>`;
   if (status === "BLANK")
-    return `<span class="action-chip to-8369" title="Stock VICIdial AMD 8369">→ 8369</span>`;
+    return `<span class="action-chip to-8369" title="Stock VICIdial AMD 8369">HUMAN 8369</span>`;
   return `<span class="action-chip disposed">✕ DISPOSED</span>`;
 }
 
@@ -315,7 +315,7 @@ function teachButtons(r) {
     ["MACHINE", "VM"],
     ["IVR", "IVR"],
     ["SIT", "SIT"],
-    ["BLANK", "Blank / Silent"],
+    ["BLANK", "Human 8369"],
     ["FAX", "Fax"],
   ];
   const options = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
@@ -490,7 +490,7 @@ function audioButtons(r) {
   // Empty/tiny WAV disposed as BLANK — nothing to play or relink
   if (missing && status === "BLANK") {
     return `<div class="audio-actions">
-      <span class="audio-blank" title="Quiet/silent capture — not hung up. Sent to stock VICIdial AMD 8369.">no audio (sent to 8369)</span>
+      <span class="audio-blank" title="Quiet/silent capture — shown as HUMAN 8369. Stock VICIdial AMD 8369 decides.">no audio (HUMAN 8369)</span>
     </div>`;
   }
   return `<div class="audio-actions">
@@ -835,7 +835,7 @@ function renderDonutChart(s) {
     { label: "Human", value: s.human || 0, color: "#22c55e" },
     { label: "Machine", value: s.machine || 0, color: "#f43f5e" },
     { label: "IVR", value: s.ivr || 0, color: "#a855f7" },
-    { label: "Blank", value: s.blank || 0, color: "#94a3b8" },
+    { label: "HUMAN 8369", value: s.blank || 0, color: "#4ade80" },
     { label: "Cancelled", value: s.sit || 0, color: "#f59e0b" },
     { label: "Fax", value: s.fax || 0, color: "#38bdf8" },
     { label: "Errors", value: s.errors || 0, color: "#94a3b8" },
@@ -1486,7 +1486,7 @@ async function loadMlSamples() {
               <option value="MACHINE">Voicemail/MACHINE</option>
               <option value="IVR">IVR</option>
               <option value="SIT">SIT</option>
-              <option value="BLANK">BLANK / Silent (→ 8369)</option>
+              <option value="BLANK">HUMAN 8369</option>
             </select>`;
         return `<tr>
           <td>${escapeHtml((s.created_at || "").replace("T", " ").replace("Z", ""))}
@@ -1638,7 +1638,7 @@ async function loadMlLogs() {
               <option value="MACHINE">MACHINE</option>
               <option value="IVR">IVR</option>
               <option value="SIT">SIT</option>
-              <option value="BLANK">BLANK / Silent (→ 8369)</option>
+              <option value="BLANK">HUMAN 8369</option>
             </select>`;
         const playBtn = s.has_audio
           ? `<button type="button" class="ghost btn-icon ml-log-play" data-id="${escapeHtml(s.id)}" title="Play WAV">▶</button>`
@@ -2687,7 +2687,7 @@ async function loadTraining() {
           <option value="MACHINE"${r.status === "MACHINE" ? " selected" : ""}>MACHINE</option>
           <option value="IVR"${r.status === "IVR" ? " selected" : ""}>IVR</option>
           <option value="SIT"${r.status === "SIT" ? " selected" : ""}>CANCELLED</option>
-          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>BLANK / Silent</option>
+          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>HUMAN 8369</option>
           <option value="FAX"${r.status === "FAX" ? " selected" : ""}>FAX</option>
         </select>
       </td>
@@ -2717,7 +2717,7 @@ async function loadTraining() {
           <option value="MACHINE"${r.status === "MACHINE" ? " selected" : ""}>MACHINE</option>
           <option value="IVR"${r.status === "IVR" ? " selected" : ""}>IVR</option>
           <option value="SIT"${r.status === "SIT" ? " selected" : ""}>CANCELLED</option>
-          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>BLANK / Silent</option>
+          <option value="BLANK"${r.status === "BLANK" ? " selected" : ""}>HUMAN 8369</option>
           <option value="FAX"${r.status === "FAX" ? " selected" : ""}>FAX</option>
         </select>
         <button class="ghost" type="button" onclick="saveCorrectionMobile(${r.id})">Save correction</button>
