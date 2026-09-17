@@ -810,7 +810,9 @@ function sparkFromHourly(hourly, status) {
   const buckets = new Array(12).fill(0);
   const now = Date.now();
   (hourly || []).forEach((row) => {
-    if (status && row.status !== status) return;
+    if (status === "HUMAN") {
+      if (row.status !== "HUMAN" && row.status !== "BLANK") return;
+    } else if (status && row.status !== status) return;
     if (!row.hour) return;
     const t = new Date(row.hour).getTime();
     const hoursAgo = Math.floor((now - t) / 3600000);
@@ -835,7 +837,6 @@ function renderDonutChart(s) {
     { label: "Human", value: s.human || 0, color: "#22c55e" },
     { label: "Machine", value: s.machine || 0, color: "#f43f5e" },
     { label: "IVR", value: s.ivr || 0, color: "#a855f7" },
-    { label: "HUMAN 8369", value: s.blank || 0, color: "#4ade80" },
     { label: "Cancelled", value: s.sit || 0, color: "#f59e0b" },
     { label: "Fax", value: s.fax || 0, color: "#38bdf8" },
     { label: "Errors", value: s.errors || 0, color: "#94a3b8" },
@@ -924,7 +925,7 @@ function renderTrendChart(hourly) {
     const idx = 11 - hoursAgo;
     if (!bucket[idx]) bucket[idx] = { human: 0, total: 0 };
     bucket[idx].total += Number(row.count || 0);
-    if (row.status === "HUMAN") bucket[idx].human += Number(row.count || 0);
+    if (row.status === "HUMAN" || row.status === "BLANK") bucket[idx].human += Number(row.count || 0);
   });
   Object.keys(bucket).forEach((idx) => {
     const b = bucket[idx];

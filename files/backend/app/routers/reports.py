@@ -164,7 +164,11 @@ def _filtered_query(
         query = query.filter(CallAnalysis.server_id == int(server_id))
     status_norm = _normalize_status(status)
     if status_norm:
-        query = query.filter(CallAnalysis.status == status_norm)
+        # Portal "Human" includes AIAMD HUMAN plus quiet fallbacks (BLANK → 8369)
+        if status_norm == "HUMAN":
+            query = query.filter(CallAnalysis.status.in_(("HUMAN", "BLANK")))
+        else:
+            query = query.filter(CallAnalysis.status == status_norm)
     search = _sanitize_search(q)
     if search:
         like = f"%{search}%"
@@ -451,7 +455,7 @@ def server_reports(
                 server_id=s.id,
                 server_name=s.name,
                 total=total,
-                human=cnt("HUMAN"),
+                human=cnt("HUMAN") + cnt("BLANK"),
                 machine=cnt("MACHINE"),
                 ivr=cnt("IVR"),
                 fax=cnt("FAX"),

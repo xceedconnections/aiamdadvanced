@@ -190,7 +190,7 @@ def dashboard_stats(
 
     return DashboardStats(
         total_calls_today=total,
-        human=count_status("HUMAN"),
+        human=count_status("HUMAN") + count_status("BLANK"),
         machine=count_status("MACHINE"),
         ivr=count_status("IVR"),
         fax=count_status("FAX"),
