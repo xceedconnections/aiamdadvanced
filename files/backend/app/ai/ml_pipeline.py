@@ -54,7 +54,7 @@ def run_ml_pipeline(
     call_meta = call_meta or {}
 
     from app.ai.engine import (
-        _blank_disposition,
+        _dispose_blank_or_noise,
         _is_blank,
         _is_front_speech_then_silence,
         _is_truncated_script_clip,
@@ -62,10 +62,9 @@ def run_ml_pipeline(
         _looks_like_short_human,
         _looks_like_spoken_digit,
     )
-    from app.amd_settings import is_blank_as_machine_enabled
 
-    if is_blank_as_machine_enabled() and _is_blank(feats, silero):
-        b_status, b_conf, _ = _blank_disposition()
+    if _is_blank(feats, silero):
+        b_status, b_conf, _ = _dispose_blank_or_noise()
         details: Dict[str, Any] = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
@@ -75,8 +74,8 @@ def run_ml_pipeline(
         }
         return b_status, b_conf, details
 
-    if is_blank_as_machine_enabled() and _is_voip_noise_burst(feats, silero):
-        b_status, b_conf, _ = _blank_disposition()
+    if _is_voip_noise_burst(feats, silero):
+        b_status, b_conf, _ = _dispose_blank_or_noise()
         details = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
@@ -238,8 +237,8 @@ def run_ml_pipeline(
         return status, float(conf), details
 
     # HUMAN (any confidence) → Whisper before sending to an agent
-    if is_blank_as_machine_enabled() and _is_blank(feats, silero):
-        b_status, b_conf, _ = _blank_disposition()
+    if _is_blank(feats, silero):
+        b_status, b_conf, _ = _dispose_blank_or_noise()
         details["ml_note"] = "blank_override_high_human"
         return b_status, b_conf, details
 
@@ -337,8 +336,8 @@ def run_ml_pipeline(
         return action, float(conf), details
 
     # Whisper raised confidence enough, or flipped to non-HUMAN
-    if is_blank_as_machine_enabled() and _is_blank(feats, silero) and status == "HUMAN":
-        b_status, b_conf, _ = _blank_disposition()
+    if _is_blank(feats, silero) and status == "HUMAN":
+        b_status, b_conf, _ = _dispose_blank_or_noise()
         details["ml_note"] = (details.get("ml_note") or "") + "+blank_safety"
         return b_status, b_conf, details
 

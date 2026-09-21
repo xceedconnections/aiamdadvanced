@@ -4,8 +4,8 @@ OpenAMD Advanced AI Engine — Hybrid (Heuristic + Silero VAD)
 Combines the Phase-3 outbound heuristic AMD rules with Silero VAD speech
 features. Prefer MACHINE when uncertain so answering machines are not sent
 to agents. Short live greetings ("hello") still reach agents when acoustics
-and Whisper agree. Blank / near-silent audio is disposed as BLANK (never to
-agents). VICIdial receives MACHINE (AA).
+and Whisper agree. Blank / near-silent audio follows the AMD panel checkbox
+(BLANK/AA when ON, HUMAN when OFF — never a false MACHINE alone).
 """
 
 from __future__ import annotations
@@ -311,6 +311,7 @@ def _looks_like_spoken_digit(
     """Isolated spoken digit / prompt syllable ('zero', 'one') in a longer AMD window.
 
     Not a live 'hello'. Short clips (~1s) are usually hello, not keypad digits.
+    Loud single-syllable pickups (peak >= ~0.20) are live hello, not IVR digits.
     """
     if float(feats.get("beep", 0.0)) >= 0.5:
         return False
@@ -320,6 +321,10 @@ def _looks_like_spoken_digit(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    peak = float(feats.get("peak", 0.0))
+    # Live "hello" is often much louder than a soft IVR digit prompt
+    if peak >= 0.20:
+        return False
     # Digit prompts usually sit in a ~2–3s AMD record with silence around them
     if duration < 1.25 or duration > 3.8:
         return False
@@ -341,7 +346,8 @@ def _looks_like_spoken_digit(
 def _is_front_speech_then_silence(feats: Dict[str, float]) -> bool:
     """Spoken content then long dead air — common AMD cut of VM/IVR greeting.
 
-    Live hello is usually one short burst; multi-burst/script then silence is AM.
+    Live hello is usually one short burst then silence in the AMD window —
+    that must NOT be treated as a truncated VM opening.
     """
     duration = float(feats.get("duration", 0.0))
     front = float(feats.get("front_energy_ratio", 0.5))
@@ -354,6 +360,9 @@ def _is_front_speech_then_silence(feats: Dict[str, float]) -> bool:
     if front < 0.85 or longest_silence < 650:
         return False
     if speech_ratio < 0.12:
+        return False
+    # One short syllable + trailing silence = live hello in a 2–5s Record window
+    if num_bursts <= 2 and longest_burst <= 700 and speech_ratio <= 0.30:
         return False
     # Multi-syllable / choppy script before the silence
     if num_bursts >= 2 and speech_ratio >= 0.18:
@@ -430,8 +439,8 @@ def _looks_like_short_human(
     if _looks_like_spoken_digit(feats, silero):
         return False
     duration = float(feats.get("duration", 0.0))
-    # Allow short AMD windows (~0.4–0.6s) that still contain a hello syllable
-    if duration < 0.35 or duration > 3.8:
+    # Allow short AMD windows and full OpenAMD Record(~5s) with trailing silence
+    if duration < 0.35 or duration > 5.5:
         return False
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
@@ -478,9 +487,20 @@ def _looks_like_short_human(
     return False
 
 
-def _blank_disposition() -> Tuple[str, float, str]:
-    """Internal BLANK disposition (VICIdial maps to MACHINE / AA)."""
+def _blank_disposition(*, to_agent: bool = False) -> Tuple[str, float, str]:
+    """Blank / near-silent disposition.
+
+    to_agent=False (portal blank checkbox ON): BLANK → VICIdial MACHINE/AA.
+    to_agent=True (checkbox OFF): HUMAN so quiet pickups reach agents, not VM.
+    """
+    if to_agent:
+        return "HUMAN", 0.75, "blank_to_agent"
     return "BLANK", 0.95, "blank_silence"
+
+
+def _dispose_blank_or_noise() -> Tuple[str, float, str]:
+    """Respect AMD panel blank checkbox for silence / VoIP noise."""
+    return _blank_disposition(to_agent=not is_blank_as_machine_enabled())
 
 
 def _frame_energy(audio: np.ndarray, sr: int, frame_ms: int = 20) -> np.ndarray:
@@ -786,11 +806,9 @@ def _classify_heuristic(
     if float(feats.get("ringback", 0.0)) >= 0.5:
         return "MACHINE", max(0.93, float(feats.get("ringback_conf", 0.93)))
 
-    # Blank / near-silent — never pass to agents when blank detection is on
-    if is_blank_as_machine_enabled() and (
-        _is_blank(feats) or _is_voip_noise_burst(feats)
-    ):
-        return _blank_disposition()[:2]
+    # Blank / near-silent / VoIP noise — panel checkbox picks AA vs agent
+    if _is_blank(feats) or _is_voip_noise_burst(feats):
+        return _dispose_blank_or_noise()[:2]
 
     # Truncated / front-speech-then-silence AMD clip → MACHINE (VM/IVR opening)
     if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
@@ -852,13 +870,13 @@ def _fuse_with_silero(
     Returns (status, confidence, fuse_note).
     Agent-protect: never flip MACHINE → HUMAN on weak/uncertain evidence.
     """
-    # Blank / no speech → BLANK (VICIdial AA) when portal setting is enabled
-    if _is_blank(feats, silero) and is_blank_as_machine_enabled():
-        b_status, b_conf, b_note = _blank_disposition()
+    # Blank / no speech — panel checkbox: AA (BLANK) or agent (HUMAN)
+    if _is_blank(feats, silero):
+        b_status, b_conf, b_note = _dispose_blank_or_noise()
         return b_status, max(float(confidence), b_conf), b_note
 
-    if _is_voip_noise_burst(feats, silero) and is_blank_as_machine_enabled():
-        b_status, b_conf, b_note = _blank_disposition()
+    if _is_voip_noise_burst(feats, silero):
+        b_status, b_conf, b_note = _dispose_blank_or_noise()
         return b_status, max(float(confidence), b_conf), "voip_front_noise_burst"
 
     if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
@@ -969,26 +987,18 @@ def analyze_audio(
         )
     except Exception as exc:
         ms = int((time.perf_counter() - t0) * 1000)
-        if is_blank_as_machine_enabled():
-            b_status, b_conf, b_note = _blank_disposition()
-            return AnalysisResult(
-                status=b_status,
-                confidence=b_conf,
-                processing_ms=ms,
-                audio_seconds=0.0,
-                details={
-                    "error": str(exc),
-                    "fallback": b_status,
-                    "fuse_note": b_note,
-                    "engine": "hybrid",
-                },
-            )
+        b_status, b_conf, b_note = _dispose_blank_or_noise()
         return AnalysisResult(
-            status="MACHINE",
-            confidence=0.4,
+            status=b_status,
+            confidence=b_conf,
             processing_ms=ms,
             audio_seconds=0.0,
-            details={"error": str(exc), "fallback": "MACHINE", "engine": "hybrid"},
+            details={
+                "error": str(exc),
+                "fallback": b_status,
+                "fuse_note": b_note,
+                "engine": "hybrid",
+            },
         )
 
     duration = float(len(audio) / sr) if sr else 0.0
@@ -1064,9 +1074,9 @@ def analyze_audio(
             },
         )
 
-    # VoIP trunk noise (same burst on every call) → BLANK before fuse/ML can false-HUMAN
-    if is_blank_as_machine_enabled() and _is_voip_noise_burst(feats, silero):
-        b_status, b_conf, _ = _blank_disposition()
+    # VoIP trunk noise — blank checkbox picks AA vs agent (never false VM alone)
+    if _is_voip_noise_burst(feats, silero):
+        b_status, b_conf, _ = _dispose_blank_or_noise()
         ms = int((time.perf_counter() - t0) * 1000)
         return AnalysisResult(
             status=b_status,
@@ -1078,7 +1088,7 @@ def analyze_audio(
                 "engine": "hybrid",
                 "locale_pack_enabled": bool(locale_pack_enabled),
                 "locale_pack": pack_name,
-                "blank_as_machine": True,
+                "blank_as_machine": is_blank_as_machine_enabled(),
                 "heuristic_status": h_status,
                 "heuristic_confidence": round(float(h_confidence), 4),
                 "fuse_note": "voip_front_noise_burst",
@@ -1214,19 +1224,21 @@ def analyze_audio(
             or float(feats.get("abs_speech_ms", 0.0)) >= 600
         )
     )
-    # Agent-protect: only confirm HUMAN when Whisper positively heard a short greeting.
-    # Never flip MACHINE/IVR → HUMAN on weak confidence or acoustic hello alone.
+    # Agent-protect: confirm short live hello on Classic (no Whisper) and ML.
+    # Previously required Whisper cue human_short — Classic never set it, so
+    # real "hello" stayed MACHINE and agents starved vs stock 8369.
     if (
         status in ("MACHINE", "IVR")
         and float(feats.get("beep", 0.0)) < 0.5
         and float(feats.get("ringback", 0.0)) < 0.5
-        and w_cue == "human_short"
+        and (w_cue == "human_short" or not whisper_non_human)
         and _looks_like_short_human(feats, silero)
         and not whisper_non_human
         and not dense_greeting
         and not _is_truncated_script_clip(feats)
         and not _is_front_speech_then_silence(feats)
         and not _is_voip_noise_burst(feats, silero)
+        and not _is_blank(feats, silero)
     ):
         status, confidence = "HUMAN", max(float(confidence), 0.86)
         details["short_human_safety_override"] = True
@@ -1276,15 +1288,20 @@ def analyze_audio(
         details["digit_safety_override"] = True
         details["fuse_note"] = "spoken_digit_machine"
 
-    # Safety net: never send blank/silent / voip-noise clips to agents
-    if status == "HUMAN" and (
-        _is_voip_noise_burst(feats, silero)
-        or (is_blank_as_machine_enabled() and _is_blank(feats, silero))
+    # Safety net: blank / voip-noise — AA or agent per blank checkbox (never VM)
+    if status in ("HUMAN", "MACHINE") and (
+        _is_voip_noise_burst(feats, silero) or _is_blank(feats, silero)
     ):
-        b_status, b_conf, b_note = _blank_disposition()
-        status, confidence = b_status, max(float(confidence), b_conf)
-        details["blank_safety_override"] = True
-        details["fuse_note"] = b_note
+        # Do not override a clear short hello that already passed as HUMAN
+        if status == "HUMAN" and _looks_like_short_human(feats, silero) and not _is_blank(
+            feats, silero
+        ):
+            pass
+        else:
+            b_status, b_conf, b_note = _dispose_blank_or_noise()
+            status, confidence = b_status, max(float(confidence), b_conf)
+            details["blank_safety_override"] = True
+            details["fuse_note"] = b_note
 
     # If Whisper ran but gave no human cue, do not send sparse uncertain HUMAN to agents
     if (
