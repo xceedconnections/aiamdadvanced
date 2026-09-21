@@ -27,10 +27,10 @@ from app.amd_settings import is_blank_as_machine_enabled
 from app.locale_packs import resolve_locale_pack
 
 ENGINE_INFO = {
-    "name": "OpenAMD Hybrid (VAD + Whisper + Score)",
-    "model": "Silero VAD + acoustic features + faster-whisper phrases + score",
-    "version": "6.0.0",
-    "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); Faster-Whisper; optional XGBoost",
+    "name": "OpenAMD Hybrid (VAD + Whisper + XGB + Score)",
+    "model": "Silero VAD + Whisper phrases + XGBoost + Asterisk AMD + score",
+    "version": "6.1.0",
+    "runtime": "NumPy + SoundFile + ONNX (Silero) + Faster-Whisper + XGBoost",
 }
 
 
@@ -1068,6 +1068,19 @@ def analyze_audio(
         "front_energy_ratio": float(_front_energy_ratio(audio)),
         **stats,
     }
+
+    # Optional Asterisk stock AMDSTATUS / AMDCAUSE from AGI
+    meta = call_meta or {}
+    amd_st = str(meta.get("amdstatus") or meta.get("asterisk_amdstatus") or "").strip()
+    amd_cause = str(meta.get("amdcause") or meta.get("asterisk_amdcause") or "").strip()
+    if amd_st or amd_cause:
+        from app.ai.features import _asterisk_flags
+
+        feats["asterisk_amdstatus"] = amd_st
+        feats["asterisk_amdcause"] = amd_cause
+        a_h, a_m = _asterisk_flags(feats)
+        feats["asterisk_amd_human"] = a_h
+        feats["asterisk_amd_machine"] = a_m
 
     pack_name, pack = resolve_locale_pack(
         enabled=bool(locale_pack_enabled),

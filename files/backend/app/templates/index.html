@@ -50,7 +50,7 @@
         <a href="/scammers.php" data-page="scammers" class="nav"><span class="nav-ico">⚠</span>SCAMMERS</a>
         <a href="/vicidialservers.php" data-page="servers" class="nav"><span class="nav-ico">◈</span>VICIdial Servers</a>
         <a href="/reports.php" data-page="reports" class="nav"><span class="nav-ico">▦</span>Reports</a>
-        <a href="/accuracy.php" data-page="accuracy" class="nav"><span class="nav-ico">◉</span>Accuracy</a>
+        <a href="/accuracy.php" data-page="accuracy" class="nav"><span class="nav-ico">◉</span>AMD Performance</a>
         <a href="/machine-phrases.php" data-page="machine-phrases" class="nav"><span class="nav-ico">✉</span>Machine Phrases</a>
         <a href="/training.php" data-page="training" class="nav"><span class="nav-ico">◎</span>Training</a>
         <a href="/training-history.php" data-page="training-history" class="nav"><span class="nav-ico">◷</span>Training History</a>
@@ -698,7 +698,7 @@
       <section id="page-accuracy" class="page hidden">
         <div class="panel">
           <div class="panel-head">
-            <h3>Model evaluation</h3>
+            <h3>AMD PERFORMANCE</h3>
             <div class="filter-bar" style="margin:0;gap:.5rem;align-items:center">
               <label>
                 Period
@@ -719,8 +719,9 @@
             </div>
           </div>
           <p class="hint">
-            Ground truth comes from <strong>Training</strong> teaches linked to a call.
-            Teach more calls to improve these metrics. Unlabeled CDR volume is not included.
+            Ground truth from <strong>Training</strong> teaches (predicted vs taught).
+            Shows HUMAN/MACHINE recall and false HUMAN / false MACHINE — not a single fake “98% accuracy”.
+            Label more calls on Training to improve these numbers and auto-retrain XGBoost (≥20 labels).
           </p>
           <div class="stat-grid" id="accuracy-stats"></div>
           <p id="accuracy-msg" class="hint"></p>

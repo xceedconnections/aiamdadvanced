@@ -685,6 +685,47 @@ def enrich_sample_phones_from_db(db: Any, *, limit: int = 200) -> Dict[str, Any]
     return {"ok": True, "updated": updated}
 
 
+def load_labeled_for_train() -> tuple[list, list]:
+    import numpy as np
+
+    from app.ai.features import pad_feature_vector
+
+    xs = []
+    ys = []
+    for path in samples_dir().glob("*.json"):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        lab = meta.get("label")
+        vec = meta.get("feature_vector")
+        if not lab or not vec:
+            continue
+        xs.append(pad_feature_vector(vec))
+        ys.append(str(lab).upper())
+    return xs, ys
+
+
+def maybe_auto_retrain(*, min_labeled: int = 20) -> Dict[str, Any] | None:
+    """Retrain XGBoost in background when enough labeled samples exist."""
+    try:
+        labeled = [s for s in list_samples(limit=5000) if s.get("label")]
+        if len(labeled) < int(min_labeled):
+            return None
+        import threading
+
+        def _run() -> None:
+            try:
+                retrain_model()
+            except Exception as exc:
+                print(f"OpenAMD auto-retrain failed: {exc}")
+
+        threading.Thread(target=_run, daemon=True, name="openamd-auto-retrain").start()
+        return {"scheduled": True, "n_labeled": len(labeled)}
+    except Exception as exc:
+        return {"scheduled": False, "error": str(exc)}
+
+
 def label_sample(sample_id: str, label: str, *, username: str = "") -> Dict[str, Any]:
     label_raw = str(label).strip().upper()
     if label_raw not in _ML_TEACH_LABELS:
@@ -700,26 +741,8 @@ def label_sample(sample_id: str, label: str, *, username: str = "") -> Dict[str,
     meta["labeled_by"] = username or "admin"
     meta["labeled_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    maybe_auto_retrain()
     return meta
-
-
-def load_labeled_for_train() -> tuple[list, list]:
-    import numpy as np
-
-    xs = []
-    ys = []
-    for path in samples_dir().glob("*.json"):
-        try:
-            meta = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        lab = meta.get("label")
-        vec = meta.get("feature_vector")
-        if not lab or not vec:
-            continue
-        xs.append(np.asarray(vec, dtype=np.float32))
-        ys.append(str(lab).upper())
-    return xs, ys
 
 
 def retrain_model() -> Dict[str, Any]:

@@ -140,6 +140,14 @@ def ensure_model(force_bootstrap: bool = False):
         if _booster is not None and _loaded_path == path and not force_bootstrap:
             return _booster
         if path.exists() and not force_bootstrap:
+            # Drop incompatible v1 models so FEATURE_KEYS v2 trains cleanly
+            try:
+                meta = json.loads(meta_path().read_text(encoding="utf-8"))
+                if int(meta.get("model_version") or 0) != int(MODEL_VERSION):
+                    force_bootstrap = True
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                force_bootstrap = True
+        if path.exists() and not force_bootstrap:
             import xgboost as xgb
 
             booster = xgb.Booster()

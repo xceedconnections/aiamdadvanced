@@ -78,6 +78,8 @@ async def analyze(
     caller: str = Form(""),
     called: str = Form(""),
     ani: str = Form(""),
+    amdstatus: str = Form(""),
+    amdcause: str = Form(""),
     audio: UploadFile = File(...),
     x_openamd_admitted: str | None = Header(None, alias="X-OpenAMD-Admitted"),
     db: Session = Depends(get_db),
@@ -165,6 +167,10 @@ async def analyze(
         "ani": ani_value,
         "phone_number": called_number or ani_value,
         "campaign": campaign or "",
+        "amdstatus": (amdstatus or "").strip(),
+        "amdcause": (amdcause or "").strip(),
+        "asterisk_amdstatus": (amdstatus or "").strip(),
+        "asterisk_amdcause": (amdcause or "").strip(),
     }
 
     effective = resolve_effective_amd_settings(server)

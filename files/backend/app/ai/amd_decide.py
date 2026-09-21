@@ -69,6 +69,7 @@ def score_amd(
     script_clip: bool,
     front_script: bool,
     dense_greeting: bool,
+    xgb_probs: Optional[Dict[str, float]] = None,
 ) -> Tuple[int, str]:
     """Return (machine_score, note). Higher → more MACHINE."""
     score = 0
@@ -85,9 +86,36 @@ def score_amd(
         score -= 65
         parts.append("whisper_human")
     elif transcript and len(transcript.split()) >= 6:
-        # Long unrecognized speech leans machine (scripted greeting)
         score += 25
         parts.append("long_transcript")
+
+    # Asterisk stock AMD (when AGI posts AMDSTATUS/AMDCAUSE)
+    a_h = float(feats.get("asterisk_amd_human", 0.0) or 0.0)
+    a_m = float(feats.get("asterisk_amd_machine", 0.0) or 0.0)
+    if a_m >= 0.5:
+        score += 40
+        parts.append("asterisk_machine")
+    if a_h >= 0.5:
+        score -= 40
+        parts.append("asterisk_human")
+
+    # XGBoost class probs (trained on your labeled calls when available)
+    if xgb_probs:
+        p_m = float(xgb_probs.get("MACHINE", 0.0) or 0.0)
+        p_i = float(xgb_probs.get("IVR", 0.0) or 0.0)
+        p_h = float(xgb_probs.get("HUMAN", 0.0) or 0.0)
+        if p_m + p_i >= 0.85:
+            score += 55
+            parts.append(f"xgb_machine:{p_m + p_i:.2f}")
+        elif p_h >= 0.85:
+            score -= 50
+            parts.append(f"xgb_human:{p_h:.2f}")
+        elif p_m + p_i >= 0.60:
+            score += 25
+            parts.append(f"xgb_lean_m:{p_m + p_i:.2f}")
+        elif p_h >= 0.60:
+            score -= 20
+            parts.append(f"xgb_lean_h:{p_h:.2f}")
 
     duration = float(feats.get("duration", 0.0))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
@@ -120,7 +148,6 @@ def score_amd(
         score += 15
         parts.append("long_burst")
 
-    # Very loud single short syllable → live pickup
     peak = float(feats.get("peak", 0.0))
     if peak >= 0.20 and looks_short_human:
         score -= 20
@@ -128,6 +155,17 @@ def score_amd(
 
     note = "+".join(parts) if parts else "neutral"
     return int(score), note
+
+
+def _xgb_probs(feats: Dict[str, Any], silero: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    try:
+        from app.ai.xgb_model import model_path, predict_proba
+
+        if not model_path().exists():
+            return None
+        return predict_proba(feats, silero)
+    except Exception:
+        return None
 
 
 def finalize_amd_decision(
@@ -166,7 +204,6 @@ def finalize_amd_decision(
         return "SIT", max(conf, 0.9)
 
     if is_blank_fn(feats, silero) or is_voip_fn(feats, silero):
-        # Keep clear short hello HUMAN; otherwise blank checkbox path
         if st == "HUMAN" and looks_short_human_fn(feats, silero) and not is_blank_fn(
             feats, silero
         ):
@@ -191,14 +228,13 @@ def finalize_amd_decision(
         )
     )
 
-    # Stage 2: Whisper (Classic and Advanced). Reuse ML whisper if present.
+    # Stage 2: Whisper
     ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
     existing_w = ml_block.get("whisper") if isinstance(ml_block.get("whisper"), dict) else None
     whisper = _run_whisper(audio, sr, existing=existing_w)
     details["whisper_stage"] = whisper
     if whisper.get("transcript") or whisper.get("cue"):
         details["whisper_used"] = True
-        # Mirror into ml.whisper shape for portal badges when Classic
         if not ml_block:
             details["ml"] = {
                 "whisper": whisper,
@@ -212,18 +248,29 @@ def finalize_amd_decision(
     cue = str(whisper.get("cue") or "")
     w_status = str(whisper.get("status") or "")
     w_conf = float(whisper.get("confidence") or 0.0)
+    transcript = str(whisper.get("transcript") or "").strip()
+    feats["whisper_vm_hit"] = 1.0 if (_machine_cue(cue) or w_status == "MACHINE") else 0.0
+    feats["whisper_human_hit"] = 1.0 if (cue == "human_short" or w_status == "HUMAN") else 0.0
+    feats["whisper_word_count"] = float(len(transcript.split())) if transcript else 0.0
 
-    # Strong Whisper MACHINE / HUMAN overrides
+    # Stage 3: XGBoost (always when model present — Classic or Advanced)
+    xgb_probs = _xgb_probs(feats, silero)
+    if xgb_probs:
+        details["xgb_probs"] = {k: round(float(v), 4) for k, v in xgb_probs.items()}
+        details["class_probs"] = details["xgb_probs"]
+
     if _machine_cue(cue) or w_status == "MACHINE":
         details["amd_stage"] = "whisper_machine"
         details["fuse_note"] = cue or "voicemail"
         details["short_human_safety_override"] = False
+        details["internal_status"] = "MACHINE"
         return "MACHINE", max(conf, w_conf, 0.93)
 
     if cue == "human_short" or w_status == "HUMAN":
         details["amd_stage"] = "whisper_human"
         details["fuse_note"] = "human_short"
         details["short_human_safety_override"] = True
+        details["internal_status"] = "HUMAN"
         return "HUMAN", max(conf, w_conf, 0.92)
 
     score, score_note = score_amd(
@@ -235,28 +282,27 @@ def finalize_amd_decision(
         script_clip=script_clip,
         front_script=front_script,
         dense_greeting=dense_greeting,
+        xgb_probs=xgb_probs,
     )
     details["amd_score"] = score
     details["amd_score_note"] = score_note
 
-    # High machine score only
     if score >= 70:
         details["amd_stage"] = "score_machine"
         details["fuse_note"] = f"score_{score}:{score_note}"
+        details["internal_status"] = "MACHINE"
         return "MACHINE", max(conf, 0.90)
 
-    # Clear short live pickup
     if looks_human and score <= 40:
         details["amd_stage"] = "score_human"
         details["fuse_note"] = "short_human_greeting"
         details["short_human_safety_override"] = True
+        details["internal_status"] = "HUMAN"
         return "HUMAN", max(conf, 0.92)
 
-    # UNCERTAIN → HUMAN (do not discard customers)
+    # UNCERTAIN → HUMAN for VICIdial; portal keeps internal_status
     details["amd_stage"] = "uncertain_to_agent"
     details["fuse_note"] = "uncertain_to_agent"
     details["short_human_safety_override"] = True
-    # Preserve explicit HUMAN; flip weak MACHINE/IVR to agent
-    if st in ("MACHINE", "IVR", "ERROR") or st == "HUMAN":
-        return "HUMAN", max(conf, 0.90)
+    details["internal_status"] = "UNCERTAIN"
     return "HUMAN", max(conf, 0.90)

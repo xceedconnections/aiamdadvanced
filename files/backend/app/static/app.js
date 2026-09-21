@@ -499,6 +499,11 @@ function gatedNote(r) {
   if (raw && raw !== r.status && raw === "HUMAN") {
     return `<div class="hint" style="margin-top:.15rem;color:#fbbf24">AI: HUMAN (below min)</div>`;
   }
+  const internal = String(r.internal_status || "").toUpperCase();
+  const fuse = String(r.fuse_note || "");
+  if (internal === "UNCERTAIN" || fuse === "uncertain_to_agent") {
+    return `<div class="hint" style="margin-top:.15rem;color:#93c5fd">UNCERTAIN → agent</div>`;
+  }
   return "";
 }
 
@@ -2486,20 +2491,32 @@ async function loadAccuracy() {
 
     const cards = [
       ["CDR calls (period)", d.n_calls_period || 0],
-      ["Teaches (period)", d.n_teaches_period || 0],
       ["Labeled for eval", d.n_labeled || 0],
+      ["Actual HUMAN", d.n_actual_human || 0],
+      ["Actual MACHINE", d.n_actual_machine || 0],
+      [
+        "HUMAN recall",
+        d.human_recall_pct == null ? "—" : `${d.human_recall_pct}%`,
+      ],
+      [
+        "MACHINE recall",
+        d.machine_recall_pct == null ? "—" : `${d.machine_recall_pct}%`,
+      ],
+      ["False HUMAN (VM→agent)", d.false_human || 0],
+      ["False MACHINE (human hung)", d.false_machine || 0],
+      [
+        "False MACHINE of humans",
+        d.false_machine_of_human_rate == null
+          ? "—"
+          : `${(d.false_machine_of_human_rate * 100).toFixed(1)}%`,
+      ],
+      [
+        "False HUMAN of machines",
+        d.false_human_of_machine_rate == null
+          ? "—"
+          : `${(d.false_human_of_machine_rate * 100).toFixed(1)}%`,
+      ],
       ["Overall accuracy", d.accuracy_pct == null ? "—" : `${d.accuracy_pct}%`],
-      ["Correct", d.n_correct || 0],
-      ["False HUMAN", d.false_human || 0],
-      ["False MACHINE", d.false_machine || 0],
-      [
-        "False HUMAN rate",
-        d.false_human_rate == null ? "—" : `${(d.false_human_rate * 100).toFixed(1)}%`,
-      ],
-      [
-        "False MACHINE rate",
-        d.false_machine_rate == null ? "—" : `${(d.false_machine_rate * 100).toFixed(1)}%`,
-      ],
       ["ECE (calibration)", d.ece == null ? "—" : d.ece],
     ];
     $("#accuracy-stats").innerHTML = cards

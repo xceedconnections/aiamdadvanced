@@ -83,10 +83,14 @@ def _ml_fields_from_features(raw: Optional[str]) -> dict:
     transcript = str(whisper.get("transcript") or details.get("whisper_transcript") or "")[:240]
     cue = str(whisper.get("cue") or "")
     note = str(ml.get("ml_note") or details.get("ml_note") or "")
+    fuse = str(details.get("fuse_note") or "")
+    internal = str(details.get("internal_status") or "")
     out["whisper_used"] = used
     out["whisper_transcript"] = transcript
     out["whisper_cue"] = cue
     out["ml_note"] = note
+    out["fuse_note"] = fuse
+    out["internal_status"] = internal
     return out
 
 
@@ -115,6 +119,8 @@ def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
         whisper_transcript=ml["whisper_transcript"],
         whisper_cue=ml["whisper_cue"],
         ml_note=ml["ml_note"],
+        fuse_note=ml.get("fuse_note") or "",
+        internal_status=ml.get("internal_status") or "",
     )
 
 
@@ -566,6 +572,24 @@ def accuracy_report(
         r for r in rows if (not _is_agent_path(r["predicted"])) and _is_agent_path(r["actual"])
     ]
 
+    # Recall by taught class (ChatGPT-style AMD PERFORMANCE)
+    actual_human = [r for r in rows if _is_agent_path(r["actual"])]
+    actual_machine = [r for r in rows if not _is_agent_path(r["actual"])]
+    human_correct = [
+        r for r in actual_human if _is_agent_path(r["predicted"])
+    ]
+    machine_correct = [
+        r for r in actual_machine if not _is_agent_path(r["predicted"])
+    ]
+    human_recall = (len(human_correct) / len(actual_human)) if actual_human else None
+    machine_recall = (len(machine_correct) / len(actual_machine)) if actual_machine else None
+    false_machine_rate_of_human = (
+        (len(false_machine) / len(actual_human)) if actual_human else None
+    )
+    false_human_rate_of_machine = (
+        (len(false_human) / len(actual_machine)) if actual_machine else None
+    )
+
     # Confusion matrix (predicted × actual)
     labels_order = ["HUMAN", "MACHINE", "IVR", "BLANK", "SIT", "FAX", "ERROR"]
     present = set()
@@ -658,6 +682,22 @@ def accuracy_report(
         "false_machine": len(false_machine),
         "false_human_rate": round(len(false_human) / n, 4) if n else None,
         "false_machine_rate": round(len(false_machine) / n, 4) if n else None,
+        "n_actual_human": len(actual_human),
+        "n_actual_machine": len(actual_machine),
+        "human_recall": None if human_recall is None else round(human_recall, 4),
+        "machine_recall": None if machine_recall is None else round(machine_recall, 4),
+        "human_recall_pct": None
+        if human_recall is None
+        else round(human_recall * 100.0, 2),
+        "machine_recall_pct": None
+        if machine_recall is None
+        else round(machine_recall * 100.0, 2),
+        "false_machine_of_human_rate": None
+        if false_machine_rate_of_human is None
+        else round(false_machine_rate_of_human, 4),
+        "false_human_of_machine_rate": None
+        if false_human_rate_of_machine is None
+        else round(false_human_rate_of_machine, 4),
         "confusion_labels": labels,
         "confusion_matrix": matrix,
         "calibration": buckets,
@@ -670,9 +710,12 @@ def accuracy_report(
         "n_teaches_with_call": n_teaches_with_call,
         "n_phone_only": n_phone_only,
         "empty_reason": empty_reason,
+        "title": "AMD PERFORMANCE",
         "note": (
-            "Metrics use Training teaches linked to a call. "
-            "CDR volume alone does not fill this page — open Training, play a call, set the true label, Save."
+            "AMD PERFORMANCE uses Training teaches linked to a call "
+            "(predicted vs taught). Label calls on Training so HUMAN/MACHINE "
+            "recall and false rates stay meaningful. Uncertain→agent is counted "
+            "as HUMAN predicted."
         ),
     }
 

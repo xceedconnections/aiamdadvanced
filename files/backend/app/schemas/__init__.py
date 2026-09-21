@@ -205,6 +205,8 @@ class CallOut(BaseModel):
     whisper_transcript: str = ""
     whisper_cue: str = ""
     ml_note: str = ""
+    fuse_note: str = ""
+    internal_status: str = ""
 
     class Config:
         from_attributes = True

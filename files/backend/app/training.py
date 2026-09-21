@@ -159,6 +159,13 @@ def upsert_override_from_call(
             username=username,
             phone_number=phone,
         )
+        if ml_sample_id:
+            try:
+                from app.ml_data import maybe_auto_retrain
+
+                maybe_auto_retrain()
+            except Exception:
+                pass
         if ml_sample_id and notes is not None:
             # stash on correction notes for operators (optional short tag)
             pass
