@@ -303,15 +303,34 @@ def apply_confidence_gate(
     *,
     server_override: dict[str, Any] | None = None,
     effective: dict[str, Any] | None = None,
+    details: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
     """
     Return (final_status, downgraded). Only HUMAN results are gated.
 
     Prefer `effective` from resolve_effective_amd_settings(server).
     Legacy `server_override` still supported for older callers.
+
+    Clear short live pickups and intentional blank→agent are never downgraded
+    to MACHINE by the min-% gate (that was hanging up humans while agents wait).
     """
     if status != "HUMAN":
         return status, False
+
+    # Live hello / quiet pickup / blank→agent (checkbox OFF) must reach agents
+    if details:
+        note = str(details.get("fuse_note") or "")
+        if (
+            details.get("short_human_safety_override")
+            or note
+            in (
+                "blank_to_agent",
+                "short_human_greeting",
+                "agree_human_short",
+                "agree_human_quiet",
+            )
+        ):
+            return status, False
 
     if effective is not None:
         # ML already applied its HUMAN threshold inside the pipeline

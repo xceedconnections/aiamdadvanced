@@ -167,6 +167,7 @@ async def analyze(
         result.status,
         result.confidence,
         effective=effective,
+        details=result.details if isinstance(result.details, dict) else None,
     )
 
     final_status = gated_status

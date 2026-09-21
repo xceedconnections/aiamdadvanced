@@ -29,7 +29,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (Heuristic + Silero)",
     "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "5.1.2",
+    "version": "5.1.3",
     "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
 }
 
@@ -154,6 +154,10 @@ def _is_voip_noise_burst(
         return False
     if peak < 0.06:
         return False
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    # Real voice (hello/hi) is never a VoIP comfort-noise dump
+    if _has_audible_voice(feats) and speech_ratio >= 0.12 and zcr < 0.22:
+        return False
     # Energy almost entirely in one half (front dump OR rear dump after lead-in silence)
     one_sided = front >= 0.85 or front <= 0.18
     if not one_sided or longest_silence < 350:
@@ -218,6 +222,9 @@ def _is_line_noise_only(feats: Dict[str, float]) -> bool:
         return False
     if speech_ratio >= 0.12 and longest_burst >= 200:
         return False
+    # Quiet but real short syllable ("hi") — not flat line noise
+    if peak >= 0.02 and longest_burst >= 80 and speech_ratio >= 0.05:
+        return False
     return raw_rms < 0.014 and peak < 0.045
 
 
@@ -236,8 +243,18 @@ def _is_blank(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     activity_ratio = float(feats.get("activity_ratio", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    num_bursts = float(feats.get("num_bursts", 0.0))
     abs_ratio = float(feats.get("abs_speech_ratio", 0.0))
     abs_long = float(feats.get("abs_speech_ms", 0.0))
+
+    # Quiet but real short syllable ("hi") — not blank
+    if (
+        peak >= 0.02
+        and longest_burst >= 80
+        and speech_ratio >= 0.05
+        and num_bursts <= 3
+    ):
+        return False
 
     # Empty / digital silence only
     if duration < 0.20:
@@ -312,6 +329,7 @@ def _looks_like_spoken_digit(
 
     Not a live 'hello'. Short clips (~1s) are usually hello, not keypad digits.
     Loud single-syllable pickups (peak >= ~0.20) are live hello, not IVR digits.
+    Quiet single syllables (peak < ~0.08) are live "hi", not keypad prompts.
     """
     if float(feats.get("beep", 0.0)) >= 0.5:
         return False
@@ -322,8 +340,8 @@ def _looks_like_spoken_digit(
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
     peak = float(feats.get("peak", 0.0))
-    # Live "hello" is often much louder than a soft IVR digit prompt
-    if peak >= 0.20:
+    # Live hello (loud) or quiet "hi" — never digit prompts
+    if peak >= 0.20 or peak < 0.08:
         return False
     # Digit prompts usually sit in a ~2–3s AMD record with silence around them
     if duration < 1.25 or duration > 3.8:
@@ -433,7 +451,10 @@ def _looks_like_short_human(
         return False
     peak = float(feats.get("peak", 0.0))
     abs_long = float(feats.get("abs_speech_ms", 0.0))
-    if peak < 0.05 and abs_long < 80:
+    # Quiet live "hi" still counts; only near-digital silence is out
+    if peak < 0.02 and abs_long < 60:
+        return False
+    if peak < 0.05 and abs_long < 80 and float(feats.get("speech_ratio", 0.0)) < 0.04:
         return False
     # Spoken digit / IVR prompt syllable is not a live hello
     if _looks_like_spoken_digit(feats, silero):
@@ -445,6 +466,16 @@ def _looks_like_short_human(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+
+    # Quiet single/double syllable "hi" / "yeah" in a 2s window
+    if (
+        peak >= 0.02
+        and peak < 0.08
+        and num_bursts <= 3
+        and 60.0 <= longest_burst <= 500.0
+        and 0.04 <= speech_ratio <= 0.35
+    ):
+        return True
 
     # Sub-second windows: only sparse single-syllable hellos count as human
     if duration < 0.90:
@@ -494,7 +525,8 @@ def _blank_disposition(*, to_agent: bool = False) -> Tuple[str, float, str]:
     to_agent=True (checkbox OFF): HUMAN so quiet pickups reach agents, not VM.
     """
     if to_agent:
-        return "HUMAN", 0.75, "blank_to_agent"
+        # Must clear typical Classic min gates (80–85%) so quiet pickups reach agents
+        return "HUMAN", 0.92, "blank_to_agent"
     return "BLANK", 0.95, "blank_silence"
 
 
@@ -816,7 +848,7 @@ def _classify_heuristic(
 
     # Short live "hello" before aggressive NA voicemail rules
     if _looks_like_short_human(feats):
-        return "HUMAN", 0.86
+        return "HUMAN", 0.92
 
     vm_hit, vm_conf, _vm_note = _detect_voicemail_structure(feats, pack)
     if vm_hit:
@@ -844,7 +876,7 @@ def _classify_heuristic(
     if num_bursts <= pack["human_max_bursts"] and longest_burst <= pack["human_max_burst_ms"]:
         # Only trust sparse-burst HUMAN when it also looks like a short hello
         if _looks_like_short_human(feats):
-            return "HUMAN", 0.82
+            return "HUMAN", 0.90
         return "MACHINE", 0.78
 
     if (
@@ -887,7 +919,7 @@ def _fuse_with_silero(
 
     # Live pickup ("hello") only when already HUMAN and acoustics agree
     if status == "HUMAN" and _looks_like_short_human(feats, silero):
-        return "HUMAN", max(float(confidence), 0.86), "short_human_greeting"
+        return "HUMAN", max(float(confidence), 0.92), "short_human_greeting"
 
     if not silero.get("ok"):
         return status, confidence, "heuristic_only"
@@ -942,7 +974,7 @@ def _fuse_with_silero(
         and not _is_blank(feats, silero)
     ):
         if status == "HUMAN" and _looks_like_short_human(feats, silero):
-            return "HUMAN", max(confidence, 0.85), "agree_human_short"
+            return "HUMAN", max(confidence, 0.92), "agree_human_short"
 
     # Both sides lean human
     if (
@@ -951,7 +983,7 @@ def _fuse_with_silero(
         and duration < pack["silero_quiet_duration"]
         and _looks_like_short_human(feats, silero)
     ):
-        return "HUMAN", max(confidence, 0.78), "agree_human_quiet"
+        return "HUMAN", max(confidence, 0.90), "agree_human_quiet"
 
     # Agent-protect: do NOT prefer HUMAN on uncertain MACHINE (was prefer_human_uncertain)
 
@@ -1240,7 +1272,7 @@ def analyze_audio(
         and not _is_voip_noise_burst(feats, silero)
         and not _is_blank(feats, silero)
     ):
-        status, confidence = "HUMAN", max(float(confidence), 0.86)
+        status, confidence = "HUMAN", max(float(confidence), 0.92)
         details["short_human_safety_override"] = True
         details["fuse_note"] = "short_human_greeting"
     # Removed uncertain_machine_to_human — it was the main AM→agent leak.
