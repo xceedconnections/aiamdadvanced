@@ -1071,11 +1071,11 @@
               <legend style="padding:0 .35rem">AMD engine mode</legend>
               <label class="inline">
                 <input type="radio" name="amd-mode" id="amd-mode-classic" value="classic" checked />
-                <strong>Classic</strong> — Hybrid (Heuristic + Silero) + confidence %
+                <strong>Classic</strong> — Hybrid + Silero + Whisper phrases + confidence %
               </label>
               <label class="inline">
                 <input type="radio" name="amd-mode" id="amd-mode-ml" value="ml" />
-                <strong>Advanced ML</strong> — XGBoost + Whisper on uncertain HUMAN
+                <strong>Advanced ML</strong> — XGBoost + Whisper refine
               </label>
             </fieldset>
 
@@ -1098,17 +1098,10 @@
               </select>
             </div>
 
-            <div id="amd-ml-options-block" class="hidden">
-              <label for="amd-ml-high">Minimum HUMAN confidence (%)</label>
-              <input id="amd-ml-high" type="number" min="50" max="99" step="1" value="85" />
-              <p class="hint" style="margin-top:0">
-                HUMAN at or above this % → agent only after Whisper check. Digit/IVR
-                readouts (e.g. “four four seven”) are blocked even at high %.
-                Below → Whisper; still HUMAN below this % → MACHINE.
-              </p>
+            <div id="amd-whisper-block" style="margin-top:.75rem">
               <label class="inline">
                 <input type="checkbox" id="amd-ml-whisper" checked />
-                Use Faster-Whisper on uncertain HUMAN only
+                Use local Speech-to-text (Faster-Whisper) for AMD
               </label>
               <label for="amd-ml-whisper-model">Speech-to-text model (free, local)</label>
               <select id="amd-ml-whisper-model">
@@ -1117,7 +1110,17 @@
                 <option value="small.en">small.en — best accuracy, slower CPU</option>
               </select>
               <p class="hint" style="margin-top:0">
-                First run downloads the model once. Remains free / offline. Restart not required after Save.
+                Applies to Classic and Advanced ML. First run downloads the model once (offline after that). Save reloads the model without restart.
+              </p>
+            </div>
+
+            <div id="amd-ml-options-block" class="hidden">
+              <label for="amd-ml-high">Minimum HUMAN confidence (%)</label>
+              <input id="amd-ml-high" type="number" min="50" max="99" step="1" value="85" />
+              <p class="hint" style="margin-top:0">
+                HUMAN at or above this % → agent only after Whisper check. Digit/IVR
+                readouts (e.g. “four four seven”) are blocked even at high %.
+                Below → Whisper; still HUMAN below this % → MACHINE.
               </p>
               <label class="inline">
                 <input type="checkbox" id="amd-ml-save-low" checked />

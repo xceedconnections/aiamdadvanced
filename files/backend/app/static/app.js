@@ -1413,10 +1413,10 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
         `Saved: Advanced ML — HUMAN ≥ ${pct}% → agent; below → Whisper then ${data.below_threshold_action}.${blankNote}`;
     } else if (data.enabled) {
       msg.textContent =
-        `Saved: Classic — HUMAN ≥ ${data.min_human_confidence_percent}% → agent; below → ${data.below_threshold_action}.${blankNote}`;
+        `Saved: Classic — HUMAN ≥ ${data.min_human_confidence_percent}% → agent; Whisper ${data.ml_whisper_enabled !== false ? (data.ml_whisper_model || "base.en") : "off"}; below → ${data.below_threshold_action}.${blankNote}`;
     } else {
       msg.textContent =
-        `Saved: Classic gate off — all HUMAN results pass to agents.${blankNote}`;
+        `Saved: Classic gate off — Whisper ${data.ml_whisper_enabled !== false ? (data.ml_whisper_model || "base.en") : "off"}; HUMAN results pass to agents.${blankNote}`;
     }
     if (data.ml_warmup_warning) {
       msg.textContent += ` (ML warmup: ${data.ml_warmup_warning})`;

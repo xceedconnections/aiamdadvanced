@@ -35,8 +35,14 @@ def _run_whisper(
 
     out: Dict[str, Any] = {"whisper_ok": False, "cue": "none", "transcript": ""}
     try:
+        from app.amd_settings import load_amd_settings
         from app.ai.whisper_amd import refine_with_whisper, whisper_available
 
+        cfg = load_amd_settings()
+        if not bool(cfg.get("ml_whisper_enabled", True)):
+            out["error"] = "whisper_disabled"
+            out["cue"] = "disabled"
+            return out
         if not whisper_available():
             out["error"] = "whisper_unavailable"
             return out
