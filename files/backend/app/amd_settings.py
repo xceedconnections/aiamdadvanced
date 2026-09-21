@@ -328,7 +328,11 @@ def apply_confidence_gate(
                 "short_human_greeting",
                 "agree_human_short",
                 "agree_human_quiet",
+                "uncertain_to_agent",
+                "human_short",
             )
+            or str(details.get("amd_stage") or "")
+            in ("uncertain_to_agent", "score_human", "whisper_human")
         ):
             return status, False
 

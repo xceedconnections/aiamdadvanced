@@ -1,11 +1,11 @@
 """
-OpenAMD Advanced AI Engine — Hybrid (Heuristic + Silero VAD)
+OpenAMD Advanced AI Engine — Hybrid stages (VAD + Whisper + score)
 
-Combines the Phase-3 outbound heuristic AMD rules with Silero VAD speech
-features. Prefer MACHINE when uncertain so answering machines are not sent
-to agents. Short live greetings ("hello") still reach agents when acoustics
-and Whisper agree. Blank / near-silent audio follows the AMD panel checkbox
-(BLANK/AA when ON, HUMAN when OFF — never a false MACHINE alone).
+Silero VAD and acoustic features describe speech structure. Faster-Whisper
+phrases and a machine score decide HUMAN vs MACHINE. Policy: hang up only on
+strong MACHINE evidence; UNCERTAIN → HUMAN so live customers are not discarded.
+Blank / near-silent audio follows the AMD panel checkbox
+(BLANK/AA when ON, HUMAN when OFF).
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ from app.amd_settings import is_blank_as_machine_enabled
 from app.locale_packs import resolve_locale_pack
 
 ENGINE_INFO = {
-    "name": "OpenAMD Hybrid (Heuristic + Silero)",
-    "model": "Rule-based acoustic features + Silero VAD ONNX",
-    "version": "5.1.3",
-    "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); optional XGBoost + Whisper",
+    "name": "OpenAMD Hybrid (VAD + Whisper + Score)",
+    "model": "Silero VAD + acoustic features + faster-whisper phrases + score",
+    "version": "6.0.0",
+    "runtime": "NumPy + SoundFile + ONNX Runtime (Silero); Faster-Whisper; optional XGBoost",
 }
 
 
@@ -886,8 +886,8 @@ def _classify_heuristic(
     ):
         return "MACHINE", 0.7
 
-    # Uncertain → MACHINE (agent-protect). Live hello must match short_human above.
-    return "MACHINE", 0.72
+    # Uncertain → HUMAN (customer-protect). Only clear AM evidence hangs up later.
+    return "HUMAN", 0.70
 
 
 def _fuse_with_silero(
@@ -1136,35 +1136,8 @@ def analyze_audio(
             },
         )
 
-    # Truncated / front-speech-then-silence VM/IVR openings — never to agents
-    if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
-        ms = int((time.perf_counter() - t0) * 1000)
-        return AnalysisResult(
-            status="MACHINE",
-            confidence=0.9,
-            processing_ms=ms,
-            audio_seconds=round(duration, 3),
-            details={
-                **feats,
-                "engine": "hybrid",
-                "locale_pack_enabled": bool(locale_pack_enabled),
-                "locale_pack": pack_name,
-                "blank_as_machine": is_blank_as_machine_enabled(),
-                "heuristic_status": h_status,
-                "heuristic_confidence": round(float(h_confidence), 4),
-                "fuse_note": "script_clip_structure",
-                "script_structure_block": True,
-                "ml_pipeline_enabled": False,
-                "silero": {
-                    "ok": bool(silero.get("ok")),
-                    "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
-                    "num_segments": int(silero.get("num_segments", 0)),
-                    "longest_speech_ms": round(float(silero.get("longest_speech_ms", 0.0)), 1),
-                    "mean_prob": round(float(silero.get("mean_prob", 0.0)), 4),
-                },
-            },
-        )
-
+    # Truncated / front-speech hints feed the scorer — do NOT hang up here
+    # (Whisper stage must confirm VM; early hang was discarding live hellos).
     status, confidence, fuse_note = _fuse_with_silero(
         h_status, h_confidence, feats, silero, pack
     )
@@ -1179,6 +1152,9 @@ def analyze_audio(
         "heuristic_confidence": round(float(h_confidence), 4),
         "fuse_note": fuse_note,
         "ml_pipeline_enabled": False,
+        "script_structure_hint": bool(
+            _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats)
+        ),
         "silero": {
             "ok": bool(silero.get("ok")),
             "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
@@ -1247,108 +1223,43 @@ def analyze_audio(
                     details["whisper_machine_from_text"] = True
         except Exception:
             whisper_non_human = False
-    # Dense/long greeting acoustics must not be overridden to HUMAN by short-human net
-    dense_greeting = (
-        float(feats.get("duration", 0.0)) >= 1.8
-        and (
-            float(feats.get("speech_ratio", 0.0)) >= 0.35
-            or float(silero.get("longest_speech_ms", 0.0) or 0) >= 1200
-            or float(feats.get("abs_speech_ms", 0.0)) >= 600
+
+    # Multi-stage final decision (Classic + Advanced):
+    # VAD/acoustics → Whisper phrases → score → high-conf MACHINE else HUMAN
+    try:
+        from app.ai.amd_decide import finalize_amd_decision
+
+        status, confidence = finalize_amd_decision(
+            status=status,
+            confidence=confidence,
+            feats=feats,
+            silero=silero,
+            audio=audio,
+            sr=sr,
+            details=details,
+            looks_short_human_fn=_looks_like_short_human,
+            looks_digit_fn=_looks_like_spoken_digit,
+            is_script_clip_fn=_is_truncated_script_clip,
+            is_front_script_fn=_is_front_speech_then_silence,
+            is_blank_fn=_is_blank,
+            is_voip_fn=_is_voip_noise_burst,
+            dispose_blank_fn=_dispose_blank_or_noise,
         )
-    )
-    # Agent-protect: confirm short live hello on Classic (no Whisper) and ML.
-    # Previously required Whisper cue human_short — Classic never set it, so
-    # real "hello" stayed MACHINE and agents starved vs stock 8369.
-    if (
-        status in ("MACHINE", "IVR")
-        and float(feats.get("beep", 0.0)) < 0.5
-        and float(feats.get("ringback", 0.0)) < 0.5
-        and (w_cue == "human_short" or not whisper_non_human)
-        and _looks_like_short_human(feats, silero)
-        and not whisper_non_human
-        and not dense_greeting
-        and not _is_truncated_script_clip(feats)
-        and not _is_front_speech_then_silence(feats)
-        and not _is_voip_noise_burst(feats, silero)
-        and not _is_blank(feats, silero)
-    ):
-        status, confidence = "HUMAN", max(float(confidence), 0.92)
-        details["short_human_safety_override"] = True
-        details["fuse_note"] = "short_human_greeting"
-    # Removed uncertain_machine_to_human — it was the main AM→agent leak.
-
-    # Final guard: never send agent a call whose Whisper text is clearly VM/IVR
-    if status == "HUMAN" and w_text:
-        try:
-            from app.ai.whisper_amd import classify_transcript, is_number_readout
-
-            w_status, w_conf, w_cue2 = classify_transcript(
-                w_text, audio_seconds=float(feats.get("duration") or 0)
-            )
-            if (
-                w_status == "MACHINE"
-                or is_number_readout(w_text)
-                or w_cue2 in ("voicemail", "ivr_digits", "ivr")
-                or str(w_cue2).startswith("custom_phrase")
-            ):
-                status = "MACHINE"
-                confidence = max(float(confidence), float(w_conf or 0.93), 0.93)
-                details["whisper_vm_final_block"] = True
-                details["fuse_note"] = w_cue2 or "voicemail"
-        except Exception:
-            pass
-
-    # Final guard: audible ringback must never reach agents
-    if status == "HUMAN" and float(feats.get("ringback", 0.0)) >= 0.5:
-        status = "MACHINE"
-        confidence = max(float(confidence), float(feats.get("ringback_conf", 0.93)), 0.93)
-        details["ringback_final_block"] = True
-        details["fuse_note"] = "ringback_tone"
-
-    # Final guard: ultra-short dense / front-speech-then-silence must never reach agents
-    if status == "HUMAN" and (
-        _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats)
-    ):
-        status = "MACHINE"
-        confidence = max(float(confidence), 0.9)
-        details["script_structure_final_block"] = True
-        details["fuse_note"] = "script_clip_structure"
-
-    # Safety net: spoken digit / IVR syllable must not reach agents
-    if status == "HUMAN" and _looks_like_spoken_digit(feats, silero):
-        status, confidence = "MACHINE", max(float(confidence), 0.9)
-        details["digit_safety_override"] = True
-        details["fuse_note"] = "spoken_digit_machine"
-
-    # Safety net: blank / voip-noise — AA or agent per blank checkbox (never VM)
-    if status in ("HUMAN", "MACHINE") and (
-        _is_voip_noise_burst(feats, silero) or _is_blank(feats, silero)
-    ):
-        # Do not override a clear short hello that already passed as HUMAN
-        if status == "HUMAN" and _looks_like_short_human(feats, silero) and not _is_blank(
-            feats, silero
+        details["engine"] = "hybrid+stages"
+        details["whisper_non_human"] = bool(whisper_non_human)
+    except Exception as exc:
+        details["amd_decide_error"] = str(exc)
+        # Fallback: short live hello still must reach agents
+        if (
+            status in ("MACHINE", "IVR")
+            and float(feats.get("beep", 0.0)) < 0.5
+            and float(feats.get("ringback", 0.0)) < 0.5
+            and _looks_like_short_human(feats, silero)
+            and not whisper_non_human
         ):
-            pass
-        else:
-            b_status, b_conf, b_note = _dispose_blank_or_noise()
-            status, confidence = b_status, max(float(confidence), b_conf)
-            details["blank_safety_override"] = True
-            details["fuse_note"] = b_note
-
-    # If Whisper ran but gave no human cue, do not send sparse uncertain HUMAN to agents
-    if (
-        status == "HUMAN"
-        and details.get("ml")
-        and isinstance(details.get("ml"), dict)
-        and details["ml"].get("whisper_used")
-        and w_cue not in ("human_short",)
-        and not whisper_non_human
-        and not _looks_like_short_human(feats, silero)
-    ):
-        status = "MACHINE"
-        confidence = max(float(confidence), 0.88)
-        details["no_human_whisper_cue_block"] = True
-        details["fuse_note"] = "whisper_no_human_cue"
+            status, confidence = "HUMAN", max(float(confidence), 0.92)
+            details["short_human_safety_override"] = True
+            details["fuse_note"] = "short_human_greeting"
 
     ms = int((time.perf_counter() - t0) * 1000)
     return AnalysisResult(

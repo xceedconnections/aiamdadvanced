@@ -227,9 +227,9 @@ def run_ml_pipeline(
         if looks_digit:
             details["ml_note"] = (details.get("ml_note") or "") + "+digit_machine"
             return "MACHINE", 0.9, details
-        # Agent-protect: Whisper gave no cue — keep MACHINE (do not flip to HUMAN)
-        details["ml_note"] = (details.get("ml_note") or "") + "+keep_machine_no_whisper_cue"
-        return "MACHINE", max(float(conf), 0.85), details
+        # No Whisper VM cue → send to agent (uncertain MACHINE was discarding humans)
+        details["ml_note"] = (details.get("ml_note") or "") + "+uncertain_machine_to_agent"
+        return "HUMAN", max(float(conf), 0.88), details
 
     # Answering machine / IVR / SIT / BLANK with strong evidence → accept
     if status != "HUMAN":

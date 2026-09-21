@@ -1,0 +1,256 @@
+"""Multi-stage AMD final decision (OpenAMD 6.x policy).
+
+Stages:
+  1) Acoustic / Silero VAD features (already computed)
+  2) faster-whisper transcript (Classic + Advanced)
+  3) Phrase + timing score
+
+Decision philosophy (outbound call center):
+  - Only hang as MACHINE with strong evidence (beep, ringback, VM/IVR phrases,
+    or a high machine score).
+  - UNCERTAIN → HUMAN (false VM discards customers; false HUMAN is recoverable).
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional, Tuple
+
+
+def _machine_cue(cue: str) -> bool:
+    c = str(cue or "")
+    return c in ("voicemail", "ivr", "ivr_digits", "digits") or c.startswith("custom_phrase")
+
+
+def _run_whisper(
+    audio,
+    sr: int,
+    *,
+    existing: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return whisper detail dict with optional status/conf/cue/transcript."""
+    if isinstance(existing, dict) and (
+        existing.get("transcript") or existing.get("cue") or existing.get("whisper_ok")
+    ):
+        return dict(existing)
+
+    out: Dict[str, Any] = {"whisper_ok": False, "cue": "none", "transcript": ""}
+    try:
+        from app.ai.whisper_amd import refine_with_whisper, whisper_available
+
+        if not whisper_available():
+            out["error"] = "whisper_unavailable"
+            return out
+        status, conf, details = refine_with_whisper(
+            audio, sr, xgb_probs={}, max_seconds=4.0
+        )
+        out = {**details, "whisper_ok": bool(details.get("whisper_ok", True))}
+        if status:
+            out["status"] = status
+            out["confidence"] = float(conf)
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)
+        return out
+
+
+def score_amd(
+    *,
+    feats: Dict[str, float],
+    silero: Dict[str, Any],
+    whisper: Dict[str, Any],
+    looks_short_human: bool,
+    looks_digit: bool,
+    script_clip: bool,
+    front_script: bool,
+    dense_greeting: bool,
+) -> Tuple[int, str]:
+    """Return (machine_score, note). Higher → more MACHINE."""
+    score = 0
+    parts: list[str] = []
+
+    cue = str(whisper.get("cue") or "")
+    w_status = str(whisper.get("status") or "")
+    transcript = str(whisper.get("transcript") or "").strip()
+
+    if _machine_cue(cue) or w_status == "MACHINE":
+        score += 80
+        parts.append(f"whisper_vm:{cue or 'machine'}")
+    elif cue == "human_short" or w_status == "HUMAN":
+        score -= 65
+        parts.append("whisper_human")
+    elif transcript and len(transcript.split()) >= 6:
+        # Long unrecognized speech leans machine (scripted greeting)
+        score += 25
+        parts.append("long_transcript")
+
+    duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    s_long = float(silero.get("longest_speech_ms", 0.0) or 0.0)
+    s_segs = int(silero.get("num_segments", 0) or 0)
+
+    if looks_short_human:
+        score -= 55
+        parts.append("short_human")
+    if looks_digit and not looks_short_human:
+        score += 45
+        parts.append("spoken_digit")
+    if script_clip:
+        score += 35
+        parts.append("truncated_script")
+    if front_script and not looks_short_human:
+        score += 30
+        parts.append("front_script")
+    if dense_greeting:
+        score += 20
+        parts.append("dense_greeting")
+    if duration >= 2.5 and speech_ratio >= 0.35:
+        score += 15
+        parts.append("long_speech")
+    if s_long >= 1200 and s_segs >= 2:
+        score += 15
+        parts.append("silero_long")
+    if longest_burst >= 1100 and speech_ratio >= 0.38:
+        score += 15
+        parts.append("long_burst")
+
+    # Very loud single short syllable → live pickup
+    peak = float(feats.get("peak", 0.0))
+    if peak >= 0.20 and looks_short_human:
+        score -= 20
+        parts.append("loud_hello")
+
+    note = "+".join(parts) if parts else "neutral"
+    return int(score), note
+
+
+def finalize_amd_decision(
+    *,
+    status: str,
+    confidence: float,
+    feats: Dict[str, float],
+    silero: Dict[str, Any],
+    audio,
+    sr: int,
+    details: Dict[str, Any],
+    looks_short_human_fn,
+    looks_digit_fn,
+    is_script_clip_fn,
+    is_front_script_fn,
+    is_blank_fn,
+    is_voip_fn,
+    dispose_blank_fn,
+) -> Tuple[str, float]:
+    """Apply multi-stage policy; mutates details. Returns (status, confidence)."""
+    st = str(status or "MACHINE").upper()
+    conf = float(confidence)
+
+    # Hard acoustic locks (never send to agent)
+    if float(feats.get("beep", 0.0)) >= 0.5:
+        details["amd_stage"] = "hard_beep"
+        details["fuse_note"] = "beep"
+        return "MACHINE", max(conf, 0.95)
+    if float(feats.get("ringback", 0.0)) >= 0.5:
+        details["amd_stage"] = "hard_ringback"
+        details["fuse_note"] = "ringback_tone"
+        return "MACHINE", max(conf, float(feats.get("ringback_conf", 0.93)), 0.93)
+    if float(feats.get("sit", 0.0)) >= 0.5:
+        details["amd_stage"] = "hard_sit"
+        details["fuse_note"] = "sit"
+        return "SIT", max(conf, 0.9)
+
+    if is_blank_fn(feats, silero) or is_voip_fn(feats, silero):
+        # Keep clear short hello HUMAN; otherwise blank checkbox path
+        if st == "HUMAN" and looks_short_human_fn(feats, silero) and not is_blank_fn(
+            feats, silero
+        ):
+            pass
+        else:
+            b_status, b_conf, b_note = dispose_blank_fn()
+            details["amd_stage"] = "blank_dispose"
+            details["fuse_note"] = b_note
+            details["blank_safety_override"] = True
+            return b_status, max(conf, b_conf)
+
+    looks_human = bool(looks_short_human_fn(feats, silero))
+    looks_digit = bool(looks_digit_fn(feats, silero))
+    script_clip = bool(is_script_clip_fn(feats))
+    front_script = bool(is_front_script_fn(feats))
+    dense_greeting = (
+        float(feats.get("duration", 0.0)) >= 1.8
+        and (
+            float(feats.get("speech_ratio", 0.0)) >= 0.35
+            or float(silero.get("longest_speech_ms", 0.0) or 0) >= 1200
+            or float(feats.get("abs_speech_ms", 0.0)) >= 600
+        )
+    )
+
+    # Stage 2: Whisper (Classic and Advanced). Reuse ML whisper if present.
+    ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+    existing_w = ml_block.get("whisper") if isinstance(ml_block.get("whisper"), dict) else None
+    whisper = _run_whisper(audio, sr, existing=existing_w)
+    details["whisper_stage"] = whisper
+    if whisper.get("transcript") or whisper.get("cue"):
+        details["whisper_used"] = True
+        # Mirror into ml.whisper shape for portal badges when Classic
+        if not ml_block:
+            details["ml"] = {
+                "whisper": whisper,
+                "whisper_used": True,
+                "ml_note": "classic_whisper_stage",
+            }
+        elif not isinstance(ml_block.get("whisper"), dict):
+            ml_block["whisper"] = whisper
+            ml_block["whisper_used"] = True
+
+    cue = str(whisper.get("cue") or "")
+    w_status = str(whisper.get("status") or "")
+    w_conf = float(whisper.get("confidence") or 0.0)
+
+    # Strong Whisper MACHINE / HUMAN overrides
+    if _machine_cue(cue) or w_status == "MACHINE":
+        details["amd_stage"] = "whisper_machine"
+        details["fuse_note"] = cue or "voicemail"
+        details["short_human_safety_override"] = False
+        return "MACHINE", max(conf, w_conf, 0.93)
+
+    if cue == "human_short" or w_status == "HUMAN":
+        details["amd_stage"] = "whisper_human"
+        details["fuse_note"] = "human_short"
+        details["short_human_safety_override"] = True
+        return "HUMAN", max(conf, w_conf, 0.92)
+
+    score, score_note = score_amd(
+        feats=feats,
+        silero=silero,
+        whisper=whisper,
+        looks_short_human=looks_human,
+        looks_digit=looks_digit,
+        script_clip=script_clip,
+        front_script=front_script,
+        dense_greeting=dense_greeting,
+    )
+    details["amd_score"] = score
+    details["amd_score_note"] = score_note
+
+    # High machine score only
+    if score >= 70:
+        details["amd_stage"] = "score_machine"
+        details["fuse_note"] = f"score_{score}:{score_note}"
+        return "MACHINE", max(conf, 0.90)
+
+    # Clear short live pickup
+    if looks_human and score <= 40:
+        details["amd_stage"] = "score_human"
+        details["fuse_note"] = "short_human_greeting"
+        details["short_human_safety_override"] = True
+        return "HUMAN", max(conf, 0.92)
+
+    # UNCERTAIN → HUMAN (do not discard customers)
+    details["amd_stage"] = "uncertain_to_agent"
+    details["fuse_note"] = "uncertain_to_agent"
+    details["short_human_safety_override"] = True
+    # Preserve explicit HUMAN; flip weak MACHINE/IVR to agent
+    if st in ("MACHINE", "IVR", "ERROR") or st == "HUMAN":
+        return "HUMAN", max(conf, 0.90)
+    return "HUMAN", max(conf, 0.90)
