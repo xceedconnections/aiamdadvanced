@@ -202,7 +202,7 @@ def run_ml_pipeline(
                 feats, silero
             ):
                 details["ml_note"] = note + "_voip_noise_after_whisper"
-                return "BLANK", 0.95
+                return _dispose_blank_or_noise()
         except Exception as exc:
             details["whisper_error"] = str(exc)
             details["ml_note"] = note + "_whisper_error"

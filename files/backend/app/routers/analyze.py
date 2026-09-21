@@ -96,21 +96,36 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Empty / near-empty WAV = blank silence. Never HTTP 400 → stock AMD 8369
-    # (8369 can classify silence as HUMAN and send to agents). Dispose as
-    # BLANK internally; VICIdial AGI receives MACHINE and hangs up.
+    # Empty / near-empty WAV = blank silence.
+    # Checkbox ON  → BLANK → VICIdial MACHINE (AA hangup)
+    # Checkbox OFF → HUMAN → agent (delayed pickup / quiet answer)
     if len(raw) < 100:
+        from app.amd_settings import is_blank_as_machine_enabled
+
+        blank_as_aa = is_blank_as_machine_enabled()
+        if blank_as_aa:
+            portal_status = "BLANK"
+            vicidial_status = "MACHINE"
+            fuse_note = "blank_silence_empty_file"
+        else:
+            portal_status = "HUMAN"
+            vicidial_status = "HUMAN"
+            fuse_note = "blank_to_agent_empty_file"
+
         details = {
             "blank_empty_upload": True,
             "audio_bytes": len(raw),
-            "raw_status": "BLANK",
-            "vicidial_status": "MACHINE",
-            "ml_note": "blank_silence_empty_file",
+            "raw_status": portal_status,
+            "vicidial_status": vicidial_status,
+            "blank_as_machine": blank_as_aa,
+            "fuse_note": fuse_note,
+            "ml_note": fuse_note,
             "called_number": called_number,
             "caller_id": caller_id,
             "ani": ani_value,
             "cps_admitted_prior": already,
             "max_cps": int(getattr(server, "max_cps", 0) or 0),
+            "short_human_safety_override": not blank_as_aa,
         }
         row = CallAnalysis(
             server_id=server.id,
@@ -119,9 +134,9 @@ async def analyze(
             caller_id=caller_id,
             called_number=called_number,
             ani=ani_value,
-            status="BLANK",
-            raw_status="BLANK",
-            confidence=0.99,
+            status=portal_status,
+            raw_status=portal_status,
+            confidence=0.99 if blank_as_aa else 0.92,
             processing_ms=0,
             audio_seconds=0.0,
             audio_path="",
@@ -135,8 +150,8 @@ async def analyze(
         db.commit()
         db.refresh(row)
         return AnalyzeResponse(
-            status="MACHINE",
-            confidence=0.99,
+            status=vicidial_status,
+            confidence=0.99 if blank_as_aa else 0.92,
             processing_ms=0,
             callid=callid,
             analysis_id=row.id,

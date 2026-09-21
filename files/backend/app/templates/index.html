@@ -1143,7 +1143,9 @@
               Classify blank / silent calls as BLANK (VICIdial AA)
             </label>
             <p class="hint" style="margin-top:0">
-              Always applies globally (Classic and Advanced ML). Blank audio is never sent to agents; VICIdial receives MACHINE (AA).
+              Always applies globally (Classic and Advanced ML).
+              <strong>Checked:</strong> blank/silent → BLANK → VICIdial MACHINE (AA hangup).
+              <strong>Unchecked:</strong> blank/silent → HUMAN → agent (for delayed pickups).
             </p>
 
             <button type="submit">Save settings</button>
