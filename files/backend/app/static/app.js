@@ -480,17 +480,18 @@ function audioButtons(r) {
   const tip = escapeHtml(r.recording_filename || r.call_id || `id-${r.id}`);
   const callAttr = encodeURIComponent(r.call_id || "");
   const missing = !r.has_recording;
+  const bytes = Number(r.recording_bytes || 0);
   const status = String(r.status || r.raw_status || "").toUpperCase();
-  // Empty/tiny WAV disposed as BLANK — nothing to play or relink
-  if (missing && status === "BLANK") {
+  // Header-only / missing file cannot be relinked — there is no PCM to recover
+  if (missing || (bytes > 0 && bytes <= 50)) {
+    const label = status === "BLANK" ? "no audio (blank)" : "no audio";
     return `<div class="audio-actions">
-      <span class="audio-blank" title="Empty or silent capture — hung up as MACHINE (AA)">no audio (blank)</span>
+      <span class="audio-blank" title="No playable audio was saved for this call">${label}</span>
     </div>`;
   }
   return `<div class="audio-actions">
-    <button type="button" class="btn-icon play" title="${missing ? "Recording may be missing — try play" : "Play " + tip}" data-play-id="${r.id}" data-call-id="${callAttr}">▶ Play</button>
+    <button type="button" class="btn-icon play" title="Play ${tip}" data-play-id="${r.id}" data-call-id="${callAttr}">▶ Play</button>
     <a class="btn-icon download" title="Download ${tip}" href="${recordingUrl(r.id, "download")}">⬇</a>
-    ${missing ? `<span class="audio-missing">relink…</span>` : ""}
   </div>`;
 }
 

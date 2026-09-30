@@ -293,14 +293,37 @@ def finalize_amd_decision(
         details["internal_status"] = "MACHINE"
         return "MACHINE", max(conf, 0.90)
 
-    if looks_human and score <= 40:
+    peak = float(feats.get("peak", 0.0))
+    duration = float(feats.get("duration", 0.0))
+    speech_ratio = float(feats.get("speech_ratio", 0.0))
+    # Truncated carrier VM ("…forwarded") is a loud dense blip under ~1s
+    truncated_vm = duration < 1.15 and speech_ratio >= 0.42 and peak >= 0.15
+    whisper_said_something = bool(transcript) and cue not in ("none", "hallucination", "")
+    loud_hello = looks_human and peak >= 0.12 and not truncated_vm
+
+    if loud_hello and score <= 40 and not whisper_said_something:
         details["amd_stage"] = "score_human"
         details["fuse_note"] = "short_human_greeting"
         details["short_human_safety_override"] = True
         details["internal_status"] = "HUMAN"
         return "HUMAN", max(conf, 0.92)
 
-    # UNCERTAIN → HUMAN for VICIdial; portal keeps internal_status
+    # Whisper heard words that are not a live greeting, or a dense short VM cut
+    if truncated_vm or (whisper_said_something and cue not in ("human_short",)):
+        details["amd_stage"] = "non_greeting_machine"
+        details["fuse_note"] = cue or "truncated_or_non_greeting"
+        details["short_human_safety_override"] = False
+        details["internal_status"] = "MACHINE"
+        return "MACHINE", max(conf, 0.90)
+
+    # Quiet clip + no Whisper hello → do not send to agents
+    if not loud_hello:
+        details["amd_stage"] = "no_clear_hello"
+        details["fuse_note"] = "no_clear_hello"
+        details["short_human_safety_override"] = False
+        details["internal_status"] = "MACHINE"
+        return "MACHINE", max(conf, 0.88)
+
     details["amd_stage"] = "uncertain_to_agent"
     details["fuse_note"] = "uncertain_to_agent"
     details["short_human_safety_override"] = True

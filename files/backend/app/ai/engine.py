@@ -29,7 +29,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (VAD + Whisper + XGB + Score)",
     "model": "Silero VAD + Whisper phrases + XGBoost + Asterisk AMD + score",
-    "version": "6.1.0",
+    "version": "6.1.1",
     "runtime": "NumPy + SoundFile + ONNX (Silero) + Faster-Whisper + XGBoost",
 }
 

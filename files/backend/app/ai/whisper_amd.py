@@ -42,6 +42,8 @@ _MACHINE_RE = re.compile(
     r"you(?:'re|\s+are)\s+calling|"
     # "You have reached. Mail." / "you've reached the voicemail of…"
     r"you\s+have\s+reached|you'?ve\s+reached|you\s+reached|"
+    # Truncated "…been forwarded" often becomes "pressing/open/stand forward"
+    r"forward(?:ed)?|"
     r"reached\s+(the\s+)?(mailbox|voicemail|voice\s*mail|mail)|"
     r"please\s+leave\s+(a\s+)?message|"
     r"no\s+one\s+is\s+available|forwarded\s+to\s+an?\s+automati(?:c|ed)|"
@@ -157,7 +159,8 @@ _AMD_INITIAL_PROMPT = (
     "Message system. One. Voicemail. Mailbox is full and there is not. "
     "If you have not been set up yet, please try your call again later. "
     "The person you are calling is not available. "
-    "Please leave a message after the beep. Press one for English."
+    "Please leave a message after the beep. Press one for English. "
+    "Your call has been forwarded. Zero. One. Two."
 )
 
 
@@ -337,6 +340,10 @@ def classify_transcript(
         return "MACHINE", max(0.94, float(probs.get("MACHINE", 0.5))), "ivr_digits"
     if re.search(r"\bplease\s+try\s+your\b", t, re.I) and not _HUMAN_RE.search(t):
         return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "ivr_digits"
+    # Whisper often writes spoken "zero" as "There." on UK telephony
+    if re.fullmatch(r"\s*(there|their|they'?re|zero|nought|oh)\.?\s*", t, re.I):
+        if not is_hello_mishear(t, audio_seconds=audio_seconds):
+            return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "ivr_digits"
     # Live hello only when the whole clip is a short greeting — not "Hi" + VM script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         if re.search(
