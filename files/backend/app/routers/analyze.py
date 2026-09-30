@@ -98,19 +98,19 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Empty / near-empty WAV = blank silence.
-    # Checkbox ON  → BLANK → VICIdial MACHINE (AA hangup)
-    # Checkbox OFF → HUMAN → agent (delayed pickup / quiet answer)
+    # Empty / near-empty WAV = no playable audio was captured.
+    # Portal always shows BLANK (truth in CDR). VICIdial routing follows the checkbox:
+    #   ON  → MACHINE (AA hangup)
+    #   OFF → HUMAN (send quiet/empty pickup to agent)
     if len(raw) < 100:
         from app.amd_settings import is_blank_as_machine_enabled
 
         blank_as_aa = is_blank_as_machine_enabled()
+        portal_status = "BLANK"
         if blank_as_aa:
-            portal_status = "BLANK"
             vicidial_status = "MACHINE"
             fuse_note = "blank_silence_empty_file"
         else:
-            portal_status = "HUMAN"
             vicidial_status = "HUMAN"
             fuse_note = "blank_to_agent_empty_file"
 
@@ -143,9 +143,9 @@ async def analyze(
             audio_seconds=0.0,
             audio_path="",
             audio_saved=False,
-            audio_blob=raw if raw else None,
+            audio_blob=None,
             features_json=json.dumps(details),
-            error_message="",
+            error_message=f"empty upload ({len(raw)} bytes) → VICIdial {vicidial_status}",
         )
         db.add(row)
         server.last_seen = datetime.utcnow()

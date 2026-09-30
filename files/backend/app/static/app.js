@@ -484,9 +484,11 @@ function audioButtons(r) {
   const status = String(r.status || r.raw_status || "").toUpperCase();
   // Header-only / missing file cannot be relinked — there is no PCM to recover
   if (missing || (bytes > 0 && bytes <= 50)) {
-    const label = status === "BLANK" ? "no audio (blank)" : "no audio";
+    const fuse = String(r.fuse_note || "");
+    const emptyUpload = fuse.includes("empty_file") || Number(r.processing_ms || 0) === 0 && status === "BLANK";
+    const label = emptyUpload || status === "BLANK" ? "no audio (blank)" : "no audio";
     return `<div class="audio-actions">
-      <span class="audio-blank" title="No playable audio was saved for this call">${label}</span>
+      <span class="audio-blank" title="No playable audio was saved for this call — Record was empty or missing on the dialer">${label}</span>
     </div>`;
   }
   return `<div class="audio-actions">
