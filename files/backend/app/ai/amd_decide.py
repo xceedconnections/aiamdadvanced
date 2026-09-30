@@ -47,7 +47,7 @@ def _run_whisper(
             out["error"] = "whisper_unavailable"
             return out
         status, conf, details = refine_with_whisper(
-            audio, sr, xgb_probs={}, max_seconds=4.0
+            audio, sr, xgb_probs={}, max_seconds=5.0
         )
         out = {**details, "whisper_ok": bool(details.get("whisper_ok", True))}
         if status:

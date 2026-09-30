@@ -26,7 +26,8 @@ _DEFAULT_WHISPER_MODEL = "base.en"
 # Phrase cues (English NA + common IVR). Tiny often mishears "person" as "passion".
 _MACHINE_RE = re.compile(
     r"\b("
-    r"leave\s+(a\s+)?message|voicemails?|voice\s*mails?|not\s+available|unavailable|"
+    r"leave\s+(a\s+)?message|voicemails?|voice\s*mails?|voda\s*fone|vodafone|"
+    r"not\s+available|unavailable|"
     r"can'?t\s+take\s+your\s+call|unable\s+to\s+take|after\s+the\s+(tone|beep|sound)|"
     r"at\s+the\s+(tone|beep)|record\s+your\s+(message|name)|please\s+leave|mailbox|"
     r"if\s+you\s+record|record\s+your\s+name\s+and|"
@@ -160,7 +161,8 @@ _AMD_INITIAL_PROMPT = (
     "If you have not been set up yet, please try your call again later. "
     "The person you are calling is not available. "
     "Please leave a message after the beep. Press one for English. "
-    "Your call has been forwarded. Zero. One. Two."
+    "Your call has been forwarded. Zero. One. Two. "
+    "Welcome to Vodafone voicemail. The person you are calling is not available."
 )
 
 
@@ -462,7 +464,7 @@ def _trim_to_speech(clip, sr: int = 16000):
     b = min(n, int(idx[-1]) + pad + 1)
     out = clip[a * frame : b * frame]
     # Cap speech window — AMD greetings are short; long silence invites Tiny hallucinations
-    max_len = int(sr * 2.2)
+    max_len = int(sr * 4.8)
     if len(out) > max_len:
         # Keep densest energy block
         out = out[:max_len]
