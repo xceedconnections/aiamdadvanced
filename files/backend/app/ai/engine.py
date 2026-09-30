@@ -262,6 +262,10 @@ def _is_blank(
     if peak < 0.008:
         return True
 
+    # Real speech must reach Whisper. Do not label it BLANK.
+    if _has_audible_voice(feats):
+        return False
+
     # Quiet carrier / line noise with no absolute speech → blank (not HUMAN)
     if _is_line_noise_only(feats):
         return True
