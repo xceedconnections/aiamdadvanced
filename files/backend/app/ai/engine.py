@@ -274,10 +274,6 @@ def _is_blank(
     if _is_voip_noise_burst(feats, silero):
         return True
 
-    # Any clear voice → never blank (human hello or short VM fragment)
-    if _has_audible_voice(feats):
-        return False
-
     # Short clip with no usable voice energy
     if duration < 0.55:
         return True
