@@ -92,23 +92,33 @@ def _normalize_for_match(text: str) -> str:
 
 
 def _match_phrase_flexible(text: str, phrase: str) -> bool:
-    """Exact phrase, or any contiguous 3+ word core from the phrase (handles Whisper wording drift)."""
+    """Match phrase anywhere in the transcript (start, middle, or end).
+
+    Also accepts any contiguous 2+ word core from a longer custom line so Whisper
+    wording drift still hits (e.g. full forwarded… line vs \"been forwarded\").
+    """
     t = _normalize_for_match(text)
     p = _normalize_for_match(phrase)
     if not t or not p:
         return False
+    # Plain substring — works when the phrase sits in the middle of a longer clip
+    if p in t:
+        return True
     if _phrase_to_pattern(p).search(t):
         return True
     words = p.split()
-    if len(words) < 3:
+    if len(words) < 2:
         return False
     # Long custom lines often start differently than Tiny/Base transcripts
     # ("your call has been forwarded…" vs "It's been forwarded…").
-    min_core = 3 if len(words) <= 5 else 4
+    # Slide across the WHOLE phrase (middle cores included), not only the start.
+    min_core = 2 if len(words) <= 4 else 3
     for length in range(len(words), min_core - 1, -1):
         for i in range(0, len(words) - length + 1):
             core = " ".join(words[i : i + length])
-            if _phrase_to_pattern(core).search(t):
+            if len(core) < 4:
+                continue
+            if core in t or _phrase_to_pattern(core).search(t):
                 return True
     return False
 
@@ -164,7 +174,7 @@ def _ensure_words() -> list[str]:
 
 
 def match_custom_machine_phrase(text: str) -> str | None:
-    """If transcript matches a custom phrase (or a 3–4+ word core of it), return that phrase."""
+    """If transcript contains a custom phrase (anywhere) or a 2+ word core of it, return that phrase."""
     t = (text or "").strip()
     if not t:
         return None

@@ -782,10 +782,10 @@
             <button class="ghost" type="button" id="machine-phrases-save">Save phrases</button>
           </div>
           <p class="hint">
-            When speech-to-text hears any of these words or phrases in the AMD clip, the call is disposed as
-            <strong>MACHINE</strong>. One phrase per line. Matching is flexible: a long line still hits if a
-            3–4+ word core appears (e.g. your full “forwarded…” line still matches
-            “It's been forwarded to an automatic voice message”).
+            When speech-to-text hears any of these words or phrases <strong>anywhere</strong> in the AMD clip
+            (beginning, middle, or end), the call is disposed as <strong>MACHINE</strong>. One phrase per line.
+            Matching is flexible: a long line still hits if a 2–3+ word core appears in the middle
+            (e.g. your full “forwarded…” line still matches “It's been forwarded to an automatic voice message”).
             Built-in cues stay active even if this list is empty.
           </p>
           <textarea

@@ -625,6 +625,7 @@ document.addEventListener("click", (e) => {
 });
 
 $("#player-close")?.addEventListener("click", stopPlayer);
+$("#player-audio")?.addEventListener("ended", () => stopPlayer());
 
 async function loadDashboard() {
   const [s, system, live, hourly] = await Promise.all([
@@ -2651,7 +2652,7 @@ async function saveMachinePhrases() {
     ta.value = saved.join("\n");
     if (msg) {
       msg.className = "hint";
-      msg.textContent = `Saved ${saved.length} phrase(s). Matching transcripts count as MACHINE/VM.`;
+      msg.textContent = `Saved ${saved.length} phrase(s). Matching anywhere in the transcript counts as MACHINE/VM.`;
     }
   } catch (err) {
     if (msg) {
