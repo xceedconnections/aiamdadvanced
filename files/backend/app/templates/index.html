@@ -478,13 +478,13 @@
 
               <label for="server-max-cps">Max CPS (calls per second to AI AMD)</label>
               <input name="max_cps" id="server-max-cps" type="number" min="0" max="10000" step="1" value="0" />
-              <p class="hint">Example: <strong>50</strong> = AI AMD accepts at most 50 calls/sec from this dialer. Overflow is rejected and VICIdial uses stock AMD <strong>8369</strong> (same as when AI AMD is offline). <strong>0</strong> = unlimited.</p>
+              <p class="hint">Example: <strong>50</strong> = AI AMD accepts at most 50 calls/sec from this dialer. Overflow is rejected (HTTP 429). On hybrid campaign extension <strong>8399</strong>, the dialer falls back to <strong>8389-style human-only hangup</strong> (not necessarily Goto 8369). Same when AI AMD is offline. <strong>0</strong> = unlimited.</p>
 
               <label class="inline" style="margin-top:.75rem">
                 <input type="checkbox" id="server-scam-protection" />
                 <strong>SCAM protection</strong> — full agent-call recording upload (vicidialaiamdscammerchecker)
               </label>
-              <p class="hint">When ON, dialers installed with the <strong>scammerchecker</strong> package upload the agent leg to AIAMD for bank/card phrase review. AMD extension <strong>8399</strong> is unchanged. Use normal <code>vicidialaiamd</code> on dialers that should not record full calls.</p>
+              <p class="hint">When ON, dialers installed with the <strong>scammerchecker</strong> package upload the agent leg to AIAMD for bank/card phrase review. Campaign AMD extensions: <strong>8369</strong> stock | <strong>8389</strong> human-only | <strong>8399</strong> hybrid (stock HUMAN + AIAMD for non-HUMAN; AIAMD down = 8389 hangup). Scam MixMonitor still runs only on agent-bound 8399 HUMAN paths. Use normal <code>vicidialaiamd</code> on dialers that should not record full calls.</p>
               <label for="server-scam-record-seconds" style="margin-top:.5rem">SCAM record length (seconds)</label>
               <input name="scam_record_seconds" id="server-scam-record-seconds" type="number" min="30" max="600" step="10" value="120" />
               <p class="hint">How long to MixMonitor the agent call before stop+upload (example: <strong>120</strong> = 2 min, <strong>180</strong> = 3 min). Range 30–600. Controlled here — dialer reads it from AIAMD on each call.</p>

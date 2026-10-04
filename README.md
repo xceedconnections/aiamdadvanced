@@ -129,9 +129,9 @@ Or run full `install.sh` again (safe on an existing server).
 
 ---
 
-# OpenAMD for ViciBox / VICIdial (extension 8399)
+# OpenAMD for ViciBox / VICIdial (extensions 8369 / 8389 / 8399)
 
-Installs OpenAMD **AGI + exact extension 8399** on a ViciBox / VICIdial dialer (Asterisk).
+Installs OpenAMD **AGI + AMD routing extensions** on a ViciBox / VICIdial dialer (Asterisk).
 
 AI AMD Advanced server install (Ubuntu portal):  
 https://github.com/xceedconnections/aiamdadvanced
@@ -168,21 +168,35 @@ bash /root/vicidialaiamd/vicibox_install.sh https://aiamd.xceedconnections.com o
 bash /root/vicidialaiamd/vicibox_install.sh 204.168.200.221 oam_YOUR_API_KEY
 ```
 
+For SCAMMER full-call recording dialers, use:
+
+https://github.com/xceedconnections/vicidialaiamdscammerchecker
+
 ## What this installs
 
 1. `/etc/asterisk/openamd.conf` (URL + API key)
 2. `openamd.agi` (Caller ID / Called Number aware)
-3. Exact extension **8399** (HUMAN → agent, MACHINE → hangup)
-4. Local-presence metadata store for **any** VICIdial dial prefix  
+3. `VD_amd_human_only.agi` (HUMAN/PERSON only — never overwrites system `VD_amd.agi`)
+4. AMD routing extensions:
+   - **8369** stock Vicidial AMD (untouched)
+   - **8389** human-only (stock AMD; only HUMAN/PERSON → agent; else AA hangup)
+   - **8399** hybrid (stock AMD HUMAN → agent; else AIAMD; AIAMD down/CPS → **8389-style hangup**, not Goto 8369)
+5. Local-presence metadata store for **any** VICIdial dial prefix  
    (`_8.` `_9.` `_87899.` `_94455.` `_94556.` `_6.` etc.)  
    Called Number is taken from that pattern's `Dial(...${EXTEN:N}...)`  
    (works with CURL / RAND Caller ID — does **not** change `Dial()` destinations)
 
 ## Campaign setting
 
-Set VICIdial campaign AMD / routing extension to: **8399**
+| Extension | Use when |
+|-----------|----------|
+| **8369** | Stock Vicidial AMD only |
+| **8389** | Human-only stock AMD (NOTSURE/MACHINE/etc. hang up) |
+| **8399** | Hybrid: stock HUMAN fast-path + AIAMD second opinion for non-HUMAN |
 
-Stock VICIdial AMD on **8369** is not modified.
+Leave **AMD Agent Route Options** blank/disabled for 8389 and 8399 (do not add NOTSURE/MACHINE pairs — those would send AAs to agents). WaitForSilence `2000,2,30` is optional and not required for this routing.
+
+CPS overflow / AIAMD offline on hybrid **8399** → dialer uses **8389-style hangup**, not necessarily Goto 8369.
 
 ## Folder contents
 
@@ -192,6 +206,7 @@ remote-install.sh               # GitHub one-liner bootstrap
 fix_caller_called.sh            # re-apply metadata only
 agi/
   openamd.agi
+  VD_amd_human_only.agi
   fix_local_presence_metadata.sh
   restore_vicidial_dialplan.sh  # recovery only
 ```
@@ -213,6 +228,8 @@ bash /root/vicidialaiamd/fix_caller_called.sh
 ## Verify
 
 ```bash
+asterisk -rx "dialplan show 8369@default"
+asterisk -rx "dialplan show 8389@default"
 asterisk -rx "dialplan show 8399@default"
 asterisk -rx "dialplan show openamd-detect"
 curl -sS https://aiamd.xceedconnections.com/api/health

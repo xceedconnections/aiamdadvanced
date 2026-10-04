@@ -113,9 +113,9 @@ Or run full `install.sh` again (safe on an existing server).
 
 ---
 
-# OpenAMD for ViciBox / VICIdial (extension 8399)
+# OpenAMD for ViciBox / VICIdial (extensions 8369 / 8389 / 8399)
 
-Installs OpenAMD **AGI + exact extension 8399** on a ViciBox / VICIdial dialer (Asterisk).
+Installs OpenAMD **AGI + AMD routing extensions** on a ViciBox / VICIdial dialer (Asterisk).
 
 AI AMD Advanced server install (Ubuntu portal):  
 https://github.com/xceedconnections/aiamdadvanced
@@ -156,7 +156,7 @@ bash /root/vicidialaiamd/vicibox_install.sh 204.168.200.221 oam_YOUR_API_KEY
 
 1. `/etc/asterisk/openamd.conf` (URL + API key)
 2. `openamd.agi` (Caller ID / Called Number aware)
-3. Exact extension **8399** (HUMAN → agent, MACHINE → hangup)
+3. `VD_amd_human_only.agi` + extensions **8389** (human-only) and **8399** (hybrid)
 4. Local-presence metadata store for **any** VICIdial dial prefix  
    (`_8.` `_9.` `_87899.` `_94455.` `_94556.` `_6.` etc.)  
    Called Number is taken from that pattern's `Dial(...${EXTEN:N}...)`  
@@ -164,9 +164,11 @@ bash /root/vicidialaiamd/vicibox_install.sh 204.168.200.221 oam_YOUR_API_KEY
 
 ## Campaign setting
 
-Set VICIdial campaign AMD / routing extension to: **8399**
+- **8369** = stock Vicidial AMD (untouched)
+- **8389** = human-only stock AMD (HUMAN/PERSON → agent; else hangup)
+- **8399** = hybrid (stock HUMAN → agent; else AIAMD; AIAMD down → 8389 hangup)
 
-Stock VICIdial AMD on **8369** is not modified.
+Leave AMD Agent Route Options blank for 8389/8399. CPS/offline on 8399 = 8389-style hangup (not Goto 8369).
 
 ## Folder contents
 
@@ -176,6 +178,7 @@ remote-install.sh               # GitHub one-liner bootstrap
 fix_caller_called.sh            # re-apply metadata only
 agi/
   openamd.agi
+  VD_amd_human_only.agi
   fix_local_presence_metadata.sh
   restore_vicidial_dialplan.sh  # recovery only
 ```
@@ -197,6 +200,8 @@ bash /root/vicidialaiamd/fix_caller_called.sh
 ## Verify
 
 ```bash
+asterisk -rx "dialplan show 8369@default"
+asterisk -rx "dialplan show 8389@default"
 asterisk -rx "dialplan show 8399@default"
 asterisk -rx "dialplan show openamd-detect"
 curl -sS https://aiamd.xceedconnections.com/api/health

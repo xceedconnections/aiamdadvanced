@@ -25,7 +25,7 @@ settings = get_settings()
 
 
 def _enforce_cps(server: VicidialServer, *, already_admitted: bool = False) -> None:
-    """Reject over-limit calls with 429 so AGI falls back to stock AMD 8369."""
+    """Reject over-limit calls with 429 so AGI falls back to 8389-style hangup on hybrid 8399."""
     if already_admitted:
         return
     max_cps = int(getattr(server, "max_cps", 0) or 0)
@@ -37,7 +37,8 @@ def _enforce_cps(server: VicidialServer, *, already_admitted: bool = False) -> N
         detail=(
             f"CPS limit exceeded for this VICIdial server "
             f"({count}/{limit} calls this second). "
-            "Use stock VICIdial AMD extension 8369 for overflow."
+            "On hybrid AMD extension 8399, dialer uses 8389-style hangup "
+            "(not Goto 8369). Campaign may also use 8389 human-only or 8369 stock."
         ),
         headers={"Retry-After": "1", "X-OpenAMD-CPS-Limit": str(limit)},
     )
@@ -49,7 +50,8 @@ def admit_call(server: VicidialServer = Depends(get_server_from_api_key)):
     """Fast CPS + online check before Record (AGI ping).
 
     200 = AIAMD will accept this call.
-    429 = over CPS — dialplan must fall back to 8369 (same as offline).
+    429 = over CPS — hybrid 8399 dialplan falls back to 8389-style hangup
+    (same as offline; not necessarily Goto 8369).
     """
     max_cps = int(getattr(server, "max_cps", 0) or 0)
     allowed, limit, count = try_admit(server.id, max_cps)
@@ -58,7 +60,7 @@ def admit_call(server: VicidialServer = Depends(get_server_from_api_key)):
             status_code=429,
             detail=(
                 f"CPS limit exceeded ({count}/{limit} per second). "
-                "Fall back to VICIdial AMD 8369."
+                "Fall back to 8389-style hangup on hybrid 8399."
             ),
             headers={"Retry-After": "1", "X-OpenAMD-CPS-Limit": str(limit)},
         )

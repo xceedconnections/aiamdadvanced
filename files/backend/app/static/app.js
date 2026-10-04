@@ -3083,7 +3083,10 @@ ViciBox install (base URL MUST include :2130):
 Existing dialers — update /etc/asterisk/openamd.conf:
   OPENAMD_URL=${amd}/api/v1/analyze
 
-Then set campaign AMD / routing extension to: 8399`;
+Then set campaign AMD / routing extension:
+  8369 = stock Vicidial AMD
+  8389 = human-only (stock AMD; HUMAN→agent; else hangup)
+  8399 = hybrid (stock HUMAN→agent; else AIAMD; AIAMD down→8389 hangup)`;
 }
 
 async function loadHealth() {

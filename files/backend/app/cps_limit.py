@@ -2,8 +2,9 @@
 
 When max_cps is set on a dialer, only that many analyze/admit requests
 are accepted each second. Excess calls return HTTP 429 so the AGI
-sets OPENAMD_STATUS=UNAVAILABLE and the dialplan falls back to stock
-VICIdial AMD extension 8369 (same path as AIAMD offline).
+sets OPENAMD_STATUS=UNAVAILABLE and the hybrid 8399 dialplan falls
+back to 8389-style human-only hangup (same path as AIAMD offline;
+not necessarily Goto 8369).
 
 Uses Redis when available; falls back to in-process memory.
 """
