@@ -189,8 +189,15 @@ def finalize_amd_decision(
     st = str(status or "MACHINE").upper()
     conf = float(confidence)
 
+    # Confident leave-message tone only. Weak beep_conf is often a speech formant
+    # in a silence+hello MixMonitor window — never hard-lock those at 95%.
+    strong_beep = (
+        float(feats.get("beep", 0.0)) >= 0.5
+        and float(feats.get("beep_conf", 0.0) or 0.0) >= 0.70
+    )
+
     # Hard acoustic locks (never send to agent)
-    if float(feats.get("beep", 0.0)) >= 0.5:
+    if strong_beep:
         details["amd_stage"] = "hard_beep"
         details["fuse_note"] = "beep"
         return "MACHINE", max(conf, 0.95)
@@ -227,6 +234,8 @@ def finalize_amd_decision(
             or float(feats.get("abs_speech_ms", 0.0)) >= 600
         )
     )
+    stock_human = float(feats.get("asterisk_amd_human", 0.0) or 0.0) >= 0.5
+    stock_machine = float(feats.get("asterisk_amd_machine", 0.0) or 0.0) >= 0.5
 
     # Stage 2: Whisper
     ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
@@ -259,6 +268,7 @@ def finalize_amd_decision(
         details["xgb_probs"] = {k: round(float(v), 4) for k, v in xgb_probs.items()}
         details["class_probs"] = details["xgb_probs"]
 
+    # Clear VM/IVR phrases still hang up (never overridden by stock HUMAN)
     if _machine_cue(cue) or w_status == "MACHINE":
         details["amd_stage"] = "whisper_machine"
         details["fuse_note"] = cue or "voicemail"
@@ -272,6 +282,22 @@ def finalize_amd_decision(
         details["short_human_safety_override"] = True
         details["internal_status"] = "HUMAN"
         return "HUMAN", max(conf, w_conf, 0.92)
+
+    # Stock Asterisk AMD said HUMAN + sparse live hello acoustics → agent.
+    # Does not apply when stock said MACHINE / dense greeting / digit prompt.
+    if (
+        stock_human
+        and not stock_machine
+        and looks_human
+        and not looks_digit
+        and not dense_greeting
+        and not script_clip
+    ):
+        details["amd_stage"] = "stock_human_short"
+        details["fuse_note"] = "stock_amd_human_short"
+        details["short_human_safety_override"] = True
+        details["internal_status"] = "HUMAN"
+        return "HUMAN", max(conf, 0.92)
 
     score, score_note = score_amd(
         feats=feats,

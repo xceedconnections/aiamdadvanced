@@ -29,7 +29,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (VAD + Whisper + XGB + Score)",
     "model": "Silero VAD + Whisper phrases + XGBoost + Asterisk AMD + score",
-    "version": "6.1.1",
+    "version": "6.1.2",
     "runtime": "NumPy + SoundFile + ONNX (Silero) + Faster-Whisper + XGBoost",
 }
 
@@ -331,7 +331,7 @@ def _looks_like_spoken_digit(
     Loud single-syllable pickups (peak >= ~0.20) are live hello, not IVR digits.
     Quiet single syllables (peak < ~0.08) are live "hi", not keypad prompts.
     """
-    if float(feats.get("beep", 0.0)) >= 0.5:
+    if _strong_beep(feats):
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
@@ -401,7 +401,7 @@ def _is_truncated_script_clip(feats: Dict[str, float]) -> bool:
     duration = float(feats.get("duration", 0.0))
     if duration < 0.35 or duration >= 1.15:
         return False
-    if float(feats.get("beep", 0.0)) >= 0.5 or float(feats.get("ringback", 0.0)) >= 0.5:
+    if _strong_beep(feats) or float(feats.get("ringback", 0.0)) >= 0.5:
         return False
     peak = float(feats.get("peak", 0.0))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
@@ -435,7 +435,7 @@ def _looks_like_short_human(
     AMD windows are ~2s and often include leading/trailing silence, so a
     human answer looks sparse. Scripted AM is longer / denser.
     """
-    if float(feats.get("beep", 0.0)) >= 0.5:
+    if _strong_beep(feats):
         return False
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
@@ -576,11 +576,27 @@ def _burst_stats(mask: np.ndarray, frame_ms: int = 20) -> Dict[str, float]:
     }
 
 
+def _strong_beep(feats: Dict[str, float]) -> bool:
+    """True only for a confident voicemail leave-message tone.
+
+    Weak 'beep' hits are often speech formants in 850–1400 Hz inside a mostly
+    silent AMD window (MixMonitor lead-in silence + short 'hello'). Those must
+    not hard-lock MACHINE at 95%.
+    """
+    return (
+        float(feats.get("beep", 0.0)) >= 0.5
+        and float(feats.get("beep_conf", 0.0)) >= 0.70
+    )
+
+
 def _detect_beep(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     """Voicemail beep: narrow tone near end (or mid–end) of greeting.
 
     US carriers often use ~1000 Hz; some use 900–1400 Hz. AMD clips are short,
     so also scan the last 1.5s in overlapping windows.
+
+    Reject speech-like windows: a live 'hello' often has energy near 1 kHz but
+    also strong low formants (200–800 Hz). A real beep dominates those bands.
     """
     if len(audio) < int(sr * 0.4):
         return False, 0.0
@@ -588,6 +604,8 @@ def _detect_beep(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     best_ratio = 0.0
     best_peak = 0.0
     best_p97 = 0.0
+    best_low = 0.0
+    best_oob = 0.0
     win = max(int(sr * 0.35), 256)
     hop = max(win // 2, 128)
     start = max(0, len(audio) - int(sr * 1.5))
@@ -601,22 +619,36 @@ def _detect_beep(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
         spectrum = np.abs(np.fft.rfft(segment * window))
         freqs = np.fft.rfftfreq(len(segment), d=1.0 / sr)
         band = (freqs >= 850) & (freqs <= 1400)
+        low = (freqs >= 200) & (freqs < 800)
         if not np.any(band):
             continue
         peak = float(np.max(spectrum[band]))
+        low_peak = float(np.max(spectrum[low])) if np.any(low) else 0.0
+        oob = spectrum[~band]
+        oob_peak = float(np.max(oob)) if len(oob) else 0.0
         mean = float(np.mean(spectrum) + 1e-9)
         ratio = peak / mean
         if ratio > best_ratio:
             best_ratio = ratio
             best_peak = peak
             best_p97 = float(np.percentile(spectrum, 97))
+            best_low = low_peak
+            best_oob = oob_peak
 
     if best_ratio <= 0:
         return False, 0.0
 
-    # Slightly looser than before — many live AMD beeps are short / compressed
-    is_beep = best_ratio > 18.0 and best_peak > best_p97 * 0.85
-    conf = min(0.99, max(0.0, (best_ratio - 14.0) / 28.0))
+    # Narrow leave-message tone: dominates mean, percentile, and speech formants
+    is_beep = (
+        best_ratio > 22.0
+        and best_peak > best_p97 * 0.90
+        and best_peak > best_low * 2.5
+        and best_peak > best_oob * 1.6
+    )
+    conf = min(0.99, max(0.0, (best_ratio - 16.0) / 30.0))
+    # Speech-like low formants → downgrade (do not hard-lock at 95%)
+    if best_low > 0 and best_peak < best_low * 2.5:
+        conf = min(conf, 0.45)
     return bool(is_beep), float(conf)
 
 
@@ -831,7 +863,8 @@ def _classify_heuristic(
     if sit:
         return "SIT", 0.85
 
-    if beep:
+    # Only confident leave-message tones (weak formant hits are not VM beeps)
+    if beep and float(feats.get("beep_conf", 0.0)) >= 0.70:
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
 
     # Audible ringing / ringback — call not answered
@@ -1265,7 +1298,7 @@ def analyze_audio(
         # Fallback: short live hello still must reach agents
         if (
             status in ("MACHINE", "IVR")
-            and float(feats.get("beep", 0.0)) < 0.5
+            and not _strong_beep(feats)
             and float(feats.get("ringback", 0.0)) < 0.5
             and _looks_like_short_human(feats, silero)
             and not whisper_non_human

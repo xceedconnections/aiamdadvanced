@@ -150,7 +150,11 @@ def run_ml_pipeline(
     details["whisper_used"] = False
     looks_human = _looks_like_short_human(feats, silero)
     looks_digit = _looks_like_spoken_digit(feats, silero)
-    no_beep = float(feats.get("beep", 0.0) or 0.0) < 0.5
+    # Weak formant "beeps" (conf < 0.70) are not leave-message tones
+    no_beep = not (
+        float(feats.get("beep", 0.0) or 0.0) >= 0.5
+        and float(feats.get("beep_conf", 0.0) or 0.0) >= 0.70
+    )
     strong_machine = (
         not no_beep
         or (
