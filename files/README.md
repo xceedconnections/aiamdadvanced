@@ -109,9 +109,9 @@ Or run full `install.sh` again (safe on an existing server).
 
 ---
 
-# OpenAMD for ViciBox / VICIdial (extension 8399)
+# OpenAMD for ViciBox / VICIdial (extensions 8369 / 8398 / 8399)
 
-Installs OpenAMD **AGI + AMD routing extensions 8389/8399** on a ViciBox / VICIdial dialer (Asterisk).
+Installs OpenAMD **AGI + AMD routing extensions 8398/8399** on a ViciBox / VICIdial dialer (Asterisk).
 
 AI AMD Advanced server install (Ubuntu portal):  
 https://github.com/xceedconnections/aiamdadvanced
@@ -145,7 +145,7 @@ bash /root/vicidialaiamd/vicibox_install.sh YOUR_AI_AMD_IP oam_YOUR_API_KEY
 
 1. `/etc/asterisk/openamd.conf` (URL + API key)
 2. `openamd.agi` (Caller ID / Called Number aware)
-3. Extensions **8389** (human-only) and **8399** (hybrid stock HUMAN + AIAMD)
+3. Extensions **8398** (human-only) and **8399** (AIAMD final on HUMAN/NOTSURE)
 4. Local-presence metadata store for **any** VICIdial dial prefix  
    (`_8.` `_9.` `_87899.` `_94455.` `_94556.` `_6.` etc.)  
    Called Number is taken from that pattern's `Dial(...${EXTEN:N}...)`  
@@ -153,8 +153,8 @@ bash /root/vicidialaiamd/vicibox_install.sh YOUR_AI_AMD_IP oam_YOUR_API_KEY
 
 ## Campaign setting
 
-- **8369** stock | **8389** human-only | **8399** hybrid (AIAMD down → 8389 hangup)
-- Leave AMD Agent Route Options blank for 8389/8399
+- **8369** stock | **8398** human-only (no scam) | **8399** AIAMD final (AIAMD down → 8398 hangup)
+- Leave AMD Agent Route Options blank for 8398/8399
 
 ## Folder contents
 
@@ -186,7 +186,7 @@ bash /root/vicidialaiamd/fix_caller_called.sh
 
 ```bash
 asterisk -rx "dialplan show 8369@default"
-asterisk -rx "dialplan show 8389@default"
+asterisk -rx "dialplan show 8398@default"
 asterisk -rx "dialplan show 8399@default"
 asterisk -rx "dialplan show openamd-detect"
 curl -sS http://YOUR_AI_AMD_IP/api/health

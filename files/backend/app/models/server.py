@@ -36,11 +36,11 @@ class VicidialServer(Base):
     locale_pack = Column(String(32), default="usa")
 
     # Max calls/sec this dialer may send to AI AMD (0 = unlimited).
-    # Over limit → HTTP 429 → AGI UNAVAILABLE → hybrid 8399 uses 8389-style hangup.
+    # Over limit → HTTP 429 → AGI UNAVAILABLE → 8399 uses 8398-style hangup.
     max_cps = Column(Integer, default=0)
 
     # Full agent-leg SCAM recording/upload (vicidialaiamdscammerchecker).
-    # Scam MixMonitor is independent; still arms on agent-bound 8399 HUMAN paths.
+    # Scam MixMonitor is independent; arms only on agent-bound 8399 AIAMD-HUMAN paths.
     scam_protection_enabled = Column(Boolean, default=False)
     # Max seconds of agent-leg MixMonitor (portal-controlled). Dialer reads via /api/v1/scam/config.
     scam_record_seconds = Column(Integer, default=120)

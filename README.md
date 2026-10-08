@@ -129,7 +129,7 @@ Or run full `install.sh` again (safe on an existing server).
 
 ---
 
-# OpenAMD for ViciBox / VICIdial (extensions 8369 / 8389 / 8399)
+# OpenAMD for ViciBox / VICIdial (extensions 8369 / 8398 / 8399)
 
 Installs OpenAMD **AGI + AMD routing extensions** on a ViciBox / VICIdial dialer (Asterisk).
 
@@ -179,8 +179,8 @@ https://github.com/xceedconnections/vicidialaiamdscammerchecker
 3. `VD_amd_human_only.agi` (HUMAN/PERSON only — never overwrites system `VD_amd.agi`)
 4. AMD routing extensions:
    - **8369** stock Vicidial AMD (untouched)
-   - **8389** human-only (stock AMD; only HUMAN/PERSON → agent; else AA hangup)
-   - **8399** hybrid (stock AMD HUMAN → agent; else AIAMD; AIAMD down/CPS → **8389-style hangup**, not Goto 8369)
+   - **8398** human-only (stock AMD; HUMAN/PERSON → agent; else AA hangup; no scam)
+   - **8399** stock MACHINE→hangup; HUMAN/PERSON/NOTSURE→AIAMD final; AIAMD HUMAN→agent (+ scam on scammerchecker); AIAMD down/CPS → **8398-style hangup** (not Goto 8369). Install strips old **8389** / **8397**.
 5. Local-presence metadata store for **any** VICIdial dial prefix  
    (`_8.` `_9.` `_87899.` `_94455.` `_94556.` `_6.` etc.)  
    Called Number is taken from that pattern's `Dial(...${EXTEN:N}...)`  
@@ -191,12 +191,12 @@ https://github.com/xceedconnections/vicidialaiamdscammerchecker
 | Extension | Use when |
 |-----------|----------|
 | **8369** | Stock Vicidial AMD only |
-| **8389** | Human-only stock AMD (NOTSURE/MACHINE/etc. hang up) |
-| **8399** | Hybrid: stock HUMAN fast-path + AIAMD second opinion for non-HUMAN |
+| **8398** | Human-only stock AMD (NOTSURE/MACHINE/etc. hang up; no scam) |
+| **8399** | AIAMD final on HUMAN/PERSON/NOTSURE; stock MACHINE hangs up first |
 
-Leave **AMD Agent Route Options** blank/disabled for 8389 and 8399 (do not add NOTSURE/MACHINE pairs — those would send AAs to agents). WaitForSilence `2000,2,30` is optional and not required for this routing.
+Leave **AMD Agent Route Options** blank/disabled for 8398 and 8399 (do not add NOTSURE/MACHINE pairs — those would send AAs to agents). WaitForSilence `2000,2,30` is optional and not required for this routing.
 
-CPS overflow / AIAMD offline on hybrid **8399** → dialer uses **8389-style hangup**, not necessarily Goto 8369.
+CPS overflow / AIAMD offline on **8399** → dialer uses **8398-style hangup**, not Goto 8369.
 
 ## Folder contents
 
@@ -229,7 +229,7 @@ bash /root/vicidialaiamd/fix_caller_called.sh
 
 ```bash
 asterisk -rx "dialplan show 8369@default"
-asterisk -rx "dialplan show 8389@default"
+asterisk -rx "dialplan show 8398@default"
 asterisk -rx "dialplan show 8399@default"
 asterisk -rx "dialplan show openamd-detect"
 curl -sS https://aiamd.xceedconnections.com/api/health

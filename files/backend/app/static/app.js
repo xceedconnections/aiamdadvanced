@@ -3085,8 +3085,8 @@ Existing dialers — update /etc/asterisk/openamd.conf:
 
 Then set campaign AMD / routing extension:
   8369 = stock Vicidial AMD
-  8389 = human-only (stock AMD; HUMAN→agent; else hangup)
-  8399 = hybrid (stock HUMAN→agent; else AIAMD; AIAMD down→8389 hangup)`;
+  8398 = human-only (stock AMD; HUMAN→agent; else hangup; no scam)
+  8399 = stock MACHINE→hangup; HUMAN/NOTSURE→AIAMD; AIAMD HUMAN→agent; AIAMD down→8398 hangup`;
 }
 
 async function loadHealth() {
