@@ -5,7 +5,10 @@ Silero VAD and acoustic features describe speech structure. Faster-Whisper
 phrases and a machine score decide HUMAN vs MACHINE. Policy: hang up only on
 strong MACHINE evidence; UNCERTAIN → HUMAN so live customers are not discarded.
 Blank / near-silent audio follows the AMD panel checkbox
-(BLANK/AA when ON, HUMAN when OFF).
+(BLANK/AA when ON, HUMAN when OFF), except when Asterisk stock
+AMDSTATUS is HUMAN|PERSON|NOTSURE — then return HUMAN with
+decision_reason stock_amd_trust_blank_capture (Record often misses
+the greeting after stock AMD already heard them).
 """
 
 from __future__ import annotations
@@ -518,6 +521,16 @@ def _looks_like_short_human(
     return False
 
 
+def _stock_amd_trust_human(amdstatus: str = "", feats: Optional[Dict[str, Any]] = None) -> bool:
+    """True when Asterisk stock AMD already said HUMAN|PERSON|NOTSURE."""
+    st = (amdstatus or "").strip().upper()
+    if not st and feats:
+        st = str(
+            feats.get("asterisk_amdstatus") or feats.get("amdstatus") or ""
+        ).strip().upper()
+    return st in ("HUMAN", "PERSON", "NOTSURE")
+
+
 def _blank_disposition(*, to_agent: bool = False) -> Tuple[str, float, str]:
     """Blank / near-silent disposition.
 
@@ -530,8 +543,19 @@ def _blank_disposition(*, to_agent: bool = False) -> Tuple[str, float, str]:
     return "BLANK", 0.95, "blank_silence"
 
 
-def _dispose_blank_or_noise() -> Tuple[str, float, str]:
-    """Respect AMD panel blank checkbox for silence / VoIP noise."""
+def _dispose_blank_or_noise(
+    *,
+    stock_amdstatus: str = "",
+    feats: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, float, str]:
+    """Blank / silence disposition.
+
+    When stock AMD was HUMAN|PERSON|NOTSURE, trust stock → HUMAN
+    (stock_amd_trust_blank_capture) so Live Calls matches dialer trust-stock.
+    Otherwise respect the AMD panel blank checkbox.
+    """
+    if _stock_amd_trust_human(stock_amdstatus, feats):
+        return "HUMAN", 0.92, "stock_amd_trust_blank_capture"
     return _blank_disposition(to_agent=not is_blank_as_machine_enabled())
 
 
@@ -871,9 +895,9 @@ def _classify_heuristic(
     if float(feats.get("ringback", 0.0)) >= 0.5:
         return "MACHINE", max(0.93, float(feats.get("ringback_conf", 0.93)))
 
-    # Blank / near-silent / VoIP noise — panel checkbox picks AA vs agent
+    # Blank / near-silent / VoIP noise — stock trust or panel checkbox
     if _is_blank(feats) or _is_voip_noise_burst(feats):
-        return _dispose_blank_or_noise()[:2]
+        return _dispose_blank_or_noise(feats=feats)[:2]
 
     # Truncated / front-speech-then-silence AMD clip → MACHINE (VM/IVR opening)
     if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
@@ -935,14 +959,18 @@ def _fuse_with_silero(
     Returns (status, confidence, fuse_note).
     Agent-protect: never flip MACHINE → HUMAN on weak/uncertain evidence.
     """
-    # Blank / no speech — panel checkbox: AA (BLANK) or agent (HUMAN)
+    # Blank / no speech — stock HUMAN|PERSON|NOTSURE trust, else panel checkbox
     if _is_blank(feats, silero):
-        b_status, b_conf, b_note = _dispose_blank_or_noise()
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
         return b_status, max(float(confidence), b_conf), b_note
 
     if _is_voip_noise_burst(feats, silero):
-        b_status, b_conf, b_note = _dispose_blank_or_noise()
-        return b_status, max(float(confidence), b_conf), "voip_front_noise_burst"
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
+        return b_status, max(float(confidence), b_conf), (
+            "stock_amd_trust_blank_capture"
+            if b_note == "stock_amd_trust_blank_capture"
+            else "voip_front_noise_burst"
+        )
 
     if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
         return "MACHINE", max(float(confidence), 0.88), "script_clip_structure"
@@ -1052,7 +1080,9 @@ def analyze_audio(
         )
     except Exception as exc:
         ms = int((time.perf_counter() - t0) * 1000)
-        b_status, b_conf, b_note = _dispose_blank_or_noise()
+        meta = call_meta or {}
+        stock_st = str(meta.get("amdstatus") or meta.get("asterisk_amdstatus") or "")
+        b_status, b_conf, b_note = _dispose_blank_or_noise(stock_amdstatus=stock_st)
         return AnalysisResult(
             status=b_status,
             confidence=b_conf,
@@ -1062,6 +1092,7 @@ def analyze_audio(
                 "error": str(exc),
                 "fallback": b_status,
                 "fuse_note": b_note,
+                "decision_reason": b_note,
                 "engine": "hybrid",
             },
         )
@@ -1152,9 +1183,9 @@ def analyze_audio(
             },
         )
 
-    # VoIP trunk noise — blank checkbox picks AA vs agent (never false VM alone)
+    # VoIP trunk noise — stock trust or blank checkbox (never false VM alone)
     if _is_voip_noise_burst(feats, silero):
-        b_status, b_conf, _ = _dispose_blank_or_noise()
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
         ms = int((time.perf_counter() - t0) * 1000)
         return AnalysisResult(
             status=b_status,
@@ -1169,7 +1200,8 @@ def analyze_audio(
                 "blank_as_machine": is_blank_as_machine_enabled(),
                 "heuristic_status": h_status,
                 "heuristic_confidence": round(float(h_confidence), 4),
-                "fuse_note": "voip_front_noise_burst",
+                "fuse_note": b_note if b_note == "stock_amd_trust_blank_capture" else "voip_front_noise_burst",
+                "decision_reason": b_note,
                 "voip_noise_burst": True,
                 "ml_pipeline_enabled": False,
                 "silero": {
@@ -1306,6 +1338,9 @@ def analyze_audio(
             status, confidence = "HUMAN", max(float(confidence), 0.92)
             details["short_human_safety_override"] = True
             details["fuse_note"] = "short_human_greeting"
+
+    if details.get("fuse_note") and not details.get("decision_reason"):
+        details["decision_reason"] = details["fuse_note"]
 
     ms = int((time.perf_counter() - t0) * 1000)
     return AnalysisResult(

@@ -216,9 +216,10 @@ def finalize_amd_decision(
         ):
             pass
         else:
-            b_status, b_conf, b_note = dispose_blank_fn()
+            b_status, b_conf, b_note = dispose_blank_fn(feats=feats)
             details["amd_stage"] = "blank_dispose"
             details["fuse_note"] = b_note
+            details["decision_reason"] = b_note
             details["blank_safety_override"] = True
             return b_status, max(conf, b_conf)
 

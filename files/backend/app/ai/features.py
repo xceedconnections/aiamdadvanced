@@ -44,7 +44,7 @@ MODEL_VERSION = 2
 
 def _asterisk_flags(feats: Dict[str, Any]) -> tuple[float, float]:
     st = str(feats.get("asterisk_amdstatus") or feats.get("amdstatus") or "").strip().upper()
-    if st in ("HUMAN", "PERSON"):
+    if st in ("HUMAN", "PERSON", "NOTSURE"):
         return 1.0, 0.0
     if st in ("MACHINE", "AM", "ANSWERMACHINE", "MAXWORDS", "LONGGREETING", "MAXWORDLENGTH"):
         return 0.0, 1.0

@@ -64,24 +64,28 @@ def run_ml_pipeline(
     )
 
     if _is_blank(feats, silero):
-        b_status, b_conf, _ = _dispose_blank_or_noise()
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
         details: Dict[str, Any] = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
-            "ml_note": "blank_audio",
+            "ml_note": b_note,
+            "fuse_note": b_note,
+            "decision_reason": b_note,
         }
         return b_status, b_conf, details
 
     if _is_voip_noise_burst(feats, silero):
-        b_status, b_conf, _ = _dispose_blank_or_noise()
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
         details = {
             "ml_pipeline": True,
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
-            "ml_note": "voip_front_noise_burst",
+            "ml_note": b_note if b_note == "stock_amd_trust_blank_capture" else "voip_front_noise_burst",
+            "fuse_note": b_note,
+            "decision_reason": b_note,
             "voip_noise_burst": True,
         }
         return b_status, b_conf, details
@@ -206,7 +210,7 @@ def run_ml_pipeline(
                 feats, silero
             ):
                 details["ml_note"] = note + "_voip_noise_after_whisper"
-                return _dispose_blank_or_noise()
+                return _dispose_blank_or_noise(feats=feats)
         except Exception as exc:
             details["whisper_error"] = str(exc)
             details["ml_note"] = note + "_whisper_error"
@@ -242,8 +246,10 @@ def run_ml_pipeline(
 
     # HUMAN (any confidence) → Whisper before sending to an agent
     if _is_blank(feats, silero):
-        b_status, b_conf, _ = _dispose_blank_or_noise()
-        details["ml_note"] = "blank_override_high_human"
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
+        details["ml_note"] = b_note if b_note == "stock_amd_trust_blank_capture" else "blank_override_high_human"
+        details["fuse_note"] = b_note
+        details["decision_reason"] = b_note
         return b_status, b_conf, details
 
     if _is_truncated_script_clip(feats) or _is_front_speech_then_silence(feats):
@@ -341,8 +347,14 @@ def run_ml_pipeline(
 
     # Whisper raised confidence enough, or flipped to non-HUMAN
     if _is_blank(feats, silero) and status == "HUMAN":
-        b_status, b_conf, _ = _dispose_blank_or_noise()
-        details["ml_note"] = (details.get("ml_note") or "") + "+blank_safety"
+        b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
+        details["ml_note"] = (details.get("ml_note") or "") + (
+            "+stock_amd_trust_blank_capture"
+            if b_note == "stock_amd_trust_blank_capture"
+            else "+blank_safety"
+        )
+        details["fuse_note"] = b_note
+        details["decision_reason"] = b_note
         return b_status, b_conf, details
 
     _maybe_save_sample(

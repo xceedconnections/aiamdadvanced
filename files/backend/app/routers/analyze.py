@@ -101,20 +101,33 @@ async def analyze(
     ani_value = (ani or called_number or "").strip()
 
     # Empty / near-empty WAV = no playable audio was captured.
-    # Portal always shows BLANK (truth in CDR). VICIdial routing follows the checkbox:
+    # Stock AMD HUMAN|PERSON|NOTSURE → trust stock → HUMAN (Live Calls matches
+    # dialer; Record often missed the greeting after stock already heard them).
+    # Else portal shows BLANK; VICIdial follows blank checkbox:
     #   ON  → MACHINE (AA hangup)
     #   OFF → HUMAN (send quiet/empty pickup to agent)
     if len(raw) < 100:
         from app.amd_settings import is_blank_as_machine_enabled
 
         blank_as_aa = is_blank_as_machine_enabled()
-        portal_status = "BLANK"
-        if blank_as_aa:
-            vicidial_status = "MACHINE"
-            fuse_note = "blank_silence_empty_file"
-        else:
+        stock_st = (amdstatus or "").strip().upper()
+        stock_trust = stock_st in ("HUMAN", "PERSON", "NOTSURE")
+
+        if stock_trust:
+            portal_status = "HUMAN"
             vicidial_status = "HUMAN"
-            fuse_note = "blank_to_agent_empty_file"
+            fuse_note = "stock_amd_trust_blank_capture"
+            conf = 0.92
+        else:
+            portal_status = "BLANK"
+            if blank_as_aa:
+                vicidial_status = "MACHINE"
+                fuse_note = "blank_silence_empty_file"
+                conf = 0.99
+            else:
+                vicidial_status = "HUMAN"
+                fuse_note = "blank_to_agent_empty_file"
+                conf = 0.92
 
         details = {
             "blank_empty_upload": True,
@@ -123,13 +136,18 @@ async def analyze(
             "vicidial_status": vicidial_status,
             "blank_as_machine": blank_as_aa,
             "fuse_note": fuse_note,
+            "decision_reason": fuse_note,
             "ml_note": fuse_note,
+            "amdstatus": stock_st,
+            "asterisk_amdstatus": stock_st,
+            "amdcause": (amdcause or "").strip(),
+            "stock_amd_trust": stock_trust,
             "called_number": called_number,
             "caller_id": caller_id,
             "ani": ani_value,
             "cps_admitted_prior": already,
             "max_cps": int(getattr(server, "max_cps", 0) or 0),
-            "short_human_safety_override": not blank_as_aa,
+            "short_human_safety_override": stock_trust or not blank_as_aa,
         }
         row = CallAnalysis(
             server_id=server.id,
@@ -140,7 +158,7 @@ async def analyze(
             ani=ani_value,
             status=portal_status,
             raw_status=portal_status,
-            confidence=0.99 if blank_as_aa else 0.92,
+            confidence=conf,
             processing_ms=0,
             audio_seconds=0.0,
             audio_path="",
@@ -155,7 +173,7 @@ async def analyze(
         db.refresh(row)
         return AnalyzeResponse(
             status=vicidial_status,
-            confidence=0.99 if blank_as_aa else 0.92,
+            confidence=conf,
             processing_ms=0,
             callid=callid,
             analysis_id=row.id,
