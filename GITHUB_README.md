@@ -166,9 +166,9 @@ bash /root/vicidialaiamd/vicibox_install.sh 204.168.200.221 oam_YOUR_API_KEY
 
 - **8369** = stock Vicidial AMD (untouched)
 - **8398** = human-only stock AMD (HUMAN/PERSON → agent; else hangup; no scam)
-- **8399** = stock MACHINE→hangup; HUMAN/PERSON/NOTSURE→AIAMD; AIAMD HUMAN→agent; AIAMD down → 8398 hangup
+- **8399** = standard `Monitor()` captures concurrently with stock AMD; stock MACHINE/other non-human→hangup; HUMAN/PERSON/NOTSURE→AIAMD; audible HUMAN→agent; audible MACHINE→hangup; blank/missing/down/timeout/API/CPS error→trust stock and pass to agent
 
-Leave AMD Agent Route Options blank for 8398/8399. CPS/offline on 8399 = 8398-style hangup (not Goto 8369). Install strips old 8389/8397.
+Leave AMD Agent Route Options blank for 8398/8399. The analyze endpoint returns HUMAN for blank uploads with stock HUMAN/PERSON/NOTSURE; 8399 applies the same trust-stock behavior to capture and service failures without weakening audible MACHINE decisions. Install strips old 8389/8397.
 
 ## Folder contents
 

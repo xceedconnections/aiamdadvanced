@@ -153,8 +153,13 @@ bash /root/vicidialaiamd/vicibox_install.sh YOUR_AI_AMD_IP oam_YOUR_API_KEY
 
 ## Campaign setting
 
-- **8369** stock | **8398** human-only (no scam) | **8399** AIAMD final (AIAMD down → 8398 hangup)
+- **8369** stock | **8398** human-only (no scam) | **8399** concurrent standard `Monitor()` + stock AMD, then AIAMD for stock HUMAN/PERSON/NOTSURE
 - Leave AMD Agent Route Options blank for 8398/8399
+
+On 8399, audible AIAMD HUMAN passes to the agent and audible MACHINE hangs up.
+Missing/blank capture, timeout, AIAMD down, or API/CPS error trusts the stock
+HUMAN/PERSON/NOTSURE result and passes to the agent, never PDROP. The analyze
+endpoint already enforces this policy for blank uploads.
 
 ## Folder contents
 

@@ -180,7 +180,7 @@ https://github.com/xceedconnections/vicidialaiamdscammerchecker
 4. AMD routing extensions:
    - **8369** stock Vicidial AMD (untouched)
    - **8398** human-only (stock AMD; HUMAN/PERSON → agent; else AA hangup; no scam)
-   - **8399** stock MACHINE→hangup; HUMAN/PERSON/NOTSURE→AIAMD final; AIAMD HUMAN→agent (+ scam on scammerchecker); AIAMD down/CPS → **8398-style hangup** (not Goto 8369). Install strips old **8389** / **8397**.
+   - **8399** captures the greeting concurrently with standard Asterisk `Monitor()` while running stock AMD; stock MACHINE/other non-human statuses hang up; HUMAN/PERSON/NOTSURE go to AIAMD. AIAMD audible HUMAN→agent (+ scam on scammerchecker), audible MACHINE→hangup. Missing/blank capture, timeout, AIAMD down, or API/CPS error→trust stock and pass to agent. Install strips old **8389** / **8397**.
 5. Local-presence metadata store for **any** VICIdial dial prefix  
    (`_8.` `_9.` `_87899.` `_94455.` `_94556.` `_6.` etc.)  
    Called Number is taken from that pattern's `Dial(...${EXTEN:N}...)`  
@@ -196,7 +196,11 @@ https://github.com/xceedconnections/vicidialaiamdscammerchecker
 
 Leave **AMD Agent Route Options** blank/disabled for 8398 and 8399 (do not add NOTSURE/MACHINE pairs — those would send AAs to agents). WaitForSilence `2000,2,30` is optional and not required for this routing.
 
-CPS overflow / AIAMD offline on **8399** → dialer uses **8398-style hangup**, not Goto 8369.
+The analyze endpoint already returns HUMAN for blank uploads carrying stock
+`AMDSTATUS=HUMAN|PERSON|NOTSURE`. The 8399 dialer applies the same trust-stock
+policy to missing capture, timeout, CPS overflow, and AIAMD/API failure; these
+failures must never create a PDROP. This does not weaken audible MACHINE
+detection.
 
 ## Folder contents
 
