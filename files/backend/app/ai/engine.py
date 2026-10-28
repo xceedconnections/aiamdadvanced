@@ -719,6 +719,10 @@ def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     North America: dual-tone 440 Hz + 480 Hz.
     Many other regions: strong ~400–450 Hz tone.
     AMD windows often capture one ring cycle (tone then silence).
+
+    The North-American detector requires two distinct, tightly centered tones.
+    A voiced vowel can have one broad, moving fundamental around 440–480 Hz;
+    broad band maxima alone would misread that speech formant as both tones.
     """
     if audio is None or len(audio) < int(sr * 0.45):
         return False, 0.0
@@ -735,6 +739,11 @@ def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
 
     p440 = _band_peak(spectrum, freqs, 432, 448)
     p480 = _band_peak(spectrum, freqs, 472, 488)
+    # Ring generators are stable and centered close to 440/480 Hz.  Speech
+    # often peaks at the inward band edges because it is one broad formant.
+    p440_core = _band_peak(spectrum, freqs, 436, 444)
+    p480_core = _band_peak(spectrum, freqs, 476, 484)
+    inter_tone = _band_peak(spectrum, freqs, 450, 470)
     p425 = _band_peak(spectrum, freqs, 415, 435)
     p400 = _band_peak(spectrum, freqs, 390, 410)
     # Speech/VM energy is broader; ringback is narrowly tonal in 400–490 Hz
@@ -742,12 +751,15 @@ def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     low_tone = max(p440, p480, p425, p400)
 
     # Classic US dual-tone ringback (very distinctive)
-    if p440 > overall * 18.0 and p480 > overall * 18.0:
-        conf = min(0.99, max(0.9, (min(p440, p480) / overall) / 60.0))
+    distinct_us_tones = (
+        p440_core > overall * 14.0
+        and p480_core > overall * 12.0
+        and inter_tone < min(p440_core, p480_core) * 0.80
+    )
+    if distinct_us_tones and p440 > overall * 18.0 and p480 > overall * 18.0:
+        conf = min(0.99, max(0.9, (min(p440_core, p480_core) / overall) / 60.0))
         return True, float(conf)
-    if p440 > overall * 14.0 and p480 > overall * 12.0 and low_tone > speech_band * 1.5:
-        return True, 0.94
-    if p480 > overall * 14.0 and p440 > overall * 12.0 and low_tone > speech_band * 1.5:
+    if distinct_us_tones and low_tone > speech_band * 1.5:
         return True, 0.94
 
     # Single-tone ring (~400/425 Hz) that dominates over speech bands
