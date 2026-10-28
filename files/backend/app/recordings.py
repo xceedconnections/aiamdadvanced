@@ -249,9 +249,12 @@ def recording_meta_fast(call: CallAnalysis) -> dict:
             "audio_path": str(path),
         }
     if in_db:
+        called = "".join(ch for ch in str(getattr(call, "called_number", None) or "") if ch.isalnum() or ch in "-_")
+        call_id = "".join(ch for ch in str(call.call_id or "") if ch.isalnum() or ch in "-_.") or f"id-{call.id}"
+        fname = f"{called}_{call_id}.wav" if called else f"{call_id}.wav"
         return {
             "has_recording": True,
-            "recording_filename": f"{call.call_id}.wav",
+            "recording_filename": fname,
             "recording_bytes": 0,
             "audio_path": "db:audio_blob",
         }
@@ -278,9 +281,12 @@ def recording_meta(call: CallAnalysis, index: Optional[list[Path]] = None) -> di
             "audio_path": str(path),
         }
     if in_db:
+        called = "".join(ch for ch in str(getattr(call, "called_number", None) or "") if ch.isalnum() or ch in "-_")
+        call_id = "".join(ch for ch in str(call.call_id or "") if ch.isalnum() or ch in "-_.") or f"id-{call.id}"
+        fname = f"{called}_{call_id}.wav" if called else f"{call_id}.wav"
         return {
             "has_recording": True,
-            "recording_filename": f"{call.call_id}.wav",
+            "recording_filename": fname,
             "recording_bytes": 0,
             "audio_path": "db:audio_blob",
         }

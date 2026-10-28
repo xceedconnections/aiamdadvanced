@@ -326,8 +326,8 @@ function dashLiveRowHtml(r) {
   const dur = secs > 0 ? `${secs.toFixed(1)}s` : `${r.processing_ms || 0}ms`;
   const confPct = ((r.confidence || 0) * 100).toFixed(1);
   return `<tr>
-    <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id)}</td>
     <td>${escapeHtml(r.caller_id || "—")}</td>
+    <td>${escapeHtml(r.called_number || "—")}</td>
     <td>${dur}</td>
     <td>${statusBadge(r.status)}${whisperBadge(r)}</td>
     <td><span class="${confClass(r.confidence)}">${confPct}%</span></td>
@@ -477,7 +477,11 @@ function recordingUrl(analysisId, kind) {
 }
 
 function audioButtons(r) {
-  const tip = escapeHtml(r.recording_filename || r.call_id || `id-${r.id}`);
+  const tip = escapeHtml(
+    r.recording_filename ||
+      (r.called_number ? `${r.called_number}_${r.call_id || r.id}` : r.call_id) ||
+      `id-${r.id}`
+  );
   const callAttr = encodeURIComponent(r.call_id || "");
   const missing = !r.has_recording;
   const bytes = Number(r.recording_bytes || 0);
@@ -529,11 +533,10 @@ function whisperBadge(r) {
 function callRowHtml(r) {
   return `<tr>
     <td class="audio-cell">${audioButtons(r)}</td>
-    <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id)}</td>
     <td>${fmtTime(r.created_at)}</td>
     <td>${escapeHtml(r.server_name || "—")}</td>
-    <td>${escapeHtml(r.called_number || "—")}</td>
     <td>${escapeHtml(r.caller_id || "—")}</td>
+    <td>${escapeHtml(r.called_number || "—")}</td>
     <td>${escapeHtml(r.campaign || "—")}</td>
     <td>${statusBadge(r.status)}${gatedNote(r)}${whisperBadge(r)}</td>
     <td>${(r.confidence * 100).toFixed(1)}%</td>
@@ -550,10 +553,9 @@ function callCardHtml(r) {
     </div>
     ${whisperBadge(r)}
     <div class="call-card-grid">
-      <div><div class="k">Call ID</div><div class="v">${escapeHtml(r.call_id)}</div></div>
       <div><div class="k">Server</div><div class="v">${escapeHtml(r.server_name || "—")}</div></div>
-      <div><div class="k">Called</div><div class="v">${escapeHtml(r.called_number || "—")}</div></div>
       <div><div class="k">Caller ID</div><div class="v">${escapeHtml(r.caller_id || "—")}</div></div>
+      <div><div class="k">Called Number</div><div class="v">${escapeHtml(r.called_number || "—")}</div></div>
       <div><div class="k">Campaign</div><div class="v">${escapeHtml(r.campaign || "—")}</div></div>
       <div><div class="k">Confidence</div><div class="v">${(r.confidence * 100).toFixed(1)}% · ${r.processing_ms} ms</div></div>
     </div>
@@ -707,7 +709,7 @@ async function loadDashboard() {
     .slice(0, 5)
     .map(
       (r) => `<div class="rm">
-        <span class="id">${escapeHtml(r.call_id)}</span>
+        <span class="id">${escapeHtml(r.caller_id || r.called_number || "—")}</span>
         ${statusBadge(r.status)}
         <span class="${confClass(r.confidence)}">${((r.confidence || 0) * 100).toFixed(0)}%</span>
       </div>`
@@ -2583,7 +2585,8 @@ async function loadAccuracy() {
     }
 
     const exRow = (r) => `<tr>
-      <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id || String(r.call_analysis_id))}</td>
+      <td>${escapeHtml(r.caller_id || "—")}</td>
+      <td>${escapeHtml(r.called_number || "—")}</td>
       <td>${escapeHtml(r.server_name || "—")}</td>
       <td>${statusBadge(r.predicted)}</td>
       <td>${statusBadge(r.actual)}</td>
@@ -2592,10 +2595,10 @@ async function loadAccuracy() {
 
     $("#accuracy-fh-body").innerHTML =
       (d.false_human_examples || []).map(exRow).join("") ||
-      `<tr><td colspan="5" class="hint">None in this period</td></tr>`;
+      `<tr><td colspan="6" class="hint">None in this period</td></tr>`;
     $("#accuracy-fm-body").innerHTML =
       (d.false_machine_examples || []).map(exRow).join("") ||
-      `<tr><td colspan="5" class="hint">None in this period</td></tr>`;
+      `<tr><td colspan="6" class="hint">None in this period</td></tr>`;
   } catch (err) {
     if (msg) {
       msg.className = "error";
@@ -2682,11 +2685,10 @@ async function loadTraining() {
       .map(
         (r) => `<tr>
       <td>${audioButtons(r)}</td>
-      <td class="callid-cell" title="${escapeHtml(r.call_id)}">${escapeHtml(r.call_id)}</td>
       <td>${fmtTime(r.created_at)}</td>
       <td>${escapeHtml(r.server_name || "—")}</td>
-      <td>${escapeHtml(r.called_number || "—")}</td>
       <td>${escapeHtml(r.caller_id || "—")}</td>
+      <td>${escapeHtml(r.called_number || "—")}</td>
       <td>${statusBadge(r.status)}</td>
       <td>
         <select id="corr-${r.id}">
@@ -2711,9 +2713,8 @@ async function loadTraining() {
         <span class="hint">${escapeHtml(r.server_name || "—")}</span>
       </div>
       <div class="call-card-grid">
-        <div><div class="k">Call ID</div><div class="v">${escapeHtml(r.call_id)}</div></div>
-        <div><div class="k">Called</div><div class="v">${escapeHtml(r.called_number || "—")}</div></div>
         <div><div class="k">Caller ID</div><div class="v">${escapeHtml(r.caller_id || "—")}</div></div>
+        <div><div class="k">Called Number</div><div class="v">${escapeHtml(r.called_number || "—")}</div></div>
         <div><div class="k">Time</div><div class="v">${fmtTime(r.created_at)}</div></div>
       </div>
       <div class="call-card-actions" style="margin-top:.65rem;flex-direction:column;align-items:stretch">
@@ -3335,7 +3336,7 @@ async function refreshDashboardLive() {
       .slice(0, 5)
       .map(
         (r) => `<div class="rm">
-          <span class="id">${escapeHtml(r.call_id)}</span>
+          <span class="id">${escapeHtml(r.caller_id || r.called_number || "—")}</span>
           ${statusBadge(r.status)}
           <span class="${confClass(r.confidence)}">${((r.confidence || 0) * 100).toFixed(0)}%</span>
         </div>`

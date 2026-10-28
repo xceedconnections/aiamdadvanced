@@ -64,7 +64,17 @@ def _audio_response(call: CallAnalysis, db: Session, *, as_attachment: bool) -> 
             ),
         )
 
-    safe_name = f"{call.call_id}.wav".replace("/", "_").replace("\\", "_")
+    def _safe_part(value: str) -> str:
+        cleaned = "".join(ch for ch in str(value or "") if ch.isalnum() or ch in ("-", "_", "."))
+        return cleaned.strip("._-") or ""
+
+    call_part = _safe_part(call.call_id) or f"id-{call.id}"
+    called_part = _safe_part(getattr(call, "called_number", None) or "")
+    # Download/play filename: called-number_call-id.wav (called omitted if missing)
+    if called_part:
+        safe_name = f"{called_part}_{call_part}.wav"
+    else:
+        safe_name = f"{call_part}.wav"
     headers = {
         "Cache-Control": "private, max-age=60",
         "Accept-Ranges": "bytes",

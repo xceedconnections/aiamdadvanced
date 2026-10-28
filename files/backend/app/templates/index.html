@@ -135,8 +135,8 @@
             <table>
               <thead>
                 <tr>
-                  <th>Call ID</th>
                   <th>Caller ID</th>
+                  <th>Called Number</th>
                   <th>Duration</th>
                   <th>AI Result</th>
                   <th>Confidence</th>
@@ -237,11 +237,10 @@
               <thead>
                 <tr>
                   <th>Audio</th>
-                  <th>Call ID</th>
                   <th>Time</th>
                   <th>Server</th>
-                  <th>Called Number</th>
                   <th>Caller ID</th>
+                  <th>Called Number</th>
                   <th>Campaign</th>
                   <th>Status</th>
                   <th>Conf</th>
@@ -329,11 +328,10 @@
               <thead>
                 <tr>
                   <th>Audio</th>
-                  <th>Call ID</th>
                   <th>Time</th>
                   <th>Server</th>
-                  <th>Called Number</th>
                   <th>Caller ID</th>
+                  <th>Called Number</th>
                   <th>Campaign</th>
                   <th>Status</th>
                   <th>Conf</th>
@@ -754,7 +752,7 @@
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Call</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
+                  <tr><th>Caller ID</th><th>Called Number</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
                 </thead>
                 <tbody id="accuracy-fh-body"></tbody>
               </table>
@@ -766,7 +764,7 @@
             <div class="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Call</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
+                  <tr><th>Caller ID</th><th>Called Number</th><th>Server</th><th>AI</th><th>Taught</th><th>Conf</th></tr>
                 </thead>
                 <tbody id="accuracy-fm-body"></tbody>
               </table>
@@ -847,11 +845,10 @@
               <thead>
                 <tr>
                   <th>Audio</th>
-                  <th>Call ID</th>
                   <th>Time</th>
                   <th>Server</th>
-                  <th>Called</th>
                   <th>Caller ID</th>
+                  <th>Called Number</th>
                   <th>AI said</th>
                   <th>Correct to</th>
                   <th></th>
@@ -1227,7 +1224,7 @@
             <button type="button" class="ghost" id="settings-tz-save" style="margin-top:.5rem">Save as system default</button>
             <p id="settings-tz-msg" class="hint"></p>
             <div class="panel-head" style="margin-top:1rem"><h3>Recordings link repair</h3></div>
-            <p class="hint">If Play shows missing audio, repair scans <code>/opt/openamd/recordings</code> and relinks WAV files to Call IDs.</p>
+            <p class="hint">If Play shows missing audio, repair scans <code>/opt/openamd/recordings</code> and relinks WAV files to call records.</p>
             <button type="button" class="ghost" id="repair-recordings-btn">Repair recording links</button>
             <p id="repair-msg" class="hint"></p>
           </div>

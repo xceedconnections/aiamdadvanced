@@ -195,11 +195,10 @@ def _filtered_query(
 def _export_headers() -> list[str]:
     return [
         "id",
-        "call_id",
         "created_at",
         "server",
-        "called_number",
         "caller_id",
+        "called_number",
         "ani",
         "campaign",
         "status",
@@ -216,11 +215,10 @@ def _export_row(r: CallAnalysis, server_map: dict) -> list[str]:
     ml = _ml_fields_from_features(getattr(r, "features_json", None))
     return [
         str(r.id),
-        r.call_id or "",
         r.created_at.isoformat(sep=" ", timespec="seconds") if r.created_at else "",
         server_map.get(r.server_id, ""),
-        getattr(r, "called_number", None) or "",
         r.caller_id or "",
+        getattr(r, "called_number", None) or "",
         r.ani or "",
         r.campaign or "",
         r.status or "",
@@ -551,6 +549,8 @@ def accuracy_report(
             {
                 "call_analysis_id": cid,
                 "call_id": ca.call_id or "",
+                "caller_id": ca.caller_id or "",
+                "called_number": getattr(ca, "called_number", None) or "",
                 "predicted": predicted,
                 "actual": actual,
                 "confidence": conf,
@@ -648,7 +648,8 @@ def accuracy_report(
             out.append(
                 {
                     "call_analysis_id": r["call_analysis_id"],
-                    "call_id": r["call_id"],
+                    "caller_id": r.get("caller_id") or "",
+                    "called_number": r.get("called_number") or "",
                     "predicted": r["predicted"],
                     "actual": r["actual"],
                     "confidence": round(r["confidence"], 4),
