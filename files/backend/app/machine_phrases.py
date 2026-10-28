@@ -37,6 +37,16 @@ BUILTIN_MACHINE_PHRASES = [
     "call back later",
     "press 1",
     "for english",
+    # AI / virtual assistant / call-recording IVR
+    "i'm an ai",
+    "i am an ai",
+    "ai assistant",
+    "virtual assistant",
+    "automated assistant",
+    "assistant recording",
+    "this call is being recorded",
+    "your call is being recorded",
+    "call is being recorded",
 ]
 
 DEFAULT_CUSTOM: list[str] = []

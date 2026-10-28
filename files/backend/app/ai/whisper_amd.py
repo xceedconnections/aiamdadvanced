@@ -34,7 +34,16 @@ _MACHINE_RE = re.compile(
     r"please\s+record\s+your\s+(name|message)|"
     # Google Voice / carrier: "Message system. One." / messaging system
     r"message\s+system|messaging\s+system|voice\s+messaging|voice\s+message|"
-    r"answering\s+(machine|service)|automated\s+(attendant|message)|"
+    r"answering\s+(machine|service)|automated\s+(attendant|message|assistant)|"
+    # AI / virtual assistant greetings (never send these to agents)
+    r"i'?m\s+an\s+ai|i\s+am\s+an\s+ai|i'?m\s+a\s+(virtual|automated|ai)\s+assistant|"
+    r"i\s+am\s+a\s+(virtual|automated|ai)\s+assistant|"
+    r"ai\s+assistant|virtual\s+assistant|automated\s+assistant|"
+    r"digital\s+assistant|voice\s+assistant|artificial\s+intelligence|"
+    r"assistant\s+recording|recording\s+(this\s+)?(call|message)|"
+    r"this\s+call\s+(is\s+being|may\s+be)\s+recorded|"
+    r"your\s+call\s+(is\s+being|may\s+be)\s+recorded|"
+    r"call\s+is\s+being\s+recorded|being\s+recorded\s+for|"
     r"this\s+is\s+(the\s+)?(voicemail|voice\s*mail|mailbox|messaging)|"
     r"you\s+have\s+reached\s+(the\s+)?(voicemail|mailbox|message)|"
     # Classic carrier VM: "The person you're calling…" (Tiny: passion/party/portion)
@@ -67,13 +76,15 @@ _MACHINE_RE = re.compile(
 )
 _IVR_RE = re.compile(
     r"\b("
-    r"press\s+\d|for\s+(english|spanish)|menu|your\s+call\s+is\s+important|"
+    r"press\s+\d|press\s+(one|two|three|four|five|six|seven|eight|nine|zero)|"
+    r"for\s+(english|spanish)|menu|your\s+call\s+is\s+important|"
     r"please\s+hold|enter\s+your|dial\s+\d|options?\s+are|to\s+speak\s+to|"
     r"extension|account\s+number|pin\s+number|pound|hash\s+key|"
-    r"using\s+your\s+keypad|touch\s*tone|"
+    r"using\s+your\s+keypad|touch\s*tone|for\s+more\s+options|remain\s+on\s+the\s+line|"
     r"if\s+you\s+have\s+not|not\s+been\s+set\s+up|set\s+up\s+yet|"
     r"please\s+try\s+your|try\s+your\s+call|enter\s+your\s+(password|passcode|pin)|"
-    r"mailbox\s+is\s+full|is\s+full\s+and"
+    r"mailbox\s+is\s+full|is\s+full\s+and|"
+    r"ai\s+assistant|virtual\s+assistant|automated\s+assistant|i'?m\s+an\s+ai"
     r")\b",
     re.I,
 )
@@ -154,7 +165,7 @@ _OH_AMBIGUOUS = {"oh", "o"}
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias toward phone greetings + digits + classic / Google Voice VM
+# Bias toward phone greetings + digits + classic / Google Voice VM + AI assistants
 _AMD_INITIAL_PROMPT = (
     "Hello. Hello. Hi. Yeah. Yes. Zero. One. Two. Three. Four. Five. "
     "Message system. One. Voicemail. Mailbox is full and there is not. "
@@ -162,7 +173,9 @@ _AMD_INITIAL_PROMPT = (
     "The person you are calling is not available. "
     "Please leave a message after the beep. Press one for English. "
     "Your call has been forwarded. Zero. One. Two. "
-    "Welcome to Vodafone voicemail. The person you are calling is not available."
+    "Welcome to Vodafone voicemail. The person you are calling is not available. "
+    "Hi. I'm an AI assistant recording. This call is being recorded. "
+    "I am a virtual assistant. Please leave a message after the tone."
 )
 
 
@@ -346,11 +359,21 @@ def classify_transcript(
     if re.fullmatch(r"\s*(there|their|they'?re|zero|nought|oh)\.?\s*", t, re.I):
         if not is_hello_mishear(t, audio_seconds=audio_seconds):
             return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "ivr_digits"
-    # Live hello only when the whole clip is a short greeting — not "Hi" + VM script
+    # Explicit AI / recording cues even when greeting word is present
+    if re.search(
+        r"\b(i'?m\s+an\s+ai|i\s+am\s+an\s+ai|ai\s+assistant|virtual\s+assistant|"
+        r"automated\s+assistant|digital\s+assistant|voice\s+assistant|"
+        r"assistant\s+recording|being\s+recorded|call\s+is\s+being\s+recorded)\b",
+        t,
+        re.I,
+    ):
+        return "MACHINE", max(0.95, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Live hello only when the whole clip is a short greeting — not "Hi" + VM/AI script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
         if re.search(
-            r"\b(record|message|mailbox|voicemail|forwarded|reached|beep|tone|"
-            r"unavailable|not\s+available|call\s+back|system|full|set\s+up)\b",
+            r"\b(record(?:ing)?|message|mailbox|voicemail|forwarded|reached|beep|tone|"
+            r"unavailable|not\s+available|call\s+back|system|full|set\s+up|"
+            r"assistant|artificial|automated|press|menu|keypad)\b",
             t,
             re.I,
         ):
@@ -360,7 +383,8 @@ def classify_transcript(
     if len(t.split()) >= 4 and not _HUMAN_RE.search(t):
         if re.search(
             r"\b(full|mailbox|voicemail|set\s+up|try\s+your|press|enter\s+your|"
-            r"forwarded|reached|leave\s+(a\s+)?message|not\s+available)\b",
+            r"forwarded|reached|leave\s+(a\s+)?message|not\s+available|"
+            r"ai\s+assistant|virtual\s+assistant|being\s+recorded|recording)\b",
             t,
             re.I,
         ):

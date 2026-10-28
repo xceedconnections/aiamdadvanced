@@ -259,6 +259,28 @@ def finalize_amd_decision(
     w_status = str(whisper.get("status") or "")
     w_conf = float(whisper.get("confidence") or 0.0)
     transcript = str(whisper.get("transcript") or "").strip()
+
+    # Re-classify transcript so AI/IVR/VM wording overrides a stale human_short
+    # cue or stock-HUMAN rescue when Whisper text is clearly automated.
+    if transcript and (
+        not _machine_cue(cue) and w_status != "MACHINE"
+    ):
+        try:
+            from app.ai.whisper_amd import classify_transcript
+
+            re_st, re_conf, re_cue = classify_transcript(transcript)
+            if re_st == "MACHINE" or _machine_cue(re_cue):
+                cue = re_cue or "voicemail"
+                w_status = "MACHINE"
+                w_conf = max(w_conf, float(re_conf or 0.0), 0.93)
+                whisper["status"] = "MACHINE"
+                whisper["confidence"] = w_conf
+                whisper["cue"] = cue
+                details["whisper_machine_override"] = True
+                details["whisper_machine_override_cue"] = cue
+        except Exception:
+            pass
+
     feats["whisper_vm_hit"] = 1.0 if (_machine_cue(cue) or w_status == "MACHINE") else 0.0
     feats["whisper_human_hit"] = 1.0 if (cue == "human_short" or w_status == "HUMAN") else 0.0
     feats["whisper_word_count"] = float(len(transcript.split())) if transcript else 0.0
@@ -269,7 +291,8 @@ def finalize_amd_decision(
         details["xgb_probs"] = {k: round(float(v), 4) for k, v in xgb_probs.items()}
         details["class_probs"] = details["xgb_probs"]
 
-    # Clear VM/IVR phrases still hang up (never overridden by stock HUMAN)
+    # Clear VM/IVR/AI phrases still hang up (never overridden by stock HUMAN
+    # or short-hello acoustic rescue).
     if _machine_cue(cue) or w_status == "MACHINE":
         details["amd_stage"] = "whisper_machine"
         details["fuse_note"] = cue or "voicemail"
@@ -285,7 +308,8 @@ def finalize_amd_decision(
         return "HUMAN", max(conf, w_conf, 0.92)
 
     # Stock Asterisk AMD said HUMAN + sparse live hello acoustics → agent.
-    # Does not apply when stock said MACHINE / dense greeting / digit prompt.
+    # Does not apply when stock said MACHINE / dense greeting / digit prompt
+    # / Whisper already showed automated wording above.
     if (
         stock_human
         and not stock_machine
