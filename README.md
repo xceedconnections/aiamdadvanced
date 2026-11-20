@@ -196,12 +196,13 @@ https://github.com/xceedconnections/vicidialaiamdscammerchecker
 
 Leave **AMD Agent Route Options** blank/disabled for 8398 and 8399 (do not add NOTSURE/MACHINE pairs — those would send AAs to agents). WaitForSilence `2000,2,30` is optional and not required for this routing.
 
-With **Classify blank / silent calls as BLANK** on, a blank, silent, or
-0-second upload is BLANK and the dialer gets MACHINE (AA hangup), even when
-stock `AMDSTATUS` was HUMAN|PERSON|NOTSURE. The agent path requires a real
-recording that AIAMD has checked. A portal outage on a usable recording still
-trusts stock so it does not PDROP. This does not weaken audible MACHINE
-detection.
+**Role split:** VICIdial stock AMD runs first (MACHINE→AA). Only stock
+HUMAN/PERSON/NOTSURE posts a real WAV to this portal. The dialer must not
+upload a 0-second/header-only file as a substitute for audio — it Records a
+second-opinion clip when Monitor is empty. With **Classify blank / silent
+calls as BLANK** on, blank/silent audio is BLANK→MACHINE (AA). The agent path
+requires a recording AIAMD has actually checked. A portal outage on a usable
+recording still trusts stock so it does not PDROP.
 
 ## Folder contents
 
