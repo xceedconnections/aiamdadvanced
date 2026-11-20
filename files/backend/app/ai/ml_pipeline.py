@@ -90,6 +90,37 @@ def run_ml_pipeline(
         }
         return b_status, b_conf, details
 
+    if (
+        float(feats.get("fax", 0.0) or 0.0) >= 0.5
+        and float(feats.get("fax_conf", 0.0) or 0.0) >= 0.80
+    ):
+        details = {
+            "ml_pipeline": True,
+            "hybrid_status": hybrid_status,
+            "hybrid_confidence": round(float(hybrid_confidence), 4),
+            "whisper_policy": "whisper_before_agent",
+            "ml_note": "fax_modem_tone",
+            "fuse_note": "fax_modem_tone",
+            "decision_reason": "fax_modem_tone",
+            "fax_detected": True,
+        }
+        # 8399 stock-human second opinion: still run Whisper for portal badge/text
+        stock_h = float(feats.get("asterisk_amd_human", 0.0) or 0.0) >= 0.5
+        if stock_h and whisper_on:
+            try:
+                from app.ai.whisper_amd import refine_with_whisper, whisper_available
+
+                if whisper_available():
+                    _, _, w_det = refine_with_whisper(
+                        audio, sr, xgb_probs={}, max_seconds=5.0
+                    )
+                    details["whisper"] = w_det
+                    details["whisper_used"] = True
+                    details["stock_second_opinion_whisper"] = True
+            except Exception as exc:
+                details["whisper_error"] = str(exc)
+        return "FAX", max(0.93, float(feats.get("fax_conf") or 0.93)), details
+
     if float(feats.get("ringback", 0.0) or 0.0) >= 0.5:
         details = {
             "ml_pipeline": True,
@@ -239,9 +270,17 @@ def run_ml_pipeline(
         details["ml_note"] = (details.get("ml_note") or "") + "+uncertain_machine_to_agent"
         return "HUMAN", max(float(conf), 0.88), details
 
+    stock_human = float(feats.get("asterisk_amd_human", 0.0) or 0.0) >= 0.5
+
     # Answering machine / IVR / SIT / BLANK with strong evidence → accept
+    # On 8399 stock-HUMAN second opinion still run Whisper (AI/IVR/"fax" text).
     if status != "HUMAN":
-        details["ml_note"] = "non_human_accept"
+        if stock_human and whisper_on and not details.get("whisper_used"):
+            rescued = _apply_whisper("stock_second_opinion_non_human")
+            if rescued and rescued[0] == "MACHINE":
+                return rescued[0], rescued[1], details
+            details["stock_second_opinion_whisper"] = bool(details.get("whisper_used"))
+        details["ml_note"] = details.get("ml_note") or "non_human_accept"
         return status, float(conf), details
 
     # HUMAN (any confidence) → Whisper before sending to an agent

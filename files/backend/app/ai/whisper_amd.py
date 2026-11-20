@@ -35,6 +35,8 @@ _MACHINE_RE = re.compile(
     # Google Voice / carrier: "Message system. One." / messaging system
     r"message\s+system|messaging\s+system|voice\s+messaging|voice\s+message|"
     r"answering\s+(machine|service)|automated\s+(attendant|message|assistant)|"
+    # Fax / modem / telecopier mishears (tone clips or spoken "fax machine")
+    r"fax(\s+machine)?|telecopier|facsimile|modem\s+tone|"
     # AI / virtual assistant greetings (never send these to agents)
     r"i'?m\s+an\s+ai|i\s+am\s+an\s+ai|i'?m\s+a\s+(virtual|automated|ai)\s+assistant|"
     r"i\s+am\s+a\s+(virtual|automated|ai)\s+assistant|"

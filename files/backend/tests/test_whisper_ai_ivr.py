@@ -45,6 +45,12 @@ class AiAssistantIvrCueTests(unittest.TestCase):
         self.assertEqual(status, "MACHINE")
         self.assertIn(cue, ("ivr_digits", "ivr", "voicemail"))
 
+    def test_fax_word_is_machine(self):
+        status, conf, cue = classify_transcript("This is a fax machine.")
+        self.assertEqual(status, "MACHINE")
+        self.assertGreaterEqual(conf, 0.92)
+        self.assertEqual(cue, "voicemail")
+
     def test_short_hello_remains_human(self):
         for text in ("hello", "Hello.", "hi", "Hi.", "yeah", "Yeah.", "yes"):
             status, conf, cue = classify_transcript(text)

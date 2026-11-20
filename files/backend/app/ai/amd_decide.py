@@ -197,6 +197,38 @@ def finalize_amd_decision(
     )
 
     # Hard acoustic locks (never send to agent)
+    strong_fax = (
+        float(feats.get("fax", 0.0)) >= 0.5
+        and float(feats.get("fax_conf", 0.0) or 0.0) >= 0.80
+    )
+    if strong_fax:
+        # 8399 stock-human path: still capture Whisper for portal badge
+        if float(feats.get("asterisk_amd_human", 0.0) or 0.0) >= 0.5:
+            try:
+                ml_block0 = details.get("ml") if isinstance(details.get("ml"), dict) else {}
+                existing0 = (
+                    ml_block0.get("whisper")
+                    if isinstance(ml_block0.get("whisper"), dict)
+                    else None
+                )
+                w0 = _run_whisper(audio, sr, existing=existing0)
+                details["whisper_stage"] = w0
+                details["stock_second_opinion_whisper"] = True
+                if w0.get("transcript") or w0.get("cue") or w0.get("whisper_ok"):
+                    details["whisper_used"] = True
+                    if not ml_block0:
+                        details["ml"] = {
+                            "whisper": w0,
+                            "whisper_used": True,
+                            "ml_note": "stock_second_opinion_whisper",
+                        }
+            except Exception:
+                pass
+        details["amd_stage"] = "hard_fax"
+        details["fuse_note"] = "fax_modem_tone"
+        details["decision_reason"] = "fax_modem_tone"
+        details["fax_detected"] = True
+        return "FAX", max(conf, float(feats.get("fax_conf", 0.93) or 0.93), 0.93)
     if strong_beep:
         details["amd_stage"] = "hard_beep"
         details["fuse_note"] = "beep"
@@ -238,20 +270,34 @@ def finalize_amd_decision(
     stock_human = float(feats.get("asterisk_amd_human", 0.0) or 0.0) >= 0.5
     stock_machine = float(feats.get("asterisk_amd_machine", 0.0) or 0.0) >= 0.5
 
-    # Stage 2: Whisper
+    # Stage 2: Whisper — always on 8399 stock HUMAN|PERSON|NOTSURE second opinion
+    # (even when acoustics already lean HUMAN). Catches AI/IVR/"fax" wording.
     ml_block = details.get("ml") if isinstance(details.get("ml"), dict) else {}
     existing_w = ml_block.get("whisper") if isinstance(ml_block.get("whisper"), dict) else None
+    # Force a fresh Whisper pass when stock AMD trusted human and prior stage
+    # skipped STT (confident heuristic HUMAN / non_human_accept without text).
+    force_stock_whisper = bool(stock_human and not stock_machine)
+    if force_stock_whisper and isinstance(existing_w, dict):
+        has_text = bool(str(existing_w.get("transcript") or "").strip())
+        if not has_text and not existing_w.get("whisper_ok"):
+            existing_w = None
     whisper = _run_whisper(audio, sr, existing=existing_w)
     details["whisper_stage"] = whisper
-    if whisper.get("transcript") or whisper.get("cue"):
+    if force_stock_whisper:
+        details["stock_second_opinion_whisper"] = True
+    if whisper.get("transcript") or whisper.get("cue") or whisper.get("whisper_ok"):
         details["whisper_used"] = True
         if not ml_block:
             details["ml"] = {
                 "whisper": whisper,
                 "whisper_used": True,
-                "ml_note": "classic_whisper_stage",
+                "ml_note": (
+                    "stock_second_opinion_whisper"
+                    if force_stock_whisper
+                    else "classic_whisper_stage"
+                ),
             }
-        elif not isinstance(ml_block.get("whisper"), dict):
+        else:
             ml_block["whisper"] = whisper
             ml_block["whisper_used"] = True
 

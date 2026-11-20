@@ -32,7 +32,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (VAD + Whisper + XGB + Score)",
     "model": "Silero VAD + Whisper phrases + XGBoost + Asterisk AMD + score",
-    "version": "6.1.2",
+    "version": "6.1.3",
     "runtime": "NumPy + SoundFile + ONNX (Silero) + Faster-Whisper + XGBoost",
 }
 
@@ -404,7 +404,11 @@ def _is_truncated_script_clip(feats: Dict[str, float]) -> bool:
     duration = float(feats.get("duration", 0.0))
     if duration < 0.35 or duration >= 1.15:
         return False
-    if _strong_beep(feats) or float(feats.get("ringback", 0.0)) >= 0.5:
+    if (
+        _strong_beep(feats)
+        or _strong_fax(feats)
+        or float(feats.get("ringback", 0.0)) >= 0.5
+    ):
         return False
     peak = float(feats.get("peak", 0.0))
     speech_ratio = float(feats.get("speech_ratio", 0.0))
@@ -440,6 +444,8 @@ def _looks_like_short_human(
     """
     if _strong_beep(feats):
         return False
+    if _strong_fax(feats):
+        return False
     if float(feats.get("sit", 0.0)) >= 0.5:
         return False
     if float(feats.get("ringback", 0.0)) >= 0.5:
@@ -469,6 +475,16 @@ def _looks_like_short_human(
     speech_ratio = float(feats.get("speech_ratio", 0.0))
     num_bursts = float(feats.get("num_bursts", 0.0))
     longest_burst = float(feats.get("longest_burst_ms", 0.0))
+    zcr = float(feats.get("zcr", 0.0))
+
+    # Continuous fax/modem-like tone: flat energy → speech_ratio≈0, high ZCR.
+    # Must never match the sparse-hello fallthrough below.
+    if zcr >= 0.28 and speech_ratio < 0.08 and longest_burst < 120 and duration >= 0.8:
+        return False
+    if num_bursts <= 0 and speech_ratio < 0.05 and abs_long < 80:
+        # No energy island at all — not a spoken hello (fax/static/silence)
+        if not (silero and silero.get("ok") and float(silero.get("longest_speech_ms", 0) or 0) >= 80):
+            return False
 
     # Quiet single/double syllable "hi" / "yeah" in a 2s window
     if (
@@ -516,7 +532,8 @@ def _looks_like_short_human(
         if s_segs <= 2 and s_long <= 900 and s_long >= 80:
             return True
 
-    if num_bursts <= 3 and longest_burst <= 900 and speech_ratio <= 0.40:
+    # Require a real speech island — zero-burst flat tones are not hellos
+    if num_bursts <= 3 and 60.0 <= longest_burst <= 900 and speech_ratio <= 0.40:
         return True
     return False
 
@@ -611,6 +628,93 @@ def _strong_beep(feats: Dict[str, float]) -> bool:
         float(feats.get("beep", 0.0)) >= 0.5
         and float(feats.get("beep_conf", 0.0)) >= 0.70
     )
+
+
+def _strong_fax(feats: Dict[str, float]) -> bool:
+    """True for a confident continuous fax / modem carrier tone."""
+    return (
+        float(feats.get("fax", 0.0)) >= 0.5
+        and float(feats.get("fax_conf", 0.0) or 0.0) >= 0.80
+    )
+
+
+def _detect_fax_modem(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
+    """CNG (~1100 Hz), CED (~2100 Hz), and similar continuous modem carriers.
+
+    Fax/modem answer tones are stable narrowband carriers (often with harmonics)
+    lasting ~0.5–3s.  Flat energy fools percentile VAD into speech_ratio≈0, so
+    a dedicated spectral tracker is required.  Short voiced hellos must not match.
+    """
+    if audio is None or len(audio) < int(sr * 0.6):
+        return False, 0.0
+
+    rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2))) if len(audio) else 0.0
+    if rms < 0.012:
+        return False, 0.0
+
+    # Modem / fax carrier bands (Hz). Includes CNG≈1100, V.21/FSK≈1200–1300,
+    # V.21 high≈1650–1850, CED≈2100, V.22≈2400.
+    bands = (
+        (1000.0, 1250.0),
+        (1250.0, 1400.0),
+        (1600.0, 1850.0),
+        (2000.0, 2250.0),
+        (2300.0, 2500.0),
+    )
+    win = max(int(sr * 0.20), 256)
+    hop = max(int(sr * 0.05), 64)
+    if len(audio) < win:
+        return False, 0.0
+
+    stable_run = 0
+    best_run = 0
+    anchor_hz: Optional[float] = None
+    for off in range(0, len(audio) - win + 1, hop):
+        seg = audio[off : off + win]
+        window = np.hanning(len(seg))
+        spectrum = np.abs(np.fft.rfft(seg * window))
+        freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
+        peak_i = int(np.argmax(spectrum))
+        f0 = float(freqs[peak_i])
+        mean = float(np.mean(spectrum) + 1e-12)
+        ratio = float(spectrum[peak_i] / mean)
+        in_band = any(lo <= f0 <= hi for lo, hi in bands)
+        if in_band and ratio >= 18.0:
+            if anchor_hz is None or abs(f0 - anchor_hz) > 45.0:
+                anchor_hz = f0
+                stable_run = 1
+            else:
+                stable_run += 1
+            best_run = max(best_run, stable_run)
+        else:
+            anchor_hz = None
+            stable_run = 0
+
+    stable_s = float(best_run * hop) / float(sr)
+    if stable_s < 0.70:
+        return False, 0.0
+
+    # Whole-clip (or first 5s) confirmation: dominant carrier + high ZCR
+    clip = audio[: min(len(audio), int(sr * 5.0))]
+    window = np.hanning(len(clip))
+    spectrum = np.abs(np.fft.rfft(clip * window))
+    freqs = np.fft.rfftfreq(len(clip), d=1.0 / sr)
+    peak_i = int(np.argmax(spectrum))
+    f0 = float(freqs[peak_i])
+    mean = float(np.mean(spectrum) + 1e-12)
+    ratio = float(spectrum[peak_i] / mean)
+    in_band = any(lo <= f0 <= hi for lo, hi in bands)
+    if not in_band or ratio < 22.0:
+        return False, 0.0
+
+    zcr = _compute_zcr(clip)
+    # Pure tones / square-ish modem carriers have high ZCR; voiced hello is low.
+    # Allow slightly lower ZCR when the carrier is extremely stable and strong.
+    if zcr < 0.22 and not (stable_s >= 1.2 and ratio >= 40.0):
+        return False, 0.0
+
+    conf = min(0.99, max(0.85, 0.70 + stable_s * 0.12 + min(0.12, (ratio - 22.0) / 200.0)))
+    return True, float(conf)
 
 
 def _detect_beep(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
@@ -899,6 +1003,10 @@ def _classify_heuristic(
     if sit:
         return "SIT", 0.85
 
+    # Fax / modem carrier — never send to agents (portal FAX → VICIdial MACHINE)
+    if _strong_fax(feats):
+        return "FAX", max(0.93, float(feats.get("fax_conf", 0.93)))
+
     # Only confident leave-message tones (weak formant hits are not VM beeps)
     if beep and float(feats.get("beep_conf", 0.0)) >= 0.70:
         return "MACHINE", max(0.9, feats.get("beep_conf", 0.9))
@@ -989,6 +1097,9 @@ def _fuse_with_silero(
 
     if float(feats.get("ringback", 0.0)) >= 0.5:
         return "MACHINE", max(float(confidence), 0.93), "ringback_tone"
+
+    if _strong_fax(feats):
+        return "FAX", max(float(confidence), float(feats.get("fax_conf", 0.93)), 0.93), "fax_modem_tone"
 
     # Live pickup ("hello") only when already HUMAN and acoustics agree
     if status == "HUMAN" and _looks_like_short_human(feats, silero):
@@ -1121,6 +1232,7 @@ def analyze_audio(
     beep, beep_conf = _detect_beep(audio, sr)
     sit, sit_conf = _detect_sit(audio, sr)
     ring, ring_conf = _detect_ringback(audio, sr)
+    fax, fax_conf = _detect_fax_modem(audio, sr)
     internal_sil = _internal_silence_ms(mask, frame_ms=20)
 
     feats = {
@@ -1136,6 +1248,8 @@ def analyze_audio(
         "sit_conf": sit_conf,
         "ringback": float(ring),
         "ringback_conf": float(ring_conf),
+        "fax": float(fax),
+        "fax_conf": float(fax_conf),
         "internal_silence_ms": float(internal_sil),
         "activity_ratio": float(activity_ratio),
         "abs_speech_ratio": float(abs_speech_ratio),
@@ -1163,37 +1277,99 @@ def analyze_audio(
         pack=locale_pack,
     )
     h_status, h_confidence = _classify_heuristic(feats, beep, sit, pack)
-    # Slightly lower threshold so quiet telephony hello/VM is not missed
-    silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
+
+    def _maybe_stock_whisper(details_out: Dict[str, Any]) -> None:
+        """8399 second-opinion: always capture Whisper when stock said HUMAN/PERSON/NOTSURE."""
+        if float(feats.get("asterisk_amd_human", 0.0) or 0.0) < 0.5:
+            return
+        try:
+            from app.ai.amd_decide import _run_whisper
+
+            existing = None
+            ml_b = details_out.get("ml") if isinstance(details_out.get("ml"), dict) else {}
+            if isinstance(ml_b.get("whisper"), dict):
+                existing = ml_b["whisper"]
+            whisper = _run_whisper(audio, sr, existing=existing)
+            details_out["whisper_stage"] = whisper
+            if whisper.get("transcript") or whisper.get("cue") or whisper.get("whisper_ok"):
+                details_out["whisper_used"] = True
+                details_out["stock_second_opinion_whisper"] = True
+                if not ml_b:
+                    details_out["ml"] = {
+                        "whisper": whisper,
+                        "whisper_used": True,
+                        "ml_note": "stock_second_opinion_whisper",
+                    }
+                else:
+                    ml_b["whisper"] = whisper
+                    ml_b["whisper_used"] = True
+        except Exception as exc:
+            details_out["stock_whisper_error"] = str(exc)
+
+    def _empty_silero() -> Dict[str, Any]:
+        return {
+            "ok": False,
+            "speech_ratio": 0.0,
+            "num_segments": 0,
+            "longest_speech_ms": 0.0,
+            "mean_prob": 0.0,
+        }
+
+    # Fax / modem carrier — never send to agents (maps to MACHINE for VICIdial AGI).
+    # Decide before Silero/Whisper heavy work; still run Whisper on stock-human path.
+    if _strong_fax(feats):
+        ms = int((time.perf_counter() - t0) * 1000)
+        fax_details: Dict[str, Any] = {
+            **feats,
+            "engine": "hybrid",
+            "locale_pack_enabled": bool(locale_pack_enabled),
+            "locale_pack": pack_name,
+            "blank_as_machine": is_blank_as_machine_enabled(),
+            "heuristic_status": h_status,
+            "heuristic_confidence": round(float(h_confidence), 4),
+            "fuse_note": "fax_modem_tone",
+            "decision_reason": "fax_modem_tone",
+            "amd_stage": "hard_fax",
+            "fax_detected": True,
+            "ml_pipeline_enabled": False,
+            "silero": _empty_silero(),
+        }
+        _maybe_stock_whisper(fax_details)
+        return AnalysisResult(
+            status="FAX",
+            confidence=max(0.93, float(feats.get("fax_conf", 0.93))),
+            processing_ms=ms,
+            audio_seconds=round(duration, 3),
+            details=fax_details,
+        )
 
     # Ringback / ringing (not answered) — never send to agents
     if float(feats.get("ringback", 0.0)) >= 0.5:
         ms = int((time.perf_counter() - t0) * 1000)
+        ring_details: Dict[str, Any] = {
+            **feats,
+            "engine": "hybrid",
+            "locale_pack_enabled": bool(locale_pack_enabled),
+            "locale_pack": pack_name,
+            "blank_as_machine": is_blank_as_machine_enabled(),
+            "heuristic_status": h_status,
+            "heuristic_confidence": round(float(h_confidence), 4),
+            "fuse_note": "ringback_tone",
+            "ringback_detected": True,
+            "ml_pipeline_enabled": False,
+            "silero": _empty_silero(),
+        }
+        _maybe_stock_whisper(ring_details)
         return AnalysisResult(
             status="MACHINE",
             confidence=max(0.93, float(feats.get("ringback_conf", 0.93))),
             processing_ms=ms,
             audio_seconds=round(duration, 3),
-            details={
-                **feats,
-                "engine": "hybrid",
-                "locale_pack_enabled": bool(locale_pack_enabled),
-                "locale_pack": pack_name,
-                "blank_as_machine": is_blank_as_machine_enabled(),
-                "heuristic_status": h_status,
-                "heuristic_confidence": round(float(h_confidence), 4),
-                "fuse_note": "ringback_tone",
-                "ringback_detected": True,
-                "ml_pipeline_enabled": False,
-                "silero": {
-                    "ok": bool(silero.get("ok")),
-                    "speech_ratio": round(float(silero.get("speech_ratio", 0.0)), 4),
-                    "num_segments": int(silero.get("num_segments", 0)),
-                    "longest_speech_ms": round(float(silero.get("longest_speech_ms", 0.0)), 1),
-                    "mean_prob": round(float(silero.get("mean_prob", 0.0)), 4),
-                },
-            },
+            details=ring_details,
         )
+
+    # Slightly lower threshold so quiet telephony hello/VM is not missed
+    silero = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
 
     # VoIP trunk noise — stock trust or blank checkbox (never false VM alone)
     if _is_voip_noise_burst(feats, silero):
