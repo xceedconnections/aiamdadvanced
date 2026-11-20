@@ -39,6 +39,7 @@ const routePages = {
   "/wipe.php": "wipe",
   "/audio.php": "audio",
   "/cronjob.php": "cronjob",
+  "/update.php": "update",
   "/settings.php": "settings",
 };
 
@@ -219,6 +220,7 @@ function openPage(page) {
   if (page === "wipe") loadWipePage();
   if (page === "audio") loadAudioPage();
   if (page === "cronjob") loadCronPage();
+  if (page === "update") loadUpdatePage();
   if (page === "settings") {
     loadHealth();
     loadAmdSettings();
@@ -2138,19 +2140,13 @@ $("#key-form")?.addEventListener("submit", async (e) => {
     window.__openamd_last_api_key = key;
     if (msg) {
       msg.className = "ok";
-      msg.textContent = "Key created — full value is also listed in the table above.";
+      msg.textContent = "Key created — installer commands below use this key.";
     }
-    const base = portalBaseUrl() || "https://YOUR_AI_AMD_HOST";
     if (reveal) {
       reveal.classList.remove("hidden");
-      reveal.textContent =
-        `${key}\n\n` +
-        `ViciBox install:\n` +
-        `curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\\n` +
-        `  | bash -s -- ${base} ${key}\n\n` +
-        `Or:\n` +
-        `bash /root/vicidialaiamd/vicibox_install.sh ${base} ${key}`;
+      reveal.textContent = `API key:\n${key}\n\nDialer install (run on VICIdial as root):\n${dialerInstallCommands(key)}`;
     }
+    showDialerInstall(key);
     copyBtn?.classList.remove("hidden");
     if ($("#key-name")) $("#key-name").value = "default";
     await loadApiKeys();
@@ -2205,6 +2201,7 @@ async function loadApiKeys() {
   if (!serverId) {
     manager.classList.add("hidden");
     body.innerHTML = `<tr><td colspan="6" class="hint">Select a server…</td></tr>`;
+    hideDialerInstall();
     return;
   }
 
@@ -2220,6 +2217,7 @@ async function loadApiKeys() {
     );
     if (!keys.length) {
       body.innerHTML = `<tr><td colspan="6" class="hint">No API keys yet — create one below.</td></tr>`;
+      hideDialerInstall();
       return;
     }
     body.innerHTML = keys
@@ -2244,6 +2242,11 @@ async function loadApiKeys() {
         <td>${k.is_active ? "Active" : "Revoked"}</td>
         <td style="white-space:nowrap">
           ${
+            full
+              ? `<button type="button" class="ghost" onclick="showDialerInstallForKey(${k.id})">Install</button>`
+              : ""
+          }
+          ${
             k.is_active
               ? `<button type="button" class="ghost" data-key-id="${k.id}" data-key-name="${escapeHtml(
                   k.name || "default"
@@ -2254,10 +2257,14 @@ async function loadApiKeys() {
       </tr>`;
       })
       .join("");
+    const firstFull = keys.find((k) => (k.api_key || "").trim());
+    if (firstFull) showDialerInstall(String(firstFull.api_key).trim());
+    else hideDialerInstall();
   } catch (err) {
     body.innerHTML = `<tr><td colspan="6" class="error">${escapeHtml(
       err.message || "Failed to load keys"
     )}</td></tr>`;
+    hideDialerInstall();
   }
 }
 
@@ -3060,6 +3067,69 @@ function amdApiBaseUrl() {
   }
 }
 
+function dialerInstallCommands(apiKey = "oam_YOUR_API_KEY") {
+  const amd = amdApiBaseUrl();
+  const key = String(apiKey || "oam_YOUR_API_KEY").trim() || "oam_YOUR_API_KEY";
+  return [
+    "rm -rf /root/vicidialaiamdscammerchecker",
+    "git clone https://github.com/xceedconnections/vicidialaiamdscammerchecker.git /root/vicidialaiamdscammerchecker",
+    "find /root/vicidialaiamdscammerchecker -type f \\( -name '*.sh' -o -name '*.agi' -o -name '*.py' \\) -exec sed -i 's/\\r$//' {} +",
+    "cd /root/vicidialaiamdscammerchecker",
+    `bash vicibox_install.sh ${amd} ${key}`,
+  ].join("\n");
+}
+
+function showDialerInstall(apiKey) {
+  const panel = $("#dialer-install-panel");
+  const code = $("#dialer-install-code");
+  if (!panel || !code) return;
+  const key = String(apiKey || "").trim();
+  if (!key) {
+    hideDialerInstall();
+    return;
+  }
+  window.__openamd_last_api_key = key;
+  code.textContent = dialerInstallCommands(key);
+  panel.classList.remove("hidden");
+}
+
+function hideDialerInstall() {
+  $("#dialer-install-panel")?.classList.add("hidden");
+}
+
+window.showDialerInstallForKey = (keyId) => {
+  const row = document.querySelector(`tr[data-api-key-id="${keyId}"]`);
+  const key = row?.getAttribute("data-api-key") || "";
+  if (!key) {
+    const msg = $("#key-msg");
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Full key not available — generate a new key.";
+    }
+    return;
+  }
+  showDialerInstall(key);
+  $("#dialer-install-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+
+$("#dialer-install-copy")?.addEventListener("click", async () => {
+  const text = $("#dialer-install-code")?.textContent || "";
+  const msg = $("#key-msg");
+  if (!text.trim()) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = "Dialer install commands copied.";
+    }
+  } catch (_) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = "Could not copy — select the commands manually.";
+    }
+  }
+});
+
 function viciboxInstallDocs(apiKey = "oam_YOUR_API_KEY") {
   const portal = portalBaseUrl() || "http://aiamd.example.com";
   const amd = amdApiBaseUrl();
@@ -3075,19 +3145,13 @@ VICIdial AMD API (port 2130 — firewall dialer IPs only):
 Health (AMD port):
   curl -sS ${amd}/api/health
 
-ViciBox install (base URL MUST include :2130):
-  curl -fsSL https://raw.githubusercontent.com/xceedconnections/vicidialaiamd/main/remote-install.sh \\
-    | bash -s -- ${amd} ${apiKey}
-
-  bash /root/vicidialaiamd/vicibox_install.sh ${amd} ${apiKey}
+ViciBox dialer install (scammerchecker / 8399) — run on the dialer as root:
+${dialerInstallCommands(apiKey)}
 
 Existing dialers — update /etc/asterisk/openamd.conf:
   OPENAMD_URL=${amd}/api/v1/analyze
 
-Then set campaign AMD / routing extension:
-  8369 = stock Vicidial AMD
-  8398 = human-only (stock AMD; HUMAN→agent; else hangup; no scam)
-  8399 = stock MACHINE→hangup; HUMAN/NOTSURE→AIAMD; AIAMD HUMAN→agent; AIAMD down→8398 hangup`;
+Then set campaign AMD / routing extension to: 8399`;
 }
 
 async function loadHealth() {
@@ -3102,9 +3166,180 @@ async function loadHealth() {
   const el = $("#health-json");
   if (el) el.textContent = JSON.stringify(payload, null, 2);
   const docs = $("#vicidial-api-docs");
-  if (docs) docs.textContent = viciboxInstallDocs("oam_xxxxxxxx");
+  if (docs) {
+    const sampleKey = window.__openamd_last_api_key || "oam_YOUR_API_KEY";
+    docs.textContent = viciboxInstallDocs(sampleKey);
+  }
   updateHealthPill({ status: h.status === "ok" ? "ok" : "warning" });
 }
+
+function _fmtCommitLine(meta) {
+  if (!meta) return "—";
+  const short = meta.short || (meta.commit ? String(meta.commit).slice(0, 7) : "");
+  const full = meta.commit || "";
+  if (!short && !full) return "—";
+  return short && full && short !== full ? `${short} (${full})` : short || full;
+}
+
+async function loadUpdatePage() {
+  const msg = $("#update-msg");
+  const applyBtn = $("#update-apply-btn");
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Checking GitHub…";
+  }
+  if (applyBtn) applyBtn.disabled = true;
+  try {
+    const data = await api("/api/system/update/status");
+    if ($("#update-app-version")) $("#update-app-version").textContent = data.app_version || "—";
+    if ($("#update-source-dir")) {
+      $("#update-source-dir").textContent =
+        data.source_dir || "(not found — clone to /root/aiamdadvanced)";
+    }
+    const local = data.local || {};
+    const remote = data.remote || {};
+    if ($("#update-local-commit")) {
+      $("#update-local-commit").textContent = `Commit: ${_fmtCommitLine(local)}`;
+    }
+    if ($("#update-local-subject")) {
+      $("#update-local-subject").textContent = `Message: ${local.subject || "—"}`;
+    }
+    if ($("#update-local-date")) {
+      $("#update-local-date").textContent = `Date: ${local.date || "—"}`;
+    }
+    if ($("#update-remote-commit")) {
+      $("#update-remote-commit").textContent = remote.ok
+        ? `Commit: ${_fmtCommitLine(remote)}`
+        : `Commit: — (${remote.error || "GitHub unreachable"})`;
+    }
+    if ($("#update-remote-subject")) {
+      $("#update-remote-subject").textContent = `Message: ${remote.subject || "—"}`;
+    }
+    if ($("#update-remote-date")) {
+      $("#update-remote-date").textContent = `Date: ${remote.date || "—"}`;
+    }
+    const linkEl = $("#update-remote-link");
+    if (linkEl) {
+      if (remote.html_url) {
+        linkEl.innerHTML = `<a href="${escapeHtml(remote.html_url)}" target="_blank" rel="noopener">View on GitHub</a>`;
+      } else {
+        linkEl.textContent = "";
+      }
+    }
+    if ($("#update-log")) {
+      $("#update-log").textContent = data.log_tail || "—";
+    }
+    const badge = $("#update-status-badge");
+    let statusText = "Unknown";
+    let canApply = false;
+    if (data.busy) {
+      statusText = "Updating…";
+    } else if (!data.can_update) {
+      statusText = "Clone missing";
+    } else if (data.up_to_date) {
+      statusText = "Up to date";
+    } else if (data.update_available) {
+      statusText = "Update available";
+      canApply = true;
+    } else if (!remote.ok) {
+      statusText = "GitHub check failed";
+    } else if (!(local.commit || "").trim()) {
+      statusText = "Local commit unknown";
+    }
+    if (badge) badge.textContent = statusText;
+    if (applyBtn) applyBtn.disabled = !canApply || !!data.busy;
+    if (msg) {
+      msg.className = canApply ? "ok" : "hint";
+      if (data.busy) {
+        msg.textContent = "Update in progress — wait ~1 minute, then Refresh status.";
+      } else if (canApply) {
+        msg.textContent = "A newer commit is on GitHub. Click Update portal now.";
+      } else if (data.up_to_date) {
+        msg.textContent = "This portal already matches GitHub main.";
+      } else if (!data.can_update) {
+        msg.textContent =
+          "Place a git clone at /root/aiamdadvanced (or set OPENAMD_SOURCE_DIR), then refresh.";
+      } else {
+        msg.textContent = remote.error || local.error || "";
+      }
+    }
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message || "Failed to load update status";
+    }
+  }
+}
+
+$("#update-refresh-btn")?.addEventListener("click", () => loadUpdatePage());
+
+$("#update-apply-btn")?.addEventListener("click", async () => {
+  const msg = $("#update-msg");
+  if (
+    !confirm(
+      "Update this AIAMD portal from GitHub main?\n\n" +
+        "The service will restart. Stay on this page and refresh after ~1 minute."
+    )
+  ) {
+    return;
+  }
+  const typed = prompt("Type UPDATE to confirm portal self-update:", "");
+  if (String(typed || "").trim().toUpperCase() !== "UPDATE") {
+    if (msg) {
+      msg.className = "hint";
+      msg.textContent = "Update cancelled.";
+    }
+    return;
+  }
+  if (msg) {
+    msg.className = "hint";
+    msg.textContent = "Starting update…";
+  }
+  try {
+    const data = await api("/api/system/update/apply", {
+      method: "POST",
+      json: { confirm: "UPDATE" },
+    });
+    if (msg) {
+      msg.className = "ok";
+      msg.textContent = data.message || "Update started.";
+    }
+    const applyBtn = $("#update-apply-btn");
+    if (applyBtn) applyBtn.disabled = true;
+    let tries = 0;
+    const poll = setInterval(async () => {
+      tries += 1;
+      try {
+        const h = await fetch("/api/health", { cache: "no-store" }).then((r) => r.json());
+        if (h && h.status) {
+          clearInterval(poll);
+          if (msg) {
+            msg.className = "ok";
+            msg.textContent = "Portal is back online. Refreshing status…";
+          }
+          loadUpdatePage();
+        }
+      } catch (_) {
+        if (msg) {
+          msg.className = "hint";
+          msg.textContent = `Waiting for portal restart… (${tries})`;
+        }
+      }
+      if (tries > 90) {
+        clearInterval(poll);
+        if (msg) {
+          msg.className = "error";
+          msg.textContent = "Timed out waiting for restart. Refresh the page manually.";
+        }
+      }
+    }, 2000);
+  } catch (err) {
+    if (msg) {
+      msg.className = "error";
+      msg.textContent = err.message || "Update failed to start";
+    }
+  }
+});
 
 $("#password-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -88,4 +88,22 @@ for name in ("tiny.en", "base.en", "small.en"):
 print("Whisper model cache ready (or partial).")
 PY
 
+# Stamp deployed git revision for the portal Update page
+META="${APP_ROOT}/git_revision.meta"
+if command -v git >/dev/null 2>&1; then
+  SRC_CANDIDATES=(
+    "${OPENAMD_SOURCE_DIR:-}"
+    "/root/aiamdadvanced"
+    "$(cd "${INSTALL_DIR}" && pwd)"
+    "$(cd "${INSTALL_DIR}/.." && pwd)"
+  )
+  for src in "${SRC_CANDIDATES[@]}"; do
+    [[ -n "${src}" && -d "${src}/.git" ]] || continue
+    if git -C "${src}" log -1 --format='%H%n%h%n%s%n%ci' >"${META}" 2>/dev/null; then
+      log "Wrote git revision stamp: ${META}"
+      break
+    fi
+  done
+fi
+
 log "Phase 4 complete — backend + portal deployed."

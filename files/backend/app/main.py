@@ -27,6 +27,7 @@ from app.routers import (
     settings as settings_router,
     system,
     training,
+    update,
 )
 
 settings = get_settings()
@@ -166,6 +167,7 @@ app.include_router(reports.router)
 app.include_router(training.router)
 app.include_router(recordings.router)
 app.include_router(system.router)
+app.include_router(update.router)
 app.include_router(maintenance.router)
 app.include_router(cron.router)
 app.include_router(settings_router.router)
@@ -227,6 +229,7 @@ def health():
 @app.get("/wipe.php", response_class=HTMLResponse)
 @app.get("/audio.php", response_class=HTMLResponse)
 @app.get("/cronjob.php", response_class=HTMLResponse)
+@app.get("/update.php", response_class=HTMLResponse)
 @app.get("/scammers.php", response_class=HTMLResponse)
 def portal_index():
     index = TEMPLATES_DIR / "index.html"

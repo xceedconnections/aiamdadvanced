@@ -58,6 +58,7 @@
         <a href="/wipe.php" data-page="wipe" class="nav"><span class="nav-ico">⌫</span>Wipe</a>
         <a href="/audio.php" data-page="audio" class="nav"><span class="nav-ico">♫</span>Audio Cleanup</a>
         <a href="/cronjob.php" data-page="cronjob" class="nav"><span class="nav-ico">⏱</span>Cron Job</a>
+        <a href="/update.php" data-page="update" class="nav"><span class="nav-ico">↻</span>Update</a>
         <a href="/settings.php" data-page="settings" class="nav"><span class="nav-ico">⚙</span>Settings</a>
       </nav>
       <div class="sidebar-status" id="sidebar-status">
@@ -604,6 +605,18 @@
               <p id="key-msg" class="hint"></p>
               <pre id="key-reveal" class="key-reveal hidden"></pre>
             </form>
+
+            <div id="dialer-install-panel" class="hidden" style="margin-top:1.25rem">
+              <div class="panel-head" style="padding:0;margin:0 0 .35rem">
+                <h3 style="font-size:1rem;margin:0">VICIdial dialer installer</h3>
+                <button type="button" class="ghost" id="dialer-install-copy">Copy install commands</button>
+              </div>
+              <p class="hint" style="margin:0 0 .5rem">
+                Run this on the VICIdial dialer as root. The API key below is filled in automatically.
+                Campaign AMD / routing extension should be <strong>8399</strong>.
+              </p>
+              <pre id="dialer-install-code" class="key-reveal" style="white-space:pre-wrap;word-break:break-all"></pre>
+            </div>
           </div>
         </div>
 
@@ -1054,6 +1067,55 @@
             <p id="cron-msg" class="hint"></p>
             <p class="hint" id="cron-path"></p>
           </form>
+        </div>
+      </section>
+
+      <section id="page-update" class="page hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Portal update</h3>
+            <button type="button" class="ghost" id="update-refresh-btn">Refresh status</button>
+          </div>
+          <p class="hint">
+            Compare the GitHub commit running on this server with
+            <code>xceedconnections/aiamdadvanced</code> <strong>main</strong>, then update from the web
+            (no SSH). Requires a git clone at <code>/root/aiamdadvanced</code>.
+          </p>
+          <div class="stats" style="margin-top:1rem">
+            <div class="stat">
+              <div class="k">App version</div>
+              <div class="v" id="update-app-version">—</div>
+            </div>
+            <div class="stat">
+              <div class="k">Status</div>
+              <div class="v" id="update-status-badge">—</div>
+            </div>
+            <div class="stat">
+              <div class="k">Source dir</div>
+              <div class="v" id="update-source-dir" style="font-size:.85rem;word-break:break-all">—</div>
+            </div>
+          </div>
+          <div class="two-col" style="margin-top:1rem">
+            <div class="panel" style="margin:0;box-shadow:none">
+              <div class="panel-head"><h3 style="font-size:1rem">Installed (this server)</h3></div>
+              <p class="hint" id="update-local-commit">Commit: —</p>
+              <p class="hint" id="update-local-subject">Message: —</p>
+              <p class="hint" id="update-local-date">Date: —</p>
+            </div>
+            <div class="panel" style="margin:0;box-shadow:none">
+              <div class="panel-head"><h3 style="font-size:1rem">Latest on GitHub</h3></div>
+              <p class="hint" id="update-remote-commit">Commit: —</p>
+              <p class="hint" id="update-remote-subject">Message: —</p>
+              <p class="hint" id="update-remote-date">Date: —</p>
+              <p class="hint" id="update-remote-link"></p>
+            </div>
+          </div>
+          <div class="btn-row" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem">
+            <button type="button" id="update-apply-btn" disabled>Update portal now</button>
+          </div>
+          <p id="update-msg" class="hint" style="margin-top:.75rem"></p>
+          <div class="panel-head" style="margin-top:1rem"><h3 style="font-size:1rem">Update log (tail)</h3></div>
+          <pre id="update-log" class="key-reveal" style="max-height:240px;overflow:auto;white-space:pre-wrap">—</pre>
         </div>
       </section>
 
