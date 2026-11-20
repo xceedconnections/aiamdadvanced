@@ -4,6 +4,9 @@ OpenAMD Advanced AI Engine — Hybrid stages (VAD + Whisper + score)
 Silero VAD and acoustic features describe speech structure. Faster-Whisper
 phrases and a machine score decide HUMAN vs MACHINE. Policy: hang up only on
 strong MACHINE evidence; UNCERTAIN → HUMAN so live customers are not discarded.
+Silero decides whether anything was spoken: a clip with speech is never BLANK
+(a one-word "Hello?" has the same energy shape as a line-noise burst), and a
+clip without speech is never HUMAN, however loud it is.
 Blank / near-silent audio follows the AMD panel checkbox
 (BLANK/AA when ON, HUMAN when OFF). Stock AMD HUMAN|PERSON|NOTSURE
 does not override that: a missing or silent capture was never checked,
@@ -31,7 +34,7 @@ from app.locale_packs import resolve_locale_pack
 ENGINE_INFO = {
     "name": "OpenAMD Hybrid (VAD + Whisper + XGB + Score)",
     "model": "Silero VAD + Whisper phrases + XGBoost + Asterisk AMD + score",
-    "version": "6.1.3",
+    "version": "6.2.0",
     "runtime": "NumPy + SoundFile + ONNX (Silero) + Faster-Whisper + XGBoost",
 }
 
@@ -131,6 +134,26 @@ def _front_energy_ratio(audio: np.ndarray) -> float:
     return e1 / (e1 + e2 + 1e-12)
 
 
+def _silero_hears_speech(silero: Optional[Dict[str, Any]]) -> bool:
+    """True when Silero VAD found a real spoken island (a word, not a click).
+
+    Silero is a trained speech / non-speech model, so it is the arbiter between
+    "someone spoke" and "the line made a noise". Energy shape alone cannot tell
+    a one-word "Hello?" from a noise dump: both are one loud island in an
+    otherwise silent AMD window.
+    """
+    if not silero or not silero.get("ok"):
+        return False
+    s_long = float(silero.get("longest_speech_ms", 0.0) or 0.0)
+    if s_long < 160.0:
+        return False
+    # avg_speech_prob is absent from older / trimmed dicts: treat as confident.
+    s_avg = silero.get("avg_speech_prob")
+    if s_avg is not None and float(s_avg or 0.0) < 0.5:
+        return False
+    return True
+
+
 def _is_voip_noise_burst(
     feats: Dict[str, float],
     silero: Optional[Dict[str, Any]] = None,
@@ -140,7 +163,14 @@ def _is_voip_noise_burst(
     Same comfort-noise / early-media burst often appears on every call on a bad
     trunk. Can be front-loaded (noise then silence) OR back-loaded (silence then
     noise). Must not go to agents.
+
+    Never true once Silero hears speech. A live "Hello?" recorded during stock
+    AMD is exactly this shape (silence, one word, silence), and whole-clip ZCR
+    is dominated by the noise floor of the silent part, so the shape test alone
+    used to hang up on real people as BLANK.
     """
+    if _silero_hears_speech(silero):
+        return False
     duration = float(feats.get("duration", 0.0))
     peak = float(feats.get("peak", 0.0))
     front = float(feats.get("front_energy_ratio", 0.5))
@@ -829,7 +859,51 @@ def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
     if audio is None or len(audio) < int(sr * 0.45):
         return False, 0.0
 
-    seg = audio[: min(len(audio), int(sr * 1.8))]
+    hit, conf = _ringback_in_segment(
+        audio[: min(len(audio), int(sr * 1.8))], sr, audio, allow_single_tone=True
+    )
+    if hit:
+        return True, conf
+
+    # The ring is not always at the start: a window that opens on dead air and
+    # then catches one 2 s ring cycle has nothing but silence in its first 1.8 s.
+    # Test the loud part of the clip too. Only the two-tone signature is trusted
+    # here — it cannot be produced by a voice.
+    loud = _loudest_region(audio, sr)
+    if loud is not None:
+        return _ringback_in_segment(loud, sr, audio, allow_single_tone=False)
+    return False, 0.0
+
+
+def _loudest_region(audio: np.ndarray, sr: int) -> Optional[np.ndarray]:
+    """First..last frame above a quarter of the clip's peak frame level, max 2 s.
+
+    None when that region starts at the beginning of the clip (the caller has
+    already looked there) or is too short to resolve 440 Hz from 480 Hz.
+    """
+    frame = max(1, int(sr * 0.02))
+    n = len(audio) // frame
+    if n < 10:
+        return None
+    level = np.sqrt(np.mean(audio[: n * frame].reshape(n, frame) ** 2, axis=1))
+    top = float(np.max(level))
+    if top < 0.02:
+        return None
+    active = np.where(level > top * 0.25)[0]
+    start = int(active[0]) * frame
+    end = min((int(active[-1]) + 1) * frame, start + int(sr * 2.0))
+    if start < int(sr * 0.3) or end - start < int(sr * 0.45):
+        return None
+    return audio[start:end]
+
+
+def _ringback_in_segment(
+    seg: np.ndarray,
+    sr: int,
+    audio: np.ndarray,
+    *,
+    allow_single_tone: bool,
+) -> Tuple[bool, float]:
     rms = float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
     if rms < 0.015:
         return False, 0.0
@@ -865,7 +939,11 @@ def _detect_ringback(audio: np.ndarray, sr: int) -> Tuple[bool, float]:
         return True, 0.94
 
     # Single-tone ring (~400/425 Hz) that dominates over speech bands
-    if low_tone > overall * 28.0 and low_tone > speech_band * 4.0:
+    if (
+        allow_single_tone
+        and low_tone > overall * 28.0
+        and low_tone > speech_band * 4.0
+    ):
         # Prefer clips that look like tone-then-silence (not continuous speech)
         mid = len(audio) // 2
         e1 = float(np.sum(audio[:mid] ** 2))
@@ -1421,6 +1499,10 @@ def analyze_audio(
             "num_segments": int(silero.get("num_segments", 0)),
             "longest_speech_ms": round(float(silero.get("longest_speech_ms", 0.0)), 1),
             "mean_prob": round(float(silero.get("mean_prob", 0.0)), 4),
+            "max_prob": round(float(silero.get("max_prob", 0.0) or 0.0), 4),
+            "total_speech_ms": round(float(silero.get("total_speech_ms", 0.0) or 0.0), 1),
+            "tail_speech_ms": round(float(silero.get("tail_speech_ms", 0.0) or 0.0), 1),
+            "speech_spans": [list(s) for s in (silero.get("spans") or [])],
             "error": silero.get("error", ""),
         },
         **silero_vad.status_info(),

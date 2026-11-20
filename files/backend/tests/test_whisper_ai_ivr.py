@@ -38,7 +38,8 @@ class AiAssistantIvrCueTests(unittest.TestCase):
             "Please leave a message after the beep."
         )
         self.assertEqual(status, "MACHINE")
-        self.assertEqual(cue, "voicemail")
+        # On a server with portal phrases saved, the custom list claims it first.
+        self.assertTrue(cue == "voicemail" or cue.startswith("custom_phrase"))
 
     def test_ivr_press_one_is_machine(self):
         status, _, cue = classify_transcript("Press one for English.")
@@ -62,6 +63,75 @@ class AiAssistantIvrCueTests(unittest.TestCase):
         status, _, cue = classify_transcript("Hi, this is Mike.")
         self.assertEqual(status, "HUMAN")
         self.assertEqual(cue, "human_short")
+
+
+class VoicemailVersusLiveAnswerTests(unittest.TestCase):
+    """Transcripts taken from real calls that were disposed the wrong way."""
+
+    def test_call_screening_is_machine(self):
+        for text in (
+            "I'll see if this person is available.",
+            "This person is available.",
+            "Hi, if you record your name and reason for calling.",
+            "Please state your name.",
+            "This is Arthur, if I don't recognize your number.",
+        ):
+            status, _, cue = classify_transcript(text)
+            self.assertEqual(status, "MACHINE", msg=text)
+            # A portal custom phrase may claim the hit before the built-in cue.
+            self.assertTrue(
+                cue == "voicemail" or cue.startswith("custom_phrase"), msg=text
+            )
+
+    def test_personal_voicemail_greeting_is_machine(self):
+        for text in (
+            "Sorry, I missed your call, but if you would leave your name and number.",
+            "Hi, this is Meg, I can't come to the phone right now.",
+            "Hello, you've reached Kelly, I'll get back to you.",
+            "We are unable to take your call.",
+        ):
+            status, _, _ = classify_transcript(text)
+            self.assertEqual(status, "MACHINE", msg=text)
+
+    def test_this_is_alone_is_not_a_human_cue(self):
+        # "this is" opens voicemail greetings as often as live answers.
+        for text in (
+            "All of this is back.",
+            "This is all through the phone.",
+            "This is Julie Gray at Keller Williams. I'm sorry I'm",
+        ):
+            status, _, cue = classify_transcript(text)
+            self.assertIsNone(status, msg=text)
+            self.assertNotEqual(cue, "human_short", msg=text)
+
+    def test_person_naming_themselves_is_human(self):
+        for text in (
+            "This is Meg.",
+            "It's Dennis.",
+            "Southern Mountains Realty, this is Lisa.",
+            "Hello, thank you for calling Inola Insurance Agency, this is Susie.",
+            "I'm Michael speaking.",
+            "Good evening.",
+            "Sorry?",
+            "I'm sorry?",
+        ):
+            status, _, cue = classify_transcript(text)
+            self.assertEqual(status, "HUMAN", msg=text)
+            self.assertEqual(cue, "human_short", msg=text)
+
+    def test_digit_string_is_machine(self):
+        status, _, cue = classify_transcript("Number 916.")
+        self.assertEqual(status, "MACHINE")
+        self.assertEqual(cue, "ivr_digits")
+
+    def test_tail_of_messaging_system_is_machine(self):
+        status, _, cue = classify_transcript("System.")
+        self.assertEqual(status, "MACHINE")
+        self.assertEqual(cue, "voicemail")
+
+    def test_spanish_carrier_voicemail_is_machine(self):
+        status, _, _ = classify_transcript("Su llamada se remitio al buzon de voz.")
+        self.assertEqual(status, "MACHINE")
 
 
 class AmdDecideMachineOverrideTests(unittest.TestCase):

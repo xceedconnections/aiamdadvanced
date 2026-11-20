@@ -795,8 +795,11 @@
           <p class="hint">
             When speech-to-text hears any of these words or phrases <strong>anywhere</strong> in the AMD clip
             (beginning, middle, or end), the call is disposed as <strong>MACHINE</strong>. One phrase per line.
+            Commas are part of the phrase, not separators.
             Matching is flexible: a long line still hits if a 2–3+ word core appears in the middle
             (e.g. your full “forwarded…” line still matches “It's been forwarded to an automatic voice message”).
+            A core must contain a meaningful word: “been forwarded” counts, “is not” or “you have” does not,
+            and a one-word filler entry such as “number” is ignored.
             Built-in cues stay active even if this list is empty.
           </p>
           <textarea
@@ -1312,6 +1315,6 @@
     </main>
   </div>
 
-  <script src="/static/app.js?v=sys-tz-2"></script>
+  <script src="/static/app.js?v=phrases-lines-1"></script>
 </body>
 </html>

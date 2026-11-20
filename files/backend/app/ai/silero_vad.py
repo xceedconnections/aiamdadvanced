@@ -159,6 +159,76 @@ def _run_vad(audio: np.ndarray, sr: int = 8000) -> Tuple[np.ndarray, int]:
     return np.asarray(probs, dtype=np.float32), window
 
 
+def _speech_spans(
+    mask: np.ndarray,
+    frame_ms: float,
+    *,
+    min_frames: int = 2,
+    merge_gap_ms: float = 200.0,
+) -> List[Tuple[float, float]]:
+    """Speech islands as (start_s, end_s), merged across short pauses.
+
+    Islands shorter than `min_frames` (one 32 ms frame is a click, not a
+    syllable) are dropped before merging.
+    """
+    spans: List[Tuple[int, int]] = []
+    start = -1
+    for i, v in enumerate(mask):
+        if bool(v):
+            if start < 0:
+                start = i
+        elif start >= 0:
+            if i - start >= min_frames:
+                spans.append((start, i))
+            start = -1
+    if start >= 0 and len(mask) - start >= min_frames:
+        spans.append((start, len(mask)))
+
+    max_gap = int(merge_gap_ms / frame_ms) if frame_ms > 0 else 0
+    merged: List[Tuple[int, int]] = []
+    for a, b in spans:
+        if merged and a - merged[-1][1] <= max_gap:
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    return [(a * frame_ms / 1000.0, b * frame_ms / 1000.0) for a, b in merged]
+
+
+def _tail_speech_ms(
+    spans: List[Tuple[float, float]],
+    clip_seconds: float,
+    *,
+    end_slack_ms: float = 130.0,
+) -> float:
+    """Length of the speech island that is still running when the clip ends.
+
+    0 when the clip ends in silence. A caller who is still talking at the cut
+    after more than a second is reading a greeting, not answering "hello".
+    """
+    if not spans:
+        return 0.0
+    a, b = spans[-1]
+    if (clip_seconds - b) * 1000.0 > end_slack_ms:
+        return 0.0
+    return max(0.0, (b - a) * 1000.0)
+
+
+def _no_speech(error: str) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "error": error,
+        "speech_ratio": 0.0,
+        "num_segments": 0,
+        "longest_speech_ms": 0.0,
+        "avg_speech_prob": 0.0,
+        "mean_prob": 0.0,
+        "max_prob": 0.0,
+        "spans": [],
+        "total_speech_ms": 0.0,
+        "tail_speech_ms": 0.0,
+    }
+
+
 def analyze_speech(
     audio: np.ndarray,
     sr: int = 8000,
@@ -166,29 +236,13 @@ def analyze_speech(
 ) -> Dict[str, Any]:
     """Derive AMD-relevant speech stats from Silero VAD probabilities."""
     if len(audio) == 0:
-        return {
-            "ok": False,
-            "error": "empty audio",
-            "speech_ratio": 0.0,
-            "num_segments": 0,
-            "longest_speech_ms": 0.0,
-            "avg_speech_prob": 0.0,
-            "mean_prob": 0.0,
-        }
+        return _no_speech("empty audio")
 
     try:
         probs, window = _run_vad(audio, sr=sr)
         effective_sr = 8000 if sr not in (8000, 16000) else sr
     except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "error": str(exc),
-            "speech_ratio": 0.0,
-            "num_segments": 0,
-            "longest_speech_ms": 0.0,
-            "avg_speech_prob": 0.0,
-            "mean_prob": 0.0,
-        }
+        return _no_speech(str(exc))
 
     frame_ms = (window / float(effective_sr)) * 1000.0
     mask = probs >= threshold
@@ -208,7 +262,13 @@ def analyze_speech(
         prev = bool(v)
 
     speech_probs = probs[mask] if np.any(mask) else np.array([], dtype=np.float32)
+    spans = _speech_spans(mask, frame_ms)
+    clip_seconds = len(probs) * frame_ms / 1000.0
     return {
+        "max_prob": float(np.max(probs)) if len(probs) else 0.0,
+        "spans": [(round(a, 3), round(b, 3)) for a, b in spans],
+        "total_speech_ms": float(sum(b - a for a, b in spans) * 1000.0),
+        "tail_speech_ms": float(_tail_speech_ms(spans, clip_seconds)),
         "ok": True,
         "error": "",
         "speech_ratio": float(np.mean(mask)) if len(mask) else 0.0,

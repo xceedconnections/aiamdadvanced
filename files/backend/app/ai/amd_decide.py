@@ -7,8 +7,11 @@ Stages:
 
 Decision philosophy (outbound call center):
   - Only hang as MACHINE with strong evidence (beep, ringback, VM/IVR phrases,
-    or a high machine score).
-  - UNCERTAIN → HUMAN (false VM discards customers; false HUMAN is recoverable).
+    a greeting still playing when the capture ends, stock AMD MACHINE that the
+    transcript does not contradict, or a high machine score).
+  - HUMAN needs speech: a clip where Silero finds nothing spoken is BLANK.
+  - Speech that fits none of the above → HUMAN (false VM discards customers;
+    false HUMAN is recoverable).
 """
 
 from __future__ import annotations
@@ -21,11 +24,52 @@ def _machine_cue(cue: str) -> bool:
     return c in ("voicemail", "ivr", "ivr_digits", "digits") or c.startswith("custom_phrase")
 
 
+# A talker still going after this much unbroken speech when the capture ends is
+# reading a greeting. Live answers ("Hello?", "This is Meg.") stop and wait:
+# in the ~650 production recordings this was set from, no live answer ran into
+# the cut for more than 0.6 s.
+TAIL_SPEECH_MACHINE_MS = 1000.0
+# …unless Whisper heard a greeting this short (someone repeating "Hello? Hello?").
+TAIL_SPEECH_HUMAN_MAX_WORDS = 5
+
+
+def _silero_spans(silero: Optional[Dict[str, Any]]) -> Optional[list]:
+    """Silero speech islands, or None when Silero did not run."""
+    if not isinstance(silero, dict) or not silero.get("ok"):
+        return None
+    if "spans" not in silero:
+        return None
+    return list(silero.get("spans") or [])
+
+
+def _lone_word_then_silence(
+    transcript: str,
+    silero: Optional[Dict[str, Any]],
+    clip_seconds: float,
+) -> bool:
+    """One short word with silence before and after it: a complete utterance.
+
+    Somebody said a single word and is waiting. A number being read out never
+    looks like this — it is a run of digits, or a fragment touching the start
+    or the end of the clip.
+    """
+    if len((transcript or "").split()) != 1:
+        return False
+    spans = _silero_spans(silero)
+    if not spans or len(spans) != 1:
+        return False
+    start, end = spans[0]
+    if end - start > 0.7:
+        return False
+    return start >= 0.3 and clip_seconds - end >= 0.4
+
+
 def _run_whisper(
     audio,
     sr: int,
     *,
     existing: Optional[Dict[str, Any]] = None,
+    silero: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Return whisper detail dict with optional status/conf/cue/transcript."""
     if isinstance(existing, dict) and (
@@ -47,7 +91,11 @@ def _run_whisper(
             out["error"] = "whisper_unavailable"
             return out
         status, conf, details = refine_with_whisper(
-            audio, sr, xgb_probs={}, max_seconds=5.0
+            audio,
+            sr,
+            xgb_probs={},
+            max_seconds=5.0,
+            speech_spans=_silero_spans(silero),
         )
         out = {**details, "whisper_ok": bool(details.get("whisper_ok", True))}
         if status:
@@ -211,7 +259,7 @@ def finalize_amd_decision(
                     if isinstance(ml_block0.get("whisper"), dict)
                     else None
                 )
-                w0 = _run_whisper(audio, sr, existing=existing0)
+                w0 = _run_whisper(audio, sr, existing=existing0, silero=silero)
                 details["whisper_stage"] = w0
                 details["stock_second_opinion_whisper"] = True
                 if w0.get("transcript") or w0.get("cue") or w0.get("whisper_ok"):
@@ -281,7 +329,7 @@ def finalize_amd_decision(
         has_text = bool(str(existing_w.get("transcript") or "").strip())
         if not has_text and not existing_w.get("whisper_ok"):
             existing_w = None
-    whisper = _run_whisper(audio, sr, existing=existing_w)
+    whisper = _run_whisper(audio, sr, existing=existing_w, silero=silero)
     details["whisper_stage"] = whisper
     if force_stock_whisper:
         details["stock_second_opinion_whisper"] = True
@@ -327,6 +375,23 @@ def finalize_amd_decision(
         except Exception:
             pass
 
+    # "Five." / "There." heard for a lone "Hi" or "Hello?" on a call stock AMD
+    # did not call a machine. One isolated word is not a number readout.
+    if (
+        cue == "ivr_digits"
+        and not stock_machine
+        and _lone_word_then_silence(
+            transcript, silero, float(feats.get("duration", 0.0) or 0.0)
+        )
+    ):
+        cue = "lone_word"
+        w_status = ""
+        w_conf = 0.0
+        whisper["cue"] = cue
+        whisper.pop("status", None)
+        whisper.pop("confidence", None)
+        details["lone_word_not_digits"] = True
+
     feats["whisper_vm_hit"] = 1.0 if (_machine_cue(cue) or w_status == "MACHINE") else 0.0
     feats["whisper_human_hit"] = 1.0 if (cue == "human_short" or w_status == "HUMAN") else 0.0
     feats["whisper_word_count"] = float(len(transcript.split())) if transcript else 0.0
@@ -346,12 +411,63 @@ def finalize_amd_decision(
         details["internal_status"] = "MACHINE"
         return "MACHINE", max(conf, w_conf, 0.93)
 
-    if cue == "human_short" or w_status == "HUMAN":
+    whisper_human = cue == "human_short" or w_status == "HUMAN"
+    word_count = len(transcript.split()) if transcript else 0
+
+    # Still talking when the capture ended, after a second or more of
+    # unbroken speech: a greeting being read out ("Hello, this is Kelly
+    # Blackburn, a Coldwell Banker…"), hold music, or a carrier announcement in
+    # a language Whisper could not transcribe. Not someone who said hello and
+    # is waiting for an answer.
+    tail_ms = float(silero.get("tail_speech_ms", 0.0) or 0.0) if silero.get("ok") else 0.0
+    details["tail_speech_ms"] = round(tail_ms, 1)
+    if tail_ms >= TAIL_SPEECH_MACHINE_MS and not (
+        whisper_human and word_count <= TAIL_SPEECH_HUMAN_MAX_WORDS
+    ):
+        details["amd_stage"] = "speech_into_cut"
+        details["fuse_note"] = "greeting_still_playing"
+        details["short_human_safety_override"] = False
+        details["internal_status"] = "MACHINE"
+        return "MACHINE", max(conf, 0.90)
+
+    if whisper_human:
         details["amd_stage"] = "whisper_human"
         details["fuse_note"] = "human_short"
         details["short_human_safety_override"] = True
         details["internal_status"] = "HUMAN"
         return "HUMAN", max(conf, w_conf, 0.92)
+
+    # Nothing in the clip is speech: Silero found no spoken island, so Whisper
+    # was given nothing and returned nothing. Clicks, line noise and tones the
+    # hard detectors did not name end here. Loud is not the same as spoken, and
+    # an agent must not be connected to a clip nobody spoke in.
+    spans = _silero_spans(silero)
+    if spans is not None and not spans and not transcript:
+        b_status, b_conf, _ = dispose_blank_fn(feats=feats)
+        details["amd_stage"] = "no_speech"
+        if b_status == "BLANK":
+            details["fuse_note"] = "blank_no_speech"
+            details["decision_reason"] = "blank_no_speech"
+            details["blank_safety_override"] = True
+            details["short_human_safety_override"] = False
+        else:
+            details["fuse_note"] = "blank_to_agent"
+            details["decision_reason"] = "blank_to_agent"
+        return b_status, max(conf, b_conf)
+
+    # Stock Asterisk AMD already called this call MACHINE and the second look
+    # found no live greeting to overrule it. (Clips recorded after stock AMD
+    # finished often hold only the tail of the greeting: "…system.")
+    if (
+        stock_machine
+        and not stock_human
+        and bool(whisper.get("whisper_ok"))
+    ):
+        details["amd_stage"] = "stock_machine_unrefuted"
+        details["fuse_note"] = "stock_amd_machine"
+        details["short_human_safety_override"] = False
+        details["internal_status"] = "MACHINE"
+        return "MACHINE", max(conf, 0.90)
 
     # Stock Asterisk AMD said HUMAN + sparse live hello acoustics → agent.
     # Does not apply when stock said MACHINE / dense greeting / digit prompt

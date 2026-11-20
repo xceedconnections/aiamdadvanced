@@ -1,10 +1,16 @@
-"""Optional Faster-Whisper Tiny refine — used on uncertain / HUMAN-bound calls.
+"""Optional Faster-Whisper refine — used on uncertain / HUMAN-bound calls.
 
 Lazy-imported. If faster-whisper is not installed, refine is skipped (XGB wins).
 
-Whisper Tiny invents YouTube outros on short telephony "hello" clips
-("and I'll see you next time"). We strip those hallucinations before
-display / AMD cues.
+Small Whisper models invent text when they are given silence, noise, or a
+prompt to copy from, so the AMD path is deliberately strict about its input:
+
+  * Only the audio Silero VAD marks as speech is transcribed. A clip with no
+    speech is never sent to Whisper (it would answer "Thank you." to silence).
+  * No initial prompt. A prompt full of voicemail phrases was being echoed back
+    on short clips ("Good evening." came out as "Please leave a message after
+    the tone."), which turned live people into MACHINE.
+  * A transcript with more words than the speech could hold is discarded.
 """
 
 from __future__ import annotations
@@ -72,7 +78,32 @@ _MACHINE_RE = re.compile(
     # Carrier VM setup / blocked box (often truncated by AMD window)
     r"not\s+been\s+set\s+up|have\s+not\s+been\s+set\s+up|been\s+set\s+up\s+yet|"
     r"set\s+up\s+yet|please\s+try\s+your(\s+call)?|"
-    r"try\s+your\s+call\s+again|call\s+again\s+later"
+    r"try\s+your\s+call\s+again|call\s+again\s+later|"
+    # Call screening (Google Voice / carrier): "…record your name and reason
+    # for calling, I'll see if this person is available."
+    # (small models hear "person" as "pricing" / "passion", so allow any word)
+    r"this\s+person\s+is|see\s+if\s+(this|the)\s+person|if\s+this\s+person|"
+    r"(see\s+)?if\s+this\s+\w+\s+is\s+available|this\s+\w+\s+is\s+available|"
+    r"(state|say)\s+your\s+name|name\s+and\s+(reason|number|phone|telephone)|"
+    r"reason\s+for\s+(calling|your\s+call|the\s+call)|"
+    r"recogni[sz]e\s+your\s+number|"
+    # Personal voicemail greetings
+    r"missed\s+your\s+call|"
+    r"(can'?t|cannot|can\s+not|couldn'?t|unable\s+to)\s+(come|get)\s+to\s+the\s+phone|"
+    r"(can'?t|cannot|can\s+not|unable\s+to)\s+(answer|take)\s+(your|the|my)\s+(call|phone)|"
+    r"away\s+from\s+(my|the|our)\s+(phone|desk)|"
+    r"get\s+(right\s+)?back\s+to\s+(you|what)|return\s+your\s+call|"
+    r"(i|we)(?:'ll|\s+will)\s+(get\s+back|return\s+your)|"
+    r"as\s+(soon|quickly)\s+as\s+(possible|i\s+can|we\s+can)|"
+    r"your\s+call\s+is\s+(very\s+)?important|"
+    r"thank(s|\s+you)\s+(so\s+much\s+|very\s+much\s+)?for\s+your\s+call|"
+    r"with\s+(a|another)\s+(client|customer)|on\s+(the\s+other|another)\s+line|"
+    r"on\s+the\s+phone\s+(with|or)|on\s+another\s+call|"
+    r"(detailed?|brief|short)\s+message|(the|a)\s+beep|"
+    r"call\s+(has\s+been|is|will\s+be|may\s+be|is\s+being)\s+recorded|"
+    r"(office|business)\s+hours|(is|are)\s+(currently|now)\s+closed|"
+    # Spanish carrier voicemail, as an English model spells it
+    r"buz[oó]n|buson|su\s+llamada|deje\s+su\s+mensaje|despu[eé]s\s+del?\s+tono"
     r")\b",
     re.I,
 )
@@ -90,14 +121,43 @@ _IVR_RE = re.compile(
     r")\b",
     re.I,
 )
+# Words a live person answers with. "this is" and "sorry" are NOT here: they
+# open voicemail greetings just as often ("This is Julie Gray at Keller
+# Williams. I'm sorry I missed your call"), so on their own they prove nothing.
+# The short forms a person really uses are matched by _SELF_INTRO_RE and
+# _SHORT_APOLOGY_RE below.
 _HUMAN_RE = re.compile(
     r"\b("
     r"hello+|hullo|hallo|halo|allo|yellow|"
-    r"hi|hey|yeah|yes|yep|yup|yo|speaking|this\s+is|"
+    r"hi|hey|yeah|yes|yep|yup|yo|speaking|"
     r"who(?:'s|\s+is)\s+this|good\s+(morning|afternoon|evening)|"
     r"how\s+are\s+you|can\s+i\s+help|what'?s\s+up|go\s+ahead|"
-    r"i'?m\s+here|who(?:'s|\s+is)\s+calling|pardon|sorry"
+    r"i'?m\s+here|who(?:'s|\s+is)\s+calling|who\s+is\s+it|"
+    r"anybody\s+there|can\s+you\s+hear|excuse\s+me"
     r")\b",
+    re.I,
+)
+
+# A person naming themselves and stopping: "This is Meg." / "It's Dennis." /
+# "Southern Realty, this is Lisa." The name must be capitalised by Whisper and
+# must end the transcript — a greeting that carries on is handled elsewhere.
+_SELF_INTRO_RE = re.compile(
+    r"(?:\b[Tt]his\s+is|\b[Ii]t'?s|\b[Ii]t\s+is|\bI'?m|\bI\s+am)\s+"
+    r"[A-Z][a-z'\-]+(?:\s+[A-Z][a-z'\-]+)?(?:\s+speaking)?[.!?]*\s*$"
+)
+# "Sorry?" / "I'm sorry?" / "Pardon me?" as the whole answer.
+_SHORT_APOLOGY_RE = re.compile(
+    r"^\s*(?:i'?m\s+|i\s+am\s+)?(?:sorry|pardon)(?:\s+me)?[.!?]*\s*$", re.I
+)
+
+# Voicemail / IVR vocabulary that cancels a greeting word in the same clip
+# ("Hi, you can leave me a message").
+_SCRIPT_WORD_RE = re.compile(
+    r"\b(record(?:ing)?|message|mailbox|voicemail|forwarded|reached|beep|tone|"
+    r"unavailable|not\s+available|call\s+back|system|full|set\s+up|"
+    r"assistant|artificial|automated|press|menu|keypad|"
+    r"this\s+person|missed\s+your|to\s+the\s+phone|get\s+back|"
+    r"leave\s+(a|me|your|us)|name\s+and|reason\s+for)\b",
     re.I,
 )
 
@@ -167,18 +227,16 @@ _OH_AMBIGUOUS = {"oh", "o"}
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.I)
 
-# Bias toward phone greetings + digits + classic / Google Voice VM + AI assistants
-_AMD_INITIAL_PROMPT = (
-    "Hello. Hello. Hi. Yeah. Yes. Zero. One. Two. Three. Four. Five. "
-    "Message system. One. Voicemail. Mailbox is full and there is not. "
-    "If you have not been set up yet, please try your call again later. "
-    "The person you are calling is not available. "
-    "Please leave a message after the beep. Press one for English. "
-    "Your call has been forwarded. Zero. One. Two. "
-    "Welcome to Vodafone voicemail. The person you are calling is not available. "
-    "Hi. I'm an AI assistant recording. This call is being recorded. "
-    "I am a virtual assistant. Please leave a message after the tone."
-)
+# Speech-rate ceiling for the plausibility check in _transcribe_clip. Recorded
+# greetings reach 5 words per second ("I'm sorry I can't take a call right now
+# but if you leave me a message…"); well above that, the words were not said.
+_MAX_WORDS_PER_SPEECH_SECOND = 6.5
+_MAX_WORDS_BASE = 3
+# A segment that compresses this well is one token repeated ("G-W-W-W-W-…").
+_MAX_COMPRESSION_RATIO = 2.4
+
+# Audio kept around each Silero speech island when building the Whisper input.
+_SPEECH_PAD_SECONDS = 0.30
 
 
 def _tokens(text: str) -> list[str]:
@@ -221,6 +279,9 @@ def is_number_readout(text: str) -> bool:
         if tok in _OH_AMBIGUOUS or _is_digit_token(tok):
             digit_n += 1
     if digit_n >= 2 and digit_n >= max(2, int(round(len(toks) * 0.6))):
+        return True
+    # "Number 916." / "…at 555 0199" — nobody answers a phone with a digit string
+    if re.search(r"\d{3,}", raw) and len(toks) <= 6:
         return True
     return len(compact) >= 3 and digit_n >= 2
 
@@ -370,17 +431,19 @@ def classify_transcript(
         re.I,
     ):
         return "MACHINE", max(0.95, float(probs.get("MACHINE", 0.5))), "voicemail"
+    # Tail of "…voice messaging system." when the recording started late
+    if re.fullmatch(r"\s*(the\s+)?system\.?\s*", t, re.I):
+        return "MACHINE", max(0.9, float(probs.get("MACHINE", 0.5))), "voicemail"
     # Live hello only when the whole clip is a short greeting — not "Hi" + VM/AI script
     if _HUMAN_RE.search(t) and len(t.split()) <= 10 and not is_number_readout(t):
-        if re.search(
-            r"\b(record(?:ing)?|message|mailbox|voicemail|forwarded|reached|beep|tone|"
-            r"unavailable|not\s+available|call\s+back|system|full|set\s+up|"
-            r"assistant|artificial|automated|press|menu|keypad)\b",
-            t,
-            re.I,
-        ):
+        if _SCRIPT_WORD_RE.search(t):
             return "MACHINE", max(0.92, float(probs.get("MACHINE", 0.5))), "voicemail"
         return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
+    # "This is Meg." / "It's Dennis." / "Sorry?" — a person, and they stopped talking.
+    # Also the front desk: "Thank you for calling Inola, this is Susie."
+    if len(t.split()) <= 12 and not _SCRIPT_WORD_RE.search(t):
+        if _SELF_INTRO_RE.search(t) or _SHORT_APOLOGY_RE.match(t):
+            return "HUMAN", max(0.90, float(probs.get("HUMAN", 0.5))), "human_short"
     # Multi-word scripted line with no live greeting → MACHINE/IVR (AMD often truncates)
     if len(t.split()) >= 4 and not _HUMAN_RE.search(t):
         if re.search(
@@ -497,7 +560,88 @@ def _trim_to_speech(clip, sr: int = 16000):
     return out
 
 
-def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict[str, Any]]:
+def _resample_to_16k(clip, sr: int):
+    """Band-limited resample to 16 kHz (Whisper's rate).
+
+    Linear interpolation of 8 kHz telephony leaves imaging above 4 kHz that the
+    model was never trained on; a polyphase filter does not.
+    """
+    import numpy as np
+
+    if sr == 16000 or len(clip) < 2:
+        return np.asarray(clip, dtype=np.float32)
+    try:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        g = gcd(16000, int(sr))
+        return resample_poly(clip, 16000 // g, int(sr) // g).astype(np.float32)
+    except Exception:
+        duration = len(clip) / float(sr)
+        new_len = max(1, int(duration * 16000))
+        x_old = np.linspace(0, 1, num=len(clip), endpoint=False)
+        x_new = np.linspace(0, 1, num=new_len, endpoint=False)
+        return np.interp(x_new, x_old, clip).astype(np.float32)
+
+
+def _clip_speech_spans(audio, sr: int, speech_spans) -> Tuple[Optional[list], bool]:
+    """Return (spans, vad_ok). spans are (start_s, end_s) inside `audio`.
+
+    `speech_spans` comes from the engine's Silero pass when there is one, so the
+    VAD is not run twice per call. vad_ok False means Silero is unavailable and
+    the caller must fall back to energy trimming.
+    """
+    clip_seconds = len(audio) / float(sr or 1)
+    if speech_spans is None:
+        try:
+            from app.ai import silero_vad
+
+            vad = silero_vad.analyze_speech(audio, sr=sr, threshold=0.4)
+        except Exception:
+            return None, False
+        if not vad.get("ok"):
+            return None, False
+        speech_spans = vad.get("spans") or []
+    out = []
+    for a, b in speech_spans:
+        a = max(0.0, float(a))
+        b = min(clip_seconds, float(b))
+        if b - a >= 0.05:
+            out.append((a, b))
+    return out, True
+
+
+def _select_speech(clip, sr: int, spans: list):
+    """Keep each speech island plus a little context; drop the dead air between.
+
+    Islands closer than two pads are joined with their real audio, so a pause
+    inside a greeting stays natural. Longer silences shrink to two pads' worth,
+    which keeps a 5 s window with one word in it from inviting invented text.
+    """
+    import numpy as np
+
+    pad = _SPEECH_PAD_SECONDS
+    pieces: list[tuple[int, int]] = []
+    for a, b in spans:
+        i = max(0, int((a - pad) * sr))
+        j = min(len(clip), int((b + pad) * sr))
+        if pieces and i <= pieces[-1][1]:
+            pieces[-1] = (pieces[-1][0], max(pieces[-1][1], j))
+        else:
+            pieces.append((i, j))
+    if not pieces:
+        return clip[:0]
+    return np.concatenate([clip[i:j] for i, j in pieces]).astype(np.float32)
+
+
+def _transcribe_clip(
+    audio,
+    sr: int,
+    max_seconds: float,
+    *,
+    speech_spans: Optional[list] = None,
+) -> Tuple[str, Any, Dict[str, Any]]:
     model = _get_model()
     if model is None:
         return "", None, {"whisper_ok": False, "error": _model_error or "not_installed"}
@@ -510,15 +654,17 @@ def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict
     clip = np.asarray(audio, dtype=np.float32)
     n = int(min(len(clip), max(1, int(sr * max_seconds))))
     clip = clip[:n]
-    if sr != 16000 and len(clip) > 1:
-        duration = len(clip) / float(sr)
-        new_len = max(1, int(duration * 16000))
-        x_old = np.linspace(0, 1, num=len(clip), endpoint=False)
-        x_new = np.linspace(0, 1, num=new_len, endpoint=False)
-        clip = np.interp(x_new, x_old, clip).astype(np.float32)
-        sr = 16000
 
-    clip = _trim_to_speech(clip, sr=16000)
+    spans, vad_ok = _clip_speech_spans(clip, sr, speech_spans)
+    speech_seconds: Optional[float] = None
+    if vad_ok:
+        if not spans:
+            # Nothing Silero calls speech. Whisper would only invent words here.
+            return "", None, {"whisper_ok": True, "transcript": "", "cue": "no_speech"}
+        speech_seconds = float(sum(b - a for a, b in spans))
+        clip = _resample_to_16k(_select_speech(clip, sr, spans), sr)
+    else:
+        clip = _trim_to_speech(_resample_to_16k(clip, sr), sr=16000)
     if clip is None or len(clip) < 400:
         return "", None, {"whisper_ok": True, "transcript": "", "cue": "too_short"}
 
@@ -529,23 +675,24 @@ def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict
 
     try:
         beam = _transcribe_beam_size()
-        segments, info = model.transcribe(
-            clip,
+        kwargs: Dict[str, Any] = dict(
             language="en",
             beam_size=beam,
             best_of=beam,
-            vad_filter=True,
-            vad_parameters=dict(
-                min_silence_duration_ms=250,
-                speech_pad_ms=120,
-            ),
+            # Silero already chose the speech; a second VAD pass only clips words.
+            vad_filter=not vad_ok,
             without_timestamps=True,
             condition_on_previous_text=False,
             compression_ratio_threshold=2.2,
             no_speech_threshold=0.55,
             temperature=0.0,
-            initial_prompt=_AMD_INITIAL_PROMPT,
         )
+        if not vad_ok:
+            kwargs["vad_parameters"] = dict(
+                min_silence_duration_ms=250,
+                speech_pad_ms=120,
+            )
+        segments, info = model.transcribe(clip, **kwargs)
         text_parts = []
         for seg in segments:
             if seg.text:
@@ -556,13 +703,25 @@ def _transcribe_clip(audio, sr: int, max_seconds: float) -> Tuple[str, Any, Dict
                     continue
                 if avg_logprob is not None and float(avg_logprob) < -1.15:
                     continue
+                # Decoder stuck in a loop: confident, and meaningless
+                ratio = getattr(seg, "compression_ratio", None)
+                if ratio is not None and float(ratio) > _MAX_COMPRESSION_RATIO:
+                    continue
                 text_parts.append(seg.text.strip())
         text = " ".join(text_parts).strip()
     except Exception as exc:
         return "", None, {"whisper_ok": False, "error": str(exc)}
 
     text, hall = clean_transcript(text)
-    meta = {"whisper_ok": True}
+    meta: Dict[str, Any] = {"whisper_ok": True}
+    if speech_seconds is not None:
+        meta["speech_seconds"] = round(speech_seconds, 3)
+        # More words than the speech could hold → the model made them up
+        # (a 0.3 s blip transcribed as "Thank you very much for your question").
+        max_words = _MAX_WORDS_BASE + _MAX_WORDS_PER_SPEECH_SECOND * speech_seconds
+        if text and len(text.split()) > max_words:
+            text, hall = "", True
+            meta["implausible_word_rate"] = True
     if hall:
         meta["hallucination_cleared"] = True
     return text, info, meta
@@ -574,13 +733,20 @@ def refine_with_whisper(
     *,
     xgb_probs: Dict[str, float],
     max_seconds: float = 4.0,
+    speech_spans: Optional[list] = None,
 ) -> Tuple[Optional[str], float, Dict[str, Any]]:
-    """Return (status_or_None, confidence, details). None status = keep XGB decision."""
+    """Return (status_or_None, confidence, details). None status = keep XGB decision.
+
+    `speech_spans` are the engine's Silero islands for this same audio; pass
+    them to avoid a second VAD run. None = work them out here.
+    """
     import numpy as np
 
     clip = np.asarray(audio, dtype=np.float32)
     audio_seconds = float(len(clip) / float(sr or 1)) if sr and len(clip) else 0.0
-    text, info, base = _transcribe_clip(audio, sr, max_seconds)
+    text, info, base = _transcribe_clip(
+        audio, sr, max_seconds, speech_spans=speech_spans
+    )
     if not base.get("whisper_ok"):
         return None, 0.0, base
 
@@ -590,6 +756,11 @@ def refine_with_whisper(
         "language": getattr(info, "language", "") or "",
         "audio_seconds": round(audio_seconds, 3),
     }
+    if "speech_seconds" in base:
+        details["speech_seconds"] = base["speech_seconds"]
+    if base.get("cue") in ("no_speech", "too_short"):
+        details["cue"] = base["cue"]
+        return None, 0.0, details
     if base.get("hallucination_cleared"):
         details["hallucination_cleared"] = True
         details["cue"] = "hallucination"

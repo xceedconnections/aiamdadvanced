@@ -2651,8 +2651,10 @@ async function saveMachinePhrases() {
   const ta = $("#machine-phrases-words");
   const msg = $("#machine-phrases-msg");
   if (!ta) return;
+  // One phrase per line. Commas stay inside the phrase: splitting on them
+  // turned "leave your name, number, and message" into a lone "number".
   const words = ta.value
-    .split(/[\n,;]+/)
+    .split(/[\r\n]+/)
     .map((w) => w.trim())
     .filter(Boolean);
   try {
