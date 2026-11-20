@@ -83,7 +83,7 @@ def run_ml_pipeline(
             "hybrid_status": hybrid_status,
             "hybrid_confidence": round(float(hybrid_confidence), 4),
             "whisper_policy": "whisper_before_agent",
-            "ml_note": b_note if b_note == "stock_amd_trust_blank_capture" else "voip_front_noise_burst",
+            "ml_note": b_note or "voip_front_noise_burst",
             "fuse_note": b_note,
             "decision_reason": b_note,
             "voip_noise_burst": True,
@@ -286,7 +286,7 @@ def run_ml_pipeline(
     # HUMAN (any confidence) → Whisper before sending to an agent
     if _is_blank(feats, silero):
         b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
-        details["ml_note"] = b_note if b_note == "stock_amd_trust_blank_capture" else "blank_override_high_human"
+        details["ml_note"] = b_note or "blank_override_high_human"
         details["fuse_note"] = b_note
         details["decision_reason"] = b_note
         return b_status, b_conf, details
@@ -387,11 +387,7 @@ def run_ml_pipeline(
     # Whisper raised confidence enough, or flipped to non-HUMAN
     if _is_blank(feats, silero) and status == "HUMAN":
         b_status, b_conf, b_note = _dispose_blank_or_noise(feats=feats)
-        details["ml_note"] = (details.get("ml_note") or "") + (
-            "+stock_amd_trust_blank_capture"
-            if b_note == "stock_amd_trust_blank_capture"
-            else "+blank_safety"
-        )
+        details["ml_note"] = (details.get("ml_note") or "") + "+blank_safety"
         details["fuse_note"] = b_note
         details["decision_reason"] = b_note
         return b_status, b_conf, details

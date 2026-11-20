@@ -100,34 +100,25 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Empty / near-empty WAV = no playable audio was captured.
-    # Stock AMD HUMAN|PERSON|NOTSURE → trust stock → HUMAN (Live Calls matches
-    # dialer; Record often missed the greeting after stock already heard them).
-    # Else portal shows BLANK; VICIdial follows blank checkbox:
-    #   ON  → MACHINE (AA hangup)
-    #   OFF → HUMAN (send quiet/empty pickup to agent)
+    # Empty / near-empty WAV = no recording to check. Do not trust stock AMD.
+    # Checkbox ON  → BLANK, VICIdial MACHINE (AA hangup)
+    # Checkbox OFF → HUMAN (quiet/empty pickup still goes to the agent)
     if len(raw) < 100:
         from app.amd_settings import is_blank_as_machine_enabled
 
         blank_as_aa = is_blank_as_machine_enabled()
         stock_st = (amdstatus or "").strip().upper()
-        stock_trust = stock_st in ("HUMAN", "PERSON", "NOTSURE")
 
-        if stock_trust:
+        if blank_as_aa:
+            portal_status = "BLANK"
+            vicidial_status = "MACHINE"
+            fuse_note = "blank_silence_empty_file"
+            conf = 0.99
+        else:
             portal_status = "HUMAN"
             vicidial_status = "HUMAN"
-            fuse_note = "stock_amd_trust_blank_capture"
+            fuse_note = "blank_to_agent_empty_file"
             conf = 0.92
-        else:
-            portal_status = "BLANK"
-            if blank_as_aa:
-                vicidial_status = "MACHINE"
-                fuse_note = "blank_silence_empty_file"
-                conf = 0.99
-            else:
-                vicidial_status = "HUMAN"
-                fuse_note = "blank_to_agent_empty_file"
-                conf = 0.92
 
         details = {
             "blank_empty_upload": True,
@@ -141,13 +132,14 @@ async def analyze(
             "amdstatus": stock_st,
             "asterisk_amdstatus": stock_st,
             "amdcause": (amdcause or "").strip(),
-            "stock_amd_trust": stock_trust,
+            "stock_amd_trust": False,
+            "recording_checked": False,
             "called_number": called_number,
             "caller_id": caller_id,
             "ani": ani_value,
             "cps_admitted_prior": already,
             "max_cps": int(getattr(server, "max_cps", 0) or 0),
-            "short_human_safety_override": stock_trust or not blank_as_aa,
+            "short_human_safety_override": not blank_as_aa,
         }
         row = CallAnalysis(
             server_id=server.id,
@@ -203,6 +195,23 @@ async def analyze(
     )
 
     engine_status = result.status
+    # 0.0s captures are not a checked recording. With the blank checkbox on,
+    # they stay BLANK / AA even if an earlier stage scored them HUMAN.
+    if (
+        engine_status == "HUMAN"
+        and float(result.audio_seconds or 0) < 0.20
+        and bool(effective.get("blank_as_machine", True))
+    ):
+        engine_status = "BLANK"
+        result.status = "BLANK"
+        result.confidence = max(float(result.confidence or 0), 0.95)
+        if isinstance(result.details, dict):
+            result.details["blank_safety_override"] = True
+            result.details["fuse_note"] = "blank_silence"
+            result.details["decision_reason"] = "blank_silence_too_short"
+            result.details["recording_checked"] = False
+            result.details["short_human_safety_override"] = False
+
     gate_cfg = gate_config_for_server(server)
     gated_status, downgraded = apply_confidence_gate(
         result.status,
