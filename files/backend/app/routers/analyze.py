@@ -100,8 +100,8 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Empty / near-empty WAV = no recording to check. Do not trust stock AMD.
-    # Checkbox ON  → BLANK, VICIdial MACHINE (AA hangup)
+    # Empty / near-empty WAV = no recording to check.
+    # Checkbox ON  → portal BLANK; AGI on 8399 trusts stock → agent
     # Checkbox OFF → HUMAN (quiet/empty pickup still goes to the agent)
     if len(raw) < 100:
         from app.amd_settings import is_blank_as_machine_enabled
@@ -111,7 +111,8 @@ async def analyze(
 
         if blank_as_aa:
             portal_status = "BLANK"
-            vicidial_status = "MACHINE"
+            # Return BLANK (not MACHINE) so openamd.agi can trust stock.
+            vicidial_status = "BLANK"
             fuse_note = "blank_silence_empty_file"
             conf = 0.99
         else:
@@ -132,7 +133,7 @@ async def analyze(
             "amdstatus": stock_st,
             "asterisk_amdstatus": stock_st,
             "amdcause": (amdcause or "").strip(),
-            "stock_amd_trust": False,
+            "stock_amd_trust": stock_st in ("HUMAN", "PERSON", "NOTSURE"),
             "recording_checked": False,
             "called_number": called_number,
             "caller_id": caller_id,

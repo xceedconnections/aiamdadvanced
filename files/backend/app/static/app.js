@@ -1418,7 +1418,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
-      ? " Blank/silent → BLANK (VICIdial AA hangup)."
+      ? " Blank/silent → BLANK (8399 trusts stock → agent)."
       : " Blank/silent → HUMAN (to agent).";
     if (data.ml_pipeline_enabled) {
       const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);

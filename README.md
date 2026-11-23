@@ -200,9 +200,9 @@ Leave **AMD Agent Route Options** blank/disabled for 8398 and 8399 (do not add N
 HUMAN/PERSON/NOTSURE posts a real WAV to this portal. The dialer must not
 upload a 0-second/header-only file as a substitute for audio — it Records a
 second-opinion clip when Monitor is empty. With **Classify blank / silent
-calls as BLANK** on, blank/silent audio is BLANK→MACHINE (AA). The agent path
-requires a recording AIAMD has actually checked. A portal outage on a usable
-recording still trusts stock so it does not PDROP.
+calls as BLANK** on, blank/silent audio is BLANK and the 8399 AGI trusts
+stock → agent. Clear MACHINE / FAX / IVR still AA-hang. A portal outage
+also trusts stock so it does not PDROP.
 
 ## Folder contents
 

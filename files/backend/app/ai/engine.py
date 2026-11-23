@@ -580,7 +580,7 @@ def _stock_amd_trust_human(amdstatus: str = "", feats: Optional[Dict[str, Any]] 
 def _blank_disposition(*, to_agent: bool = False) -> Tuple[str, float, str]:
     """Blank / near-silent disposition.
 
-    to_agent=False (portal blank checkbox ON): BLANK → VICIdial MACHINE/AA.
+    to_agent=False (portal blank checkbox ON): BLANK (AGI trusts stock on 8399).
     to_agent=True (checkbox OFF): HUMAN so quiet pickups reach agents, not VM.
     """
     if to_agent:

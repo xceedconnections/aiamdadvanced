@@ -165,11 +165,15 @@ def is_blank_as_machine_enabled() -> bool:
 def map_status_for_vicidial(status: str) -> str:
     """Map internal disposition to what the VICIdial AGI dialplan expects.
 
-    AGI only accepts HUMAN / MACHINE. Portal may store BLANK / IVR / SIT;
-    those hang up as MACHINE (AA) on the dialer.
+    AGI accepts HUMAN / MACHINE / BLANK:
+      HUMAN  → agent (+ scam when armed)
+      MACHINE → AA (FAX / IVR / SIT / ERROR / clear VM map here)
+      BLANK  → AGI trusts stock HUMAN|PERSON|NOTSURE → agent
     """
     s = (status or "").strip().upper()
-    if s in ("BLANK", "IVR", "SIT", "FAX", "ERROR"):
+    if s == "BLANK" or s == "SILENT":
+        return "BLANK"
+    if s in ("IVR", "SIT", "FAX", "ERROR"):
         return "MACHINE"
     if s == "HUMAN":
         return "HUMAN"
