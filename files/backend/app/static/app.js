@@ -513,6 +513,13 @@ function gatedNote(r) {
   if (internal === "UNCERTAIN" || fuse === "uncertain_to_agent") {
     return `<div class="hint" style="margin-top:.15rem;color:#93c5fd">UNCERTAIN → agent</div>`;
   }
+  const check = String(r.check_label || r.decision_reason || "");
+  if (fuse.includes("blank") || raw === "BLANK" || String(r.status || "").toUpperCase() === "BLANK") {
+    return `<div class="hint" style="margin-top:.15rem;color:#94a3b8">Checking human or answering machine → blank / AA</div>`;
+  }
+  if (check.includes("human or answering")) {
+    return `<div class="hint" style="margin-top:.15rem;color:#94a3b8">${escapeHtml(check)}</div>`;
+  }
   return "";
 }
 
@@ -1418,7 +1425,7 @@ $("#amd-form")?.addEventListener("submit", async (e) => {
     });
     msg.className = "ok";
     const blankNote = data.blank_as_machine
-      ? " Blank/silent → BLANK (8399 trusts stock → agent)."
+      ? " Blank/silent → portal check → AA (recording kept)."
       : " Blank/silent → HUMAN (to agent).";
     if (data.ml_pipeline_enabled) {
       const pct = Math.round(Number(data.ml_xgb_high_confidence || 0.85) * 100);

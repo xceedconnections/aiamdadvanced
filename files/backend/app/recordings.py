@@ -110,13 +110,29 @@ def save_call_audio(raw: bytes, call_id: str, server_id: int) -> str:
     return primary
 
 
+def minimal_silent_wav(*, duration_sec: float = 0.25, rate: int = 8000) -> bytes:
+    """PCM16 mono silent WAV so blank uploads still store a playable recording."""
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    n = max(1, int(rate * float(duration_sec)))
+    data = np.zeros(n, dtype=np.float32)
+    buf = io.BytesIO()
+    sf.write(buf, data, int(rate), format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
 def to_browser_wav(raw: bytes) -> bytes:
     """
     Re-encode to PCM16 WAV so Chrome/Firefox can play it.
     Asterisk often sends ulaw/alaw/gsm WAV that browsers reject.
+    Empty / tiny uploads become a short silent WAV so the portal always
+    keeps a recording for calls that were double-checked.
     """
     if not raw or len(raw) < 50:
-        return raw
+        return minimal_silent_wav()
     try:
         import io
         import numpy as np
@@ -128,10 +144,10 @@ def to_browser_wav(raw: bytes) -> bytes:
         buf = io.BytesIO()
         sf.write(buf, data, int(sr), format="WAV", subtype="PCM_16")
         out = buf.getvalue()
-        return out if len(out) > 50 else raw
+        return out if len(out) > 50 else minimal_silent_wav()
     except Exception as exc:
         print(f"OpenAMD WARNING: wav re-encode failed, storing original: {exc}")
-        return raw
+        return raw if raw and len(raw) >= 50 else minimal_silent_wav()
 
 
 def link_analysis_recording(analysis_id: int, source_path: str) -> Optional[str]:
@@ -236,7 +252,7 @@ def resolve_recording_path_fast(call: CallAnalysis) -> Optional[Path]:
 def recording_meta_fast(call: CallAnalysis) -> dict:
     """Lightweight meta for list/CDR pages (no directory-wide scan)."""
     path = resolve_recording_path_fast(call)
-    in_db = bool(getattr(call, "audio_saved", False))
+    in_db = bool(getattr(call, "audio_saved", False) or getattr(call, "audio_blob", None))
     if path:
         try:
             size = path.stat().st_size
@@ -252,10 +268,12 @@ def recording_meta_fast(call: CallAnalysis) -> dict:
         called = "".join(ch for ch in str(getattr(call, "called_number", None) or "") if ch.isalnum() or ch in "-_")
         call_id = "".join(ch for ch in str(call.call_id or "") if ch.isalnum() or ch in "-_.") or f"id-{call.id}"
         fname = f"{called}_{call_id}.wav" if called else f"{call_id}.wav"
+        blob = getattr(call, "audio_blob", None)
+        blob_len = len(blob) if blob is not None else 0
         return {
             "has_recording": True,
             "recording_filename": fname,
-            "recording_bytes": 0,
+            "recording_bytes": blob_len,
             "audio_path": "db:audio_blob",
         }
     return {
@@ -268,7 +286,7 @@ def recording_meta_fast(call: CallAnalysis) -> dict:
 
 def recording_meta(call: CallAnalysis, index: Optional[list[Path]] = None) -> dict:
     path = resolve_recording_path(call, index=index)
-    in_db = bool(getattr(call, "audio_saved", False))
+    in_db = bool(getattr(call, "audio_saved", False) or getattr(call, "audio_blob", None))
     if path:
         try:
             size = path.stat().st_size
@@ -284,10 +302,12 @@ def recording_meta(call: CallAnalysis, index: Optional[list[Path]] = None) -> di
         called = "".join(ch for ch in str(getattr(call, "called_number", None) or "") if ch.isalnum() or ch in "-_")
         call_id = "".join(ch for ch in str(call.call_id or "") if ch.isalnum() or ch in "-_.") or f"id-{call.id}"
         fname = f"{called}_{call_id}.wav" if called else f"{call_id}.wav"
+        blob = getattr(call, "audio_blob", None)
+        blob_len = len(blob) if blob is not None else 0
         return {
             "has_recording": True,
             "recording_filename": fname,
-            "recording_bytes": 0,
+            "recording_bytes": blob_len,
             "audio_path": "db:audio_blob",
         }
     return {

@@ -207,6 +207,8 @@ class CallOut(BaseModel):
     ml_note: str = ""
     fuse_note: str = ""
     internal_status: str = ""
+    decision_reason: str = ""
+    check_label: str = ""
 
     class Config:
         from_attributes = True

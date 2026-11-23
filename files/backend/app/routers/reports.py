@@ -85,12 +85,16 @@ def _ml_fields_from_features(raw: Optional[str]) -> dict:
     note = str(ml.get("ml_note") or details.get("ml_note") or "")
     fuse = str(details.get("fuse_note") or "")
     internal = str(details.get("internal_status") or "")
+    decision = str(details.get("decision_reason") or "")
+    check = str(details.get("check_label") or "")
     out["whisper_used"] = used
     out["whisper_transcript"] = transcript
     out["whisper_cue"] = cue
     out["ml_note"] = note
     out["fuse_note"] = fuse
     out["internal_status"] = internal
+    out["decision_reason"] = decision
+    out["check_label"] = check or "checking human or answering machine"
     return out
 
 
@@ -121,6 +125,8 @@ def _to_call_out(r: CallAnalysis, server_map: dict, meta: dict) -> CallOut:
         ml_note=ml["ml_note"],
         fuse_note=ml.get("fuse_note") or "",
         internal_status=ml.get("internal_status") or "",
+        decision_reason=ml.get("decision_reason") or "",
+        check_label=ml.get("check_label") or "",
     )
 
 

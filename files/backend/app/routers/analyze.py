@@ -100,26 +100,36 @@ async def analyze(
     caller_id = (caller or "").strip()
     ani_value = (ani or called_number or "").strip()
 
-    # Empty / near-empty WAV = no recording to check.
-    # Checkbox ON  → portal BLANK; AGI on 8399 trusts stock → agent
-    # Checkbox OFF → HUMAN (quiet/empty pickup still goes to the agent)
+    # Empty / near-empty WAV — still store a recording, then decide.
+    # Checkbox ON  → BLANK (portal) / MACHINE (VICIdial AA) after blank check
+    # Checkbox OFF → HUMAN → agent (delayed pickups)
+    # Always keep audio on the portal so every double-checked call has a clip.
     if len(raw) < 100:
         from app.amd_settings import is_blank_as_machine_enabled
 
         blank_as_aa = is_blank_as_machine_enabled()
         stock_st = (amdstatus or "").strip().upper()
+        playable = to_browser_wav(raw)
 
         if blank_as_aa:
             portal_status = "BLANK"
-            # Return BLANK (not MACHINE) so openamd.agi can trust stock.
-            vicidial_status = "BLANK"
+            vicidial_status = "MACHINE"
             fuse_note = "blank_silence_empty_file"
             conf = 0.99
+            decision = "checked blank — answering machine / no speech → AA"
         else:
             portal_status = "HUMAN"
             vicidial_status = "HUMAN"
             fuse_note = "blank_to_agent_empty_file"
             conf = 0.92
+            decision = "blank checkbox off — pass to agent"
+
+        path = ""
+        try:
+            path = save_call_audio(playable, callid, server.id)
+        except OSError as exc:
+            print(f"OpenAMD WARNING: failed to save blank recording for {callid}: {exc}")
+            path = ""
 
         details = {
             "blank_empty_upload": True,
@@ -128,13 +138,15 @@ async def analyze(
             "vicidial_status": vicidial_status,
             "blank_as_machine": blank_as_aa,
             "fuse_note": fuse_note,
-            "decision_reason": fuse_note,
+            "decision_reason": decision,
             "ml_note": fuse_note,
+            "amd_stage": "blank_check",
+            "check_label": "checking human or answering machine",
             "amdstatus": stock_st,
             "asterisk_amdstatus": stock_st,
             "amdcause": (amdcause or "").strip(),
-            "stock_amd_trust": stock_st in ("HUMAN", "PERSON", "NOTSURE"),
-            "recording_checked": False,
+            "stock_amd_trust": False,
+            "recording_checked": True,
             "called_number": called_number,
             "caller_id": caller_id,
             "ani": ani_value,
@@ -154,9 +166,9 @@ async def analyze(
             confidence=conf,
             processing_ms=0,
             audio_seconds=0.0,
-            audio_path="",
-            audio_saved=False,
-            audio_blob=None,
+            audio_path=path,
+            audio_saved=bool(path or playable),
+            audio_blob=playable,
             features_json=json.dumps(details),
             error_message=f"empty upload ({len(raw)} bytes) → VICIdial {vicidial_status}",
         )
@@ -164,6 +176,11 @@ async def analyze(
         server.last_seen = datetime.utcnow()
         db.commit()
         db.refresh(row)
+        if path:
+            linked = link_analysis_recording(row.id, path)
+            if linked and linked != path:
+                row.audio_path = linked
+                db.commit()
         return AnalyzeResponse(
             status=vicidial_status,
             confidence=conf,

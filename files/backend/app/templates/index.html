@@ -1203,12 +1203,12 @@
             <hr style="border:none;border-top:1px solid rgba(255,255,255,.08);margin:1rem 0" />
             <label class="inline">
               <input type="checkbox" id="amd-blank-as-machine" checked />
-              Classify blank / silent calls as BLANK
+              Classify blank / silent as BLANK → AA (after portal check)
             </label>
             <p class="hint" style="margin-top:0">
-              Always applies globally (Classic and Advanced ML).
-              <strong>Checked:</strong> blank/silent → BLANK; on 8399 AGI trusts stock → agent.
-              <strong>Unchecked:</strong> blank/silent → HUMAN → agent (for delayed pickups).
+              Always applies globally (Classic and Advanced ML). Recording is always stored.
+              <strong>Checked:</strong> blank/silent → portal double-check → AA (answering machine / no speech).
+              <strong>Unchecked:</strong> blank/silent → HUMAN → agent (delayed pickups).
             </p>
 
             <button type="submit">Save settings</button>
